@@ -1,0 +1,105 @@
+import { invoke } from '@tauri-apps/api/core';
+
+// WebAssign figures are mostly black/blue line art on white. On the dark UI
+// those are inverted (with a hue rotation so blue stays blue); photos and
+// images that are already dark are left alone.
+//
+// Deciding needs pixel access, which WebAssign's missing CORS headers forbid
+// in the webview. So images are loaded as same-origin data: in Tauri through
+// the `fetch_image` command, in `npm run dev` through the /wa-img Vite proxy.
+
+export type ImageMode = 'invert' | 'keep';
+type Loaded = { src: string; mode: ImageMode };
+
+const cache = new Map<string, Promise<Loaded>>();
+const inTauri = '__TAURI_INTERNALS__' in window;
+
+async function sameOrigin(url: string): Promise<string> {
+  if (inTauri) return invoke<string>('fetch_image', { url });
+  const u = new URL(url);
+  if (/(^|\.)webassign\.net$/.test(u.hostname)) return `/wa-img${u.pathname}${u.search}`;
+  return url;
+}
+
+function decode(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('image failed to load'));
+    img.src = src;
+  });
+}
+
+const lum = (r: number, g: number, b: number) => (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+
+/** Line art with a light (or transparent-with-dark-ink) background → invert. */
+export function classify(img: HTMLImageElement): ImageMode {
+  const scale = Math.min(1, 240 / Math.max(img.naturalWidth, img.naturalHeight, 1));
+  const w = Math.max(1, Math.round(img.naturalWidth * scale));
+  const h = Math.max(1, Math.round(img.naturalHeight * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return 'keep';
+  ctx.drawImage(img, 0, 0, w, h);
+  const { data } = ctx.getImageData(0, 0, w, h);
+
+  // Background: the image border.
+  let edge = 0; let edgeLum = 0; let edgeClear = 0;
+  const sample = (x: number, y: number) => {
+    const i = (y * w + x) * 4;
+    edge++;
+    if (data[i + 3] < 40) { edgeClear++; return; }
+    edgeLum += lum(data[i], data[i + 1], data[i + 2]);
+  };
+  for (let x = 0; x < w; x++) { sample(x, 0); sample(x, h - 1); }
+  for (let y = 1; y < h - 1; y++) { sample(0, y); sample(w - 1, y); }
+
+  // Photos have many distinct colors; diagrams have few.
+  const colors = new Set<number>();
+  let inkLum = 0; let ink = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] < 40) continue;
+    colors.add(((data[i] >> 4) << 8) | ((data[i + 1] >> 4) << 4) | (data[i + 2] >> 4));
+    inkLum += lum(data[i], data[i + 1], data[i + 2]);
+    ink++;
+  }
+  if (colors.size > 900) return 'keep';
+
+  if (edgeClear / edge > 0.6) {
+    // Transparent background: dark ink would vanish on the dark UI.
+    return ink && inkLum / ink < 0.5 ? 'invert' : 'keep';
+  }
+  const opaque = edge - edgeClear;
+  return opaque && edgeLum / opaque > 0.7 ? 'invert' : 'keep';
+}
+
+function load(url: string): Promise<Loaded> {
+  let p = cache.get(url);
+  if (!p) {
+    p = sameOrigin(url)
+      .then(async (src) => ({ src, mode: classify(await decode(src)) }))
+      .catch(() => ({ src: url, mode: 'keep' as const }));
+    cache.set(url, p);
+  }
+  return p;
+}
+
+/** Swap an <img> to its same-origin copy and tag it img-invert / img-keep. */
+export function adaptImage(img: HTMLImageElement) {
+  const url = img.getAttribute('src');
+  if (!url || img.dataset.adapted || /\/watex\/img\//.test(url) || url.startsWith('data:')) return;
+  img.dataset.adapted = '1';
+  img.classList.add('img-pending');
+  load(url).then(({ src, mode }) => {
+    img.src = src;
+    img.classList.remove('img-pending');
+    img.classList.add(mode === 'invert' ? 'img-invert' : 'img-keep');
+    img.closest('.qfig')?.classList.add(mode === 'invert' ? 'qfig-invert' : 'qfig-keep');
+  });
+}
+
+export function adaptImagesIn(root: ParentNode | null) {
+  root?.querySelectorAll<HTMLImageElement>('img').forEach(adaptImage);
+}

@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+
+# Build output
+app/dist/
+app/src-tauri/target/
+app/src-tauri/gen/
+*.tsbuildinfo
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

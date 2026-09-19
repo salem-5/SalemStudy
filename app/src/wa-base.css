@@ -1,0 +1,108 @@
+/* Baseline for WebAssign question markup, so questions lay out correctly even
+   before (or without) WebAssign's own stylesheet from GET .../styles. Rules
+   mirror the layout of student_screen_min.css / csstyle/style.css; colors come
+   from the app theme. Everything is scoped under .qhtml. */
+
+.qhtml .qContent .wa1par { margin: 0 0 1em; line-height: 1.4em; }
+.qhtml .qContent .wa1given { margin: 0 0 1em 6em; }
+.qhtml .qContent .wa1ans { margin: -0.5em 0 1em; }
+.qhtml .qContent .fitb { margin: 0 0 1em; }
+.qhtml .qContent .wa1list { margin: 0 0 1em 1.5em; }
+.qhtml .qContent .indent { margin-left: 2em; }
+.qhtml .qContent .nobr { white-space: nowrap; }
+
+.qhtml .qContent .subblock { display: flex; flex-flow: row nowrap; align-items: baseline; margin: 0 0 1em; }
+.qhtml .qContent .sublabel { flex: 0 0 auto; width: 2em; margin-left: 0.5em; }
+.qhtml .qContent .subpart { margin-left: 0.5em; line-height: 1.4em; min-width: 0; }
+
+.qhtml .qContent .stackblock { display: table; }
+.qhtml .qContent .stackline { display: table-row; }
+.qhtml .qContent .stacktext { display: table-cell; padding: 0 2em 0.3em 0; text-align: left; }
+.qhtml .qContent .stackmath { display: table-cell; padding: 0 0.4em 0.3em 0; text-align: right; }
+.qhtml .qContent .stackop { display: table-cell; padding: 0 0.6em 0.3em 0.2em; }
+.qhtml .qContent .stackans { display: table-cell; padding-bottom: 0.3em; text-align: left; }
+
+.qhtml .qContent .multBox { margin: 0 0 0 1.5em; }
+.qhtml .qContent .questionRadio span.ms { display: flex; align-items: center; margin: 0 0 0.6em 0.3em; }
+
+.qhtml .figure, .qhtml figure { margin: 1em 0 1em 2em; }
+.qhtml figcaption, .qhtml .alt-cap, .qhtml .cap-btm-rit { color: var(--text-2); font-size: 0.9em; }
+
+/* watex layout */
+.qhtml .watexinlineblock { display: inline-block; position: relative; }
+.qhtml .watexmiddle { vertical-align: middle; }
+.qhtml span.watex { display: block; margin: 0; }
+.qhtml .watexlineheightnormal { line-height: normal; }
+.qhtml .watexcenter { text-align: center; }
+.qhtml .watexleft { text-align: left; }
+.qhtml .watexright { text-align: right; }
+
+.qhtml table.watexfraction { display: inline-table; vertical-align: middle; border-collapse: collapse; margin: 0 0.15em; }
+.qhtml .watexnumerator { text-align: center; padding: 0 0.25em 0.05em; border-bottom: 1px solid currentColor; }
+.qhtml .watexdenominator { text-align: center; padding: 0.05em 0.25em 0; }
+
+.qhtml table.watexarray { border-collapse: collapse; }
+.qhtml table.watexarray td { padding: 0.15em 0.6em; }
+
+/* rebuilt watex glyphs (see rewriteWatex in lib/sanitize.ts) */
+.qhtml .wx-delim {
+  display: inline-block;
+  vertical-align: middle;
+  line-height: 1;
+  font-family: var(--math);
+  font-weight: 300;
+  margin: 0 0.04em;
+}
+.qhtml .wx-sqrt { display: inline-flex; align-items: stretch; vertical-align: middle; }
+.qhtml .wx-rad { font-family: var(--math); line-height: 1; margin-right: -0.05em; align-self: flex-end; }
+.qhtml .wx-radicand { border-top: 1px solid currentColor; padding: 0.12em 0.15em 0 0.1em; margin-top: 0.12em; }
+.qhtml .wx-overarrow { display: inline-block; position: relative; padding-top: 0.45em; }
+.qhtml .wx-overarrow .watexoverrightarrowcontent { position: relative; display: inline-block; }
+.qhtml .wx-overarrow .watexoverrightarrowcontent::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 1px;
+  top: -0.3em;
+  border-top: 1px solid currentColor;
+}
+.qhtml .wx-overarrow .watexoverrightarrowcontent::after {
+  content: '';
+  position: absolute;
+  right: -1px;
+  top: calc(-0.3em - 3px);
+  border: 3.5px solid transparent;
+  border-left: 6px solid currentColor;
+  border-right-width: 0;
+}
+
+/* Read-only answers on closed questions */
+.qhtml .static, .qhtml .wa-static {
+  display: inline-block;
+  min-width: 2em;
+  padding: 1px 8px;
+  border: 1px solid var(--line-3);
+  border-bottom: 2px solid var(--neon-dim);
+  background: var(--bg);
+  font-family: var(--mono);
+  color: var(--text);
+  vertical-align: middle;
+}
+.qhtml .wa-static math { font-family: var(--math); }
+
+/* Read-only choices on closed questions (see staticChoices in lib/sanitize.ts) */
+.qhtml .static-opt {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 8px;
+  vertical-align: -1px;
+  border: 1px solid var(--line-3);
+}
+.qhtml .static-opt.radio { transform: rotate(45deg) scale(0.8); }
+.qhtml .static-opt.on { background: var(--text-2); border-color: var(--text-2); }
+.qhtml .static-opt.on.grade-correct { background: var(--neon); border-color: var(--neon); box-shadow: 0 0 6px var(--neon-glow); }
+.qhtml .static-opt.on.grade-incorrect { background: var(--bad); border-color: var(--bad); }
+.qhtml .static-chosen { color: var(--text); border-bottom: 1px solid var(--text-2); }
+.qhtml .static-chosen.grade-correct { color: var(--neon); border-bottom-color: var(--neon); }
+.qhtml .static-chosen.grade-incorrect { color: var(--bad); border-bottom-color: var(--bad); }

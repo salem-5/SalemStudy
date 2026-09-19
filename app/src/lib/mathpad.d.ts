@@ -1,0 +1,13 @@
+export const NS: string;
+export const EMPTY: string;
+export function parse(expr: string): string;
+export function toMathML(expr: string): string;
+export function toText(mathml: string): string;
+export const TRIG: string[];
+export const TRIG_ALIAS: Record<string, string>;
+export const LOGS: string[];
+export const SPECIAL_FUNCS: string[];
+export const GREEK_LOWER: Record<string, string>;
+export const GREEK_UPPER: Record<string, string>;
+export const CONST_WORDS: Record<string, () => unknown>;
+export const HASH: Record<string, () => unknown>;
