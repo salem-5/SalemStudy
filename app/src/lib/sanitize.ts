@@ -8,7 +8,9 @@ const DROP = [
   'script, style, noscript, iframe, frame, object, embed, link, meta, base, form, button, input, select, textarea',
   // WebAssign's grading badges and pad chrome; the app shows its own status.
   // (.waMark itself is unwrapped, not dropped: on closed questions it wraps the choices.)
-  '.badgeWrap, .padMark, .mathtype-sr-only, .latex-source, .tooltip',
+  // MathType's accessibility overlay ("Press Space or Enter to edit this math answer"
+  // and its checkmark) must never survive.
+  '.badgeWrap, .padMark, .mathtype-sr-only, .mathtype-overlay-trigger, [class*="mathtype-overlay"], .mathtype-help, .latex-source, .tooltip',
 ].join(', ');
 const URL_ATTRS = ['href', 'src', 'xlink:href', 'action', 'formaction', 'background', 'poster'];
 
@@ -108,6 +110,8 @@ function staticMathAnswers(root: HTMLElement, doc: Document) {
     const answer = wrap.querySelector('.mtAnswer math, .mtAnswer');
     const span = doc.createElement('span');
     span.className = 'wa-static';
+    const ed = wrap.querySelector('[id^="editable-math-"]');
+    if (ed) span.dataset.boxid = ed.id.replace(/^editable-math-/, '');
     if (answer) span.appendChild(answer.tagName.toLowerCase() === 'math' ? answer : answer.cloneNode(true));
     wrap.replaceWith(span);
   });

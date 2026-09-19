@@ -18,6 +18,8 @@ type Props = {
 };
 
 const WA = 'https://www.webassign.net';
+// MathType's accessibility overlay sometimes reaches the text view; drop it.
+const MATH_TYPE_NOISE = /Press Space or Enter to edit this math answer\.?/gi;
 
 function QuestionText({ text, boxes }: { text: string; boxes: Box[] }) {
   const parts = text.split(/(\[\d+\]|\[image: [^\]]+\])/g);
@@ -38,7 +40,9 @@ function QuestionText({ text, boxes }: { text: string; boxes: Box[] }) {
           const src = img[1].startsWith('/') ? WA + img[1] : img[1];
           return <img key={i} className="qimg" src={src} alt="" />;
         }
-        return <Fragment key={i}>{p}</Fragment>;
+        const clean = p.replace(MATH_TYPE_NOISE, '');
+        if (!clean.trim()) return null;
+        return <Fragment key={i}>{clean}</Fragment>;
       })}
     </div>
   );
@@ -73,8 +77,9 @@ export function QuestionView({
   const left = question.boxes.map(attemptsLeft).filter((x): x is number => x != null);
   const noneLeft = left.length > 0 && left.every((x) => x <= 0);
   // Older userscripts sent raw WebAssign markup without widget placeholders; use the text view then.
+  // `wa-static` counts too: closed/answered math boxes are rendered as static answers, not slots.
   const richHtml = question.html
-    && (!question.boxes.length || /class="wa-(slot|opt)"/.test(question.html)) ? question.html : null;
+    && (!question.boxes.length || /class="wa-(slot|opt|static)"/.test(question.html)) ? question.html : null;
 
   return (
     <div className="question">

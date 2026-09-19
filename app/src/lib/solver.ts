@@ -212,7 +212,7 @@ export function useSolver(deps: SolverDeps) {
 
         let reply;
         try {
-          reply = await aiChat({ model, messages, thinking: a > 0, effort: a > 0 ? 'high' : undefined });
+          reply = await aiChat({ model, messages, thinking: a > 0, effort: a > 0 ? 'high' : undefined, json: true });
         } catch (e) {
           push({ role: 'system', kind: 'error', tone: 'bad', text: errText(e) });
           setStat('failed');

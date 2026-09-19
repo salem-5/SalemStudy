@@ -1,18 +1,20 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Box, Draft } from '../types';
-import { canonical, canonicalMathML } from './render';
+import { canonical, canonicalMathML, mathValueText } from './render';
 
 const KEY = 'wa.drafts.v1';
 
 export const draftKey = (dep: number, q: number, box: number) => `${dep}:${q}:${box}`;
 
-const isEmptyMath = (mathml: string) => !mathml || /^<math[^>]*\/>$/.test(mathml.trim()) || canonicalMathML(mathml) === '';
+const isEmptyMath = (mathml: string) => !mathml || /^<math[^>]*\/>$/.test(mathml.trim()) || mathValueText(mathml) === '';
 
 /** The draft that represents what WebAssign currently has saved for a box. */
 export function serverDraft(box: Box): Draft {
   switch (box.kind) {
     case 'math':
-      return isEmptyMath(box.value) ? '' : box.text;
+      // `box.text` can hold a recovered static answer; fall back to the value's
+      // visible text when the parser can't produce pad syntax.
+      return isEmptyMath(box.value) ? (box.text || '') : (box.text || mathValueText(box.value));
     case 'checkboxes':
       return box.value ? box.value.split(',') : [];
     case 'multiselect':
@@ -27,7 +29,10 @@ export function matchesServer(box: Box, draft: Draft): boolean {
   if (box.kind === 'math') {
     const d = canonical(String(draft));
     if (d === null) return false;
-    return isEmptyMath(box.value) ? d === '' : d === canonicalMathML(box.value);
+    if (isEmptyMath(box.value)) return d === '' || (!!box.text && d === canonical(box.text));
+    const serverText = mathValueText(box.value);
+    const server = canonicalMathML(box.value) || canonical(serverText);
+    return server ? d === server : String(draft).trim() === serverText;
   }
   if (Array.isArray(draft)) {
     const server = serverDraft(box) as string[];

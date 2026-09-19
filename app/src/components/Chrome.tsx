@@ -1,7 +1,8 @@
 import type { AssignmentList, AssignmentSummary, BridgeInfo, Course, Status } from '../types';
 import { fmtDue, parseDue, relTime } from '../lib/format';
+import { AssignmentListSkeleton } from './Skeleton';
 
-export function Sidebar({ list, loading, selected, onSelect, courses, section, onSection, onRefresh, onContext }: {
+export function Sidebar({ list, loading, selected, onSelect, courses, section, onSection, onRefresh, onContext, onAiSettings }: {
   list: AssignmentList | null;
   loading: boolean;
   selected: number | null;
@@ -11,6 +12,7 @@ export function Sidebar({ list, loading, selected, onSelect, courses, section, o
   onSection: (s: string) => void;
   onRefresh: () => void;
   onContext?: (a: AssignmentSummary, e: React.MouseEvent) => void;
+  onAiSettings: () => void;
 }) {
   return (
     <aside className="sidebar">
@@ -22,13 +24,18 @@ export function Sidebar({ list, loading, selected, onSelect, courses, section, o
         </select>
         <button type="button" className="icon-btn" onClick={onRefresh} title="Reload assignment list">⟳</button>
       </div>
-      {loading && !list && <div className="side-loading">loading<span className="blink">_</span></div>}
+      {loading && !list && <AssignmentListSkeleton />}
       {list && (
         <>
           <Group title="CURRENT" items={list.current} selected={selected} onSelect={onSelect} onContext={onContext} />
           <Group title="PAST" items={list.past} selected={selected} onSelect={onSelect} onContext={onContext} />
         </>
       )}
+      <div className="side-foot">
+        <button type="button" className="btn ghost side-ai" onClick={onAiSettings} title="API key, balance and usage">
+          ⚙ AI settings
+        </button>
+      </div>
     </aside>
   );
 }

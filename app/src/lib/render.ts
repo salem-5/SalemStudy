@@ -4,7 +4,7 @@ import { EMPTY, toMathML, toText } from './mathpad.js';
 // Rewrite those into plain <mrow>/<mo> so previews look like the pad.
 export function renderable(mathml: string): string {
   const doc = new DOMParser().parseFromString(mathml || EMPTY, 'application/xml');
-  if (doc.querySelector('parsererror')) return '';
+  if (doc.documentElement?.localName === 'parsererror' || doc.querySelector('parsererror')) return '';
   const ns = doc.documentElement.namespaceURI;
   const mk = (tag: string, text?: string) => {
     const el = doc.createElementNS(ns, tag);
@@ -56,3 +56,24 @@ export function canonical(expr: string): string | null {
 }
 
 export const canonicalMathML = (mathml: string) => toText(mathml).replace(/\s+/g, '');
+
+/**
+ * Best-effort visible text for a stored math value. `toText` handles real
+ * MathML; if it yields nothing (bare text nodes, MathJax/HTML wrappers), fall
+ * back to the DOM text so the card can still show what WebAssign has.
+ */
+export function mathValueText(value: string): string {
+  if (!value) return '';
+  try {
+    const t = toText(value);
+    if (t.trim()) return t;
+  } catch {
+    /* fall through */
+  }
+  try {
+    const html = new DOMParser().parseFromString(value, 'text/html');
+    return (html.body.textContent ?? '').replace(/\s+/g, ' ').trim();
+  } catch {
+    return '';
+  }
+}

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WebAssign MathPad Console
 // @namespace    https://github.com/Serverside-swzo/webassign-mathpad
-// @version      0.3.2
+// @version      0.3.5
 // @description  Type WebAssign MathType answers from the console (mp(2, "x^2")) and expose a local REST API through bridge.js
 // @match        https://www.webassign.net/*
 // @match        https://webassign.net/*
@@ -463,13 +463,16 @@
 
     function toText(mathml) {
         const doc = new DOMParser().parseFromString(mathml || EMPTY, 'application/xml');
+        // A parse error document must never be turned into text.
+        if (!doc.documentElement || doc.documentElement.localName === 'parsererror') return '';
         const kids = (n) => [...n.children];
         const atomic = (n) => ['mi', 'mn', 'mo', 'mtext', 'mfenced', 'msqrt', 'mroot'].includes(n.localName)
             || (n.localName === 'mrow' && n.children.length === 1 && atomic(n.children[0]));
         const wrap = (n) => (atomic(n) ? tt(n) : `(${tt(n)})`);
         function tt(n) {
             const k = kids(n);
-            const all = () => k.map(tt).join('');
+            // Include bare text nodes: some answers come back as <math>0</math>.
+            const all = () => [...n.childNodes].map((c) => (c.nodeType === 3 ? c.nodeValue : tt(c))).join('');
             const txt = n.textContent;
             switch (n.localName) {
                 case 'math': case 'mrow': case 'maction': case 'mstyle': return all();
@@ -762,7 +765,7 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
 
     const BRIDGE = 'http://127.0.0.1:8787';
     // Reported to the bridge so clients can tell when this script is outdated.
-    const SCRIPT_VERSION = '0.3.2';
+    const SCRIPT_VERSION = '0.3.5';
     const BOX_RE = /^RP?([A-Z])_(\d+)_(\d+)_(\d+)_(\d+)$/;
     const BOX_TYPES = {
         A: 'answer', B: 'matrix', C: 'choice', E: 'essay', F: 'file', G: 'graph', I: 'image', J: 'applet',
@@ -895,8 +898,12 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
             value = named[0].value;
             if (!value) {
                 // Closed/answered boxes render their answer in .mtAnswer rather
-                // than keeping it in the input; recover the MathML from there.
-                const ans = qEl.querySelector(`#editable-math-${CSS.escape(id)} .mtAnswer math`);
+                // than keeping it in the input. Look in the box's whole MathType
+                // wrapper (.mtAnswer can sit beside #editable-math, not inside it).
+                const ed = qEl.querySelector(`#editable-math-${CSS.escape(id)}`);
+                const wrap = (named[0] && (named[0].closest('.mathtype-wrapper') || named[0].closest('.mathtype')))
+                    || (ed && (ed.closest('.mathtype-wrapper') || ed));
+                const ans = wrap && wrap.querySelector('.mtAnswer math');
                 if (ans) value = ans.outerHTML;
             }
         } else if (type === 'C' && settings.pulldown) {
@@ -1024,7 +1031,7 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
     const DROP = [
         'script:not([type^="math/tex"])', 'style', 'noscript', 'iframe', 'object', 'embed', 'link', 'meta', 'form',
         'button', '.tooltip', '.js-question-resources', '.extraContent', '.help-buttons-container', '.badgeWrap',
-        '.latex-source', '.mathtype-sr-only', '.mathtype-overlay-trigger', '.padMark',
+        '.latex-source', '.mathtype-sr-only', '.mathtype-overlay-trigger', '[class*="mathtype-overlay"]', '.mathtype-help', '.padMark',
     ].join(', ');
 
     function sanitizeTree(root) {
@@ -1078,9 +1085,12 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
             if (b.kind === 'math') {
                 const ed = root.querySelector(`#editable-math-${esc}`);
                 const wrap = ed && (ed.closest('.mathtype-wrapper') || ed);
-                // Closed/answered boxes show their rendered answer in .mtAnswer;
-                // leave those for the static pass instead of an empty slot.
-                const closed = !!wrap && (!!wrap.querySelector('.mtAnswer') || !!ed.classList.contains('mtDisabled'));
+                // Only a disabled editor or a .mtAnswer that actually holds math
+                // counts as closed. An empty .mtAnswer is just a placeholder, and
+                // those boxes must stay editable slots.
+                const ans = wrap && wrap.querySelector('.mtAnswer');
+                const hasAnswer = !!ans && (!!ans.querySelector('math') || (ans.textContent || '').trim() !== '');
+                const closed = !!wrap && (!!(ed && ed.classList.contains('mtDisabled')) || hasAnswer);
                 if (wrap && !closed) wrap.replaceWith(slot(n));
                 return;
             }
@@ -1122,6 +1132,8 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
         root.querySelectorAll('.mathtype-wrapper').forEach((w) => {
             const span = d.createElement('span');
             span.className = 'wa-static';
+            const ed = w.querySelector('[id^="editable-math-"]');
+            if (ed) span.dataset.boxid = ed.id.replace(/^editable-math-/, '');
             const ans = w.querySelector('.mtAnswer math') || w.querySelector('.mtAnswer');
             if (ans) span.appendChild(ans);
             w.replaceWith(span);

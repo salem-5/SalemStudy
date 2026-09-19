@@ -5,6 +5,9 @@ import type {
 } from './types';
 import { draftKey, matchesServer, pushHistory, serverDraft, useDrafts } from './lib/drafts';
 import { coerceDraft } from './lib/ai';
+import {
+  cacheAssignment, cacheAge, cachedAssignment, canRefetch, CACHE_TTL_MS, clearCache, isAssignmentComplete, recordRefetch, updateCachedQuestion,
+} from './lib/cache';
 import { useUsage, fmtInt, fmtCost, pairTotal, pairCost } from './lib/usage';
 import { useSolver } from './lib/solver';
 import { fmtDue, parseDue, questionStatus, relTime } from './lib/format';
@@ -13,6 +16,7 @@ import { focusBox } from './components/BoxCard';
 import { DryRunDialog, ShortcutsDialog, SubmitDialog } from './components/Dialogs';
 import { AiPanel, AiSettingsDialog } from './components/AiPanel';
 import { ContextMenu, type MenuItem } from './components/ContextMenu';
+import { QuestionSkeleton } from './components/Skeleton';
 import { ConnectPanel, MIN_USERSCRIPT, Sidebar, StatusBar, Toasts, scriptCurrent, type Toast } from './components/Chrome';
 import { Logo } from './components/Logo';
 
@@ -103,17 +107,40 @@ export default function App() {
     }
   }, [toast]);
 
-  const loadAssignment = useCallback(async (id: number): Promise<Assignment | null> => {
-    setAsgLoading(true);
-    try {
-      const a = await api.assignment(id);
+  // Assignments are cached in memory (lib/cache.ts). Switching back reuses the
+  // cache; a completed assignment is never refetched; the rest refresh at most
+  // once per TTL and within a per-session refetch budget. `force` (Ctrl+R) asks
+  // for fresh data but still respects the budget.
+  const loadAssignment = useCallback(async (id: number, force = false): Promise<Assignment | null> => {
+    const cached = cachedAssignment(id);
+    const complete = !!cached && isAssignmentComplete(cached);
+    const stale = !!cached && (cacheAge(id) ?? 0) > CACHE_TTL_MS;
+    const needFetch = !cached || force || (!complete && stale);
+
+    const serve = (a: Assignment) => {
       assignmentRef.current = a;
       setAssignment(a);
       const saved = Number(store.get(`wa.q.${id}`));
       setQnum(a.questions.some((q) => q.number === saved) ? saved : a.questions[0]?.number ?? 1);
+    };
+
+    if (cached && !needFetch) { serve(cached); return cached; }
+    if (cached && !canRefetch()) {
+      toast('info', 'Refetch limit reached this session — using cached questions.');
+      serve(cached);
+      return cached;
+    }
+
+    setAsgLoading(true);
+    try {
+      const a = await api.assignment(id);
+      if (cached) recordRefetch();
+      cacheAssignment(a);
+      serve(a);
       return a;
     } catch (e) {
       toast('err', errorText(e));
+      if (cached) { serve(cached); return cached; }
       return null;
     } finally {
       setAsgLoading(false);
@@ -188,6 +215,16 @@ export default function App() {
     };
     assignmentRef.current = next;
     setAssignment(next);
+    // Keep the cached copy and the sidebar summary in step, with no refetch.
+    updateCachedQuestion(cur.id, fresh);
+    const score = next.questions.reduce((s, q) => s + (q.score ?? 0), 0);
+    const total = next.questions.reduce((s, q) => s + (q.total ?? 0), 0);
+    setList((l) => {
+      if (!l) return l;
+      const patch = (arr: AssignmentList['current']) =>
+        arr.map((x) => (x.id === next.id ? { ...x, score, total, percentage: total ? Math.round((score / total) * 100) : 0 } : x));
+      return { ...l, current: patch(l.current), past: patch(l.past) };
+    });
     // Drop drafts the server now agrees with.
     drafts.clear(fresh.boxes
       .filter((b) => {
@@ -216,7 +253,6 @@ export default function App() {
       const r = await api.submit(id, q.number, answers as Record<string, Draft>);
       replaceQuestion(r.question);
       setResults((m) => ({ ...m, [`${id}:${q.number}`]: r }));
-      loadList(section, true);
       return r;
     },
     afterGraded: () => { /* submit() already applied the regraded question */ },
@@ -304,7 +340,6 @@ export default function App() {
       setResults((m) => ({ ...m, [`${dep}:${question.number}`]: r }));
       const wrong = r.results.filter((x) => x.status === 'incorrect').length;
       toast(r.allCorrect ? 'ok' : 'err', r.allCorrect ? `Q${question.number}: all correct` : `Q${question.number}: ${wrong} wrong`);
-      loadList(section, true);
     } catch (e) {
       toast('err', `Submit failed: ${errorText(e)}`);
     } finally {
@@ -325,8 +360,19 @@ export default function App() {
   };
 
   const reload = () => {
-    if (selected) loadAssignment(selected);
+    if (selected) loadAssignment(selected, true);
     loadList(section, true);
+  };
+
+  const clearQuestionCache = () => {
+    clearCache();
+    const id = assignmentRef.current?.id;
+    if (id) {
+      assignmentRef.current = null;
+      setAssignment(null);
+      loadAssignment(id, true);
+    }
+    toast('info', 'Question cache cleared — questions will be refetched.');
   };
 
   // ---- keyboard ------------------------------------------------------------
@@ -404,6 +450,7 @@ export default function App() {
         onSection={(s) => loadList(s)}
         onRefresh={() => loadList(section)}
         onContext={(a, e) => setMenu({ x: e.clientX, y: e.clientY, items: assignmentMenu(a.id) })}
+        onAiSettings={() => setAiSettings(true)}
       />
 
       <main className="main">
@@ -419,7 +466,7 @@ export default function App() {
         ) : !selected ? (
           <div className="empty big">← pick an assignment</div>
         ) : !assignment ? (
-          <div className="empty big">loading<span className="blink">_</span></div>
+          <QuestionSkeleton />
         ) : (
           <>
             {!scriptCurrent(status?.userscriptVersion) && (
@@ -467,15 +514,14 @@ export default function App() {
         )}
       </main>
 
-      {aiOpen && (
-        <AiPanel
-          solver={solver}
-          question={aiQuestion}
-          questions={assignment?.questions.map((q) => q.number) ?? []}
-          onOpenSettings={() => setAiSettings(true)}
-          onClose={() => setAiOpen(false)}
-        />
-      )}
+      <AiPanel
+        solver={solver}
+        question={aiQuestion}
+        questions={assignment?.questions.map((q) => q.number) ?? []}
+        open={aiOpen}
+        onOpenSettings={() => setAiSettings(true)}
+        onClose={() => setAiOpen(false)}
+      />
 
       <StatusBar status={status} bridge={bridge} busyText={busyText} onHelp={() => setHelp(true)} />
       <Toasts items={toasts} onDismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
@@ -489,6 +535,7 @@ export default function App() {
         <AiSettingsDialog
           usageMap={usage.map}
           onClose={() => setAiSettings(false)}
+          onClearCache={clearQuestionCache}
           onSaved={(c) => { solver.reloadConfig(); toast('ok', `AI settings saved (${c.hasKey ? 'key set' : 'no key'}).`); }}
         />
       )}

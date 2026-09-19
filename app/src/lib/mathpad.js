@@ -422,13 +422,16 @@ const EMPTY = `<math xmlns="${NS}"/>`;
 
     function toText(mathml) {
         const doc = new DOMParser().parseFromString(mathml || EMPTY, 'application/xml');
+        // A parse error document must never be turned into text.
+        if (!doc.documentElement || doc.documentElement.localName === 'parsererror') return '';
         const kids = (n) => [...n.children];
         const atomic = (n) => ['mi', 'mn', 'mo', 'mtext', 'mfenced', 'msqrt', 'mroot'].includes(n.localName)
             || (n.localName === 'mrow' && n.children.length === 1 && atomic(n.children[0]));
         const wrap = (n) => (atomic(n) ? tt(n) : `(${tt(n)})`);
         function tt(n) {
             const k = kids(n);
-            const all = () => k.map(tt).join('');
+            // Include bare text nodes: some answers come back as <math>0</math>.
+            const all = () => [...n.childNodes].map((c) => (c.nodeType === 3 ? c.nodeValue : tt(c))).join('');
             const txt = n.textContent;
             switch (n.localName) {
                 case 'math': case 'mrow': case 'maction': case 'mstyle': return all();

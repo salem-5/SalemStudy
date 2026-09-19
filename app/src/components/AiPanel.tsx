@@ -3,6 +3,7 @@ import type { Box, Question } from '../types';
 import type { ChatEntry, useSolver } from '../lib/solver';
 import { deepseekBalance, getAiConfig, setAiConfig, type AiConfig, type Balance, type ConfigPatch } from '../lib/ai';
 import { fmtCost, fmtInt, pairCalls, pairCost, pairTotal, type UsageRecord } from '../lib/usage';
+import { refetchesLeft } from '../lib/cache';
 import { MathView } from './MathView';
 import { Modal } from './Dialogs';
 import { BarChart } from './UsageChart';
@@ -74,10 +75,11 @@ function Entry({ e, boxes }: { e: ChatEntry; boxes: Box[] }) {
   );
 }
 
-export function AiPanel({ solver, question, questions, onOpenSettings, onClose }: {
+export function AiPanel({ solver, question, questions, open, onOpenSettings, onClose }: {
   solver: Solver;
   question: Question | undefined;
   questions: number[];
+  open: boolean;
   onOpenSettings: () => void;
   onClose: () => void;
 }) {
@@ -109,7 +111,7 @@ export function AiPanel({ solver, question, questions, onOpenSettings, onClose }
   };
 
   useEffect(() => {
-    if (!cfg?.hasKey) { setBalance(null); return; }
+    if (!open || !cfg?.hasKey) { if (!cfg?.hasKey) setBalance(null); return; }
     let alive = true;
     setBalBusy(true);
     deepseekBalance()
@@ -118,7 +120,7 @@ export function AiPanel({ solver, question, questions, onOpenSettings, onClose }
       .finally(() => { if (alive) setBalBusy(false); });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cfg?.hasKey]);
+  }, [open, cfg?.hasKey]);
 
   const sendChat = () => {
     const t = chat.trim();
@@ -135,7 +137,8 @@ export function AiPanel({ solver, question, questions, onOpenSettings, onClose }
   };
 
   return (
-    <aside className="ai">
+    <aside className={`ai${open ? '' : ' closed'}`} aria-hidden={!open}>
+      <div className="ai-inner">
       <header className="ai-head">
         <span className={`ai-status ${status}`}>{STATUS_LABEL[status]}</span>
         <span className="ai-title">AI SOLVE</span>
@@ -179,6 +182,7 @@ export function AiPanel({ solver, question, questions, onOpenSettings, onClose }
 
       {running && (
         <div className="ai-actions">
+          <span className="ai-working"><i /><i /><i /></span>
           <span className="muted">working…</span>
           <span className="spacer" />
           <button type="button" className="btn ghost" onClick={solver.stop}>Stop</button>
@@ -239,6 +243,7 @@ export function AiPanel({ solver, question, questions, onOpenSettings, onClose }
         />
         <button type="button" className="btn" disabled={!chat.trim()} onClick={sendChat}>Send</button>
       </div>
+      </div>
     </aside>
   );
 }
@@ -274,10 +279,11 @@ function BalanceRow({ onChanged }: { onChanged?: () => void }) {
   );
 }
 
-export function AiSettingsDialog({ onClose, onSaved, usageMap }: {
+export function AiSettingsDialog({ onClose, onSaved, usageMap, onClearCache }: {
   onClose: () => void;
   onSaved: (c: AiConfig) => void;
   usageMap: Record<string, UsageRecord>;
+  onClearCache: () => void;
 }) {
   const [cfg, setCfg] = useState<AiConfig | null>(null);
   const [key, setKey] = useState('');
@@ -409,6 +415,16 @@ export function AiSettingsDialog({ onClose, onSaved, usageMap }: {
               )}
             </>
           )}
+        </section>
+
+        <section>
+          <h4>CACHE</h4>
+          <div className="account-row">
+            <button type="button" className="btn ghost" onClick={onClearCache}>Clear question cache</button>
+            <span className="muted">
+              Questions are cached this session. Refetches left: {refetchesLeft()}. Completed assignments are never refetched.
+            </span>
+          </div>
         </section>
 
         <section>

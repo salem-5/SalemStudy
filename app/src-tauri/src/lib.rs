@@ -194,6 +194,7 @@ async fn deepseek_chat(
     messages: Value,
     thinking: Option<bool>,
     effort: Option<String>,
+    json: Option<bool>,
 ) -> Result<Value, String> {
     let c = read_config(&app);
     if c.api_key.is_empty() {
@@ -208,6 +209,9 @@ async fn deepseek_chat(
     }
     if let Some(e) = effort {
         if !e.trim().is_empty() { body["reasoning_effort"] = json!(e.trim()); }
+    }
+    if json == Some(true) {
+        body["response_format"] = json!({ "type": "json_object" });
     }
 
     let resp = state

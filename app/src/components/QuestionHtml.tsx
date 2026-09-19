@@ -125,7 +125,8 @@ function SlotWidget({ slot, box, draft, setDraft, on, onPick }: {
         {tag}
         <input
           className={`slot-input status-${box.status}`}
-          size={Math.max(8, String(draft).length + 2)}
+          size={Math.max(18, String(draft).length + 2)}
+          style={{ minWidth: 130 }}
           spellCheck={false}
           value={String(draft)}
           aria-label={`answer ${box.index}`}

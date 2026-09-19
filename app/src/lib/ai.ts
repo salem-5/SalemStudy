@@ -43,12 +43,13 @@ export type ApiMessage = { role: 'system' | 'user' | 'assistant'; content: ApiCo
 
 export type AiReply = { content: string; reasoning: string; model: string; usage: unknown };
 
-export const aiChat = (args: { model: string; messages: ApiMessage[]; thinking?: boolean; effort?: string }) =>
+export const aiChat = (args: { model: string; messages: ApiMessage[]; thinking?: boolean; effort?: string; json?: boolean }) =>
   invoke<AiReply>('deepseek_chat', {
     model: args.model,
     messages: args.messages,
     thinking: args.thinking ?? null,
     effort: args.effort ?? null,
+    json: args.json ?? null,
   });
 
 // ---------------------------------------------------------------------------
@@ -56,6 +57,13 @@ export const aiChat = (args: { model: string; messages: ApiMessage[]; thinking?:
 // ---------------------------------------------------------------------------
 
 const WA_BASE = 'https://www.webassign.net';
+// MathType's accessibility overlay can leak into the extracted text; never feed
+// it to the model or treat its icon as a figure.
+const CHROME_TEXT = /Press Space or Enter to edit this math answer\.?/gi;
+const CHROME_IMG = /mathtype|overlay/i;
+
+export const stripChrome = (text: string): string =>
+  text.replace(CHROME_TEXT, '').replace(/\[image: ([^\]]+)\]/gi, (m, url: string) => (CHROME_IMG.test(url) ? '' : m));
 
 /**
  * Content images for a question. watex glyph GIFs are skipped: they are math
@@ -67,7 +75,7 @@ export function questionImages(q: Question, max = 8): string[] {
   const add = (raw: string | null | undefined) => {
     if (!raw) return;
     const s = raw.trim();
-    if (!/^https?:/i.test(s) || /\/watex\/img\//i.test(s)) return;
+    if (!/^https?:/i.test(s) || /\/watex\/img\//i.test(s) || CHROME_IMG.test(s)) return;
     out.add(s);
   };
   if (q.html) {
@@ -140,7 +148,7 @@ export function questionPrompt(q: Question, opts: { images: boolean; transcript:
   const parts: string[] = [];
   parts.push(`# Question ${q.number}${q.code ? ` — ${q.code}` : ''}`);
   if (q.total != null) parts.push(`Points: ${q.total}`);
-  parts.push('## Problem\n' + q.text.trim());
+  parts.push('## Problem\n' + stripChrome(q.text).trim());
   parts.push('## Answer boxes\n' + (q.boxes.length ? q.boxes.map(describeBox).join('\n') : '(none)'));
   if (opts.transcript) parts.push('## Figures (transcribed from the images)\n' + opts.transcript);
   if (opts.images) parts.push('The referenced images are attached to this message — read them carefully.');
