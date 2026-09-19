@@ -186,6 +186,8 @@ Answer rules:
 - unsupported boxes: a raw response string only if you are sure; otherwise omit.
 - Omit a box, or set it to null, to leave it unchanged.
 - Delimiters the question already prints around a box belong to the question, not the answer. If a box sits inside parentheses, brackets, braces, angle brackets or absolute-value bars that are already shown (e.g. "= ( [2] )"), return only the inside — never repeat those outer delimiters. Only include delimiters that are part of the answer itself (e.g. a vector's own angle brackets).
+- Follow the problem's own instructions exactly. If it says to enter a specific word for a special case (for example "if the planes are parallel or perpendicular, enter PARALLEL or PERPENDICULAR"), output that word for those cases instead of a number.
+- Never include units or symbols the question prints around the box (such as °, %, or $). Give just the value.
 
 Math syntax:
 - Fractions: 1/2, (x+1)/(x-2). After "/", only one factor is the denominator, so use parentheses.
@@ -199,7 +201,7 @@ Math syntax:
 
 If the user gives extra instructions or corrections, follow them. If feedback says an answer was wrong, rethink from scratch and give a corrected answer. Always reply with the JSON object.`;
 
-export function describeBox(b: Box, ctx?: { before: string; after: string }): string {
+export function describeBox(b: Box, ctx?: { before: string; after: string }, specials?: string[]): string {
   const lines = [`[${b.index}] kind=${b.kind}${b.display ? ` display=${b.display}` : ''}`];
   if (b.part.maxSubmissions != null) lines.push(`  attempts ${b.part.submissions ?? 0}/${b.part.maxSubmissions}`);
   if (b.choices?.length) lines.push('  choices: ' + b.choices.map((c) => `${JSON.stringify(c.value)}=${JSON.stringify(c.label)}`).join(' | '));
@@ -208,7 +210,22 @@ export function describeBox(b: Box, ctx?: { before: string; after: string }): st
   if (ctx && (ctx.before || ctx.after)) {
     lines.push(`  sits in the question as: …${ctx.before} [${b.index}] ${ctx.after}…`);
   }
+  if (specials?.length) {
+    lines.push(`  obey the problem's special-case rule: when it applies, this box takes the word ${specials.join(' or ')}, otherwise the computed value.`);
+  }
   return lines.join('\n');
+}
+
+/** "…enter PARALLEL or PERPENDICULAR…" → ["PARALLEL or PERPENDICULAR"]. */
+function specialInstructions(text: string): string[] {
+  const out: string[] = [];
+  const re = /\benter\s+([A-Z]{2,}(?:\s+or\s+[A-Z]{2,})?)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const s = m[1].replace(/\s+/g, ' ').trim();
+    if (!out.includes(s)) out.push(s);
+  }
+  return out;
 }
 
 /** Text immediately around each `[n]` marker, so the model sees printed delimiters. */
@@ -233,7 +250,8 @@ export function questionPrompt(q: Question, opts: { images: boolean; transcript:
   if (q.total != null) parts.push(`Points: ${q.total}`);
   parts.push('## Problem\n' + stripChrome(q.text).trim());
   const ctx = boxContexts(q);
-  parts.push('## Answer boxes\n' + (q.boxes.length ? q.boxes.map((b) => describeBox(b, ctx.get(b.index))).join('\n') : '(none)'));
+  const specials = specialInstructions(stripChrome(q.text));
+  parts.push('## Answer boxes\n' + (q.boxes.length ? q.boxes.map((b) => describeBox(b, ctx.get(b.index), specials)).join('\n') : '(none)'));
   if (opts.transcript) parts.push('## Figures (transcribed from the images)\n' + opts.transcript);
   if (opts.images) parts.push('The referenced images are attached to this message — read them carefully.');
   return parts.join('\n\n');
@@ -328,7 +346,7 @@ export function answersFromReply(reply: AiReply): ModelReply {
 export function normalizeAnswers(q: Question, answers: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(answers)) {
-    const key = String(k).trim();
+    const key = String(k).trim().replace(/[\[\]]/g, '');
     let box: Box | undefined;
     if (/^\d+$/.test(key)) box = q.boxes[Number(key) - 1];
     else if (/^[a-z]$/i.test(key)) box = q.boxes[key.toLowerCase().charCodeAt(0) - 97];
