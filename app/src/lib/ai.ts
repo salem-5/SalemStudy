@@ -41,16 +41,45 @@ export type ImagePart = { type: 'image_url'; image_url: { url: string } };
 export type ApiContent = string | (TextPart | ImagePart)[];
 export type ApiMessage = { role: 'system' | 'user' | 'assistant'; content: ApiContent };
 
-export type AiReply = { content: string; reasoning: string; model: string; usage: unknown };
+export type ToolCall = { id: string; type: string; function: { name: string; arguments: string } };
+export type AiReply = { content: string; reasoning: string; model: string; usage: unknown; tool_calls?: ToolCall[] | null };
 
-export const aiChat = (args: { model: string; messages: ApiMessage[]; thinking?: boolean; effort?: string; json?: boolean }) =>
+export const aiChat = (args: {
+  model: string;
+  messages: ApiMessage[];
+  thinking?: boolean;
+  effort?: string;
+  json?: boolean;
+  tools?: unknown[];
+  toolChoice?: unknown;
+}) =>
   invoke<AiReply>('deepseek_chat', {
     model: args.model,
     messages: args.messages,
     thinking: args.thinking ?? null,
     effort: args.effort ?? null,
     json: args.json ?? null,
+    tools: args.tools ?? null,
+    choice: args.toolChoice ?? null,
   });
+
+/** Forced tool call — the most reliable way to get structured answers out. */
+export const SUBMIT_TOOL = {
+  type: 'function',
+  function: {
+    name: 'submit_answers',
+    description: 'Submit the final answer for every answer box.',
+    parameters: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', description: 'Short reasoning the student can read.' },
+        answers: { type: 'object', description: 'Map from box index (as a string, e.g. "1") to the answer.', additionalProperties: true },
+      },
+      required: ['answers'],
+    },
+  },
+};
+export const FORCE_SUBMIT = { type: 'function', function: { name: 'submit_answers' } };
 
 // ---------------------------------------------------------------------------
 // Images
@@ -275,6 +304,20 @@ export function parseModelReply(content: string): ModelReply {
   if (a && typeof a === 'object' && !Array.isArray(a)) answers = a as Record<string, unknown>;
   else if (Array.isArray(a)) answers = Object.fromEntries(a.map((v, i) => [String(i + 1), v]));
   return { message, answers, raw };
+}
+
+/** Prefer the forced tool call's arguments; fall back to parsing the content. */
+export function answersFromReply(reply: AiReply): ModelReply {
+  const call = (reply.tool_calls ?? []).find((t) => t.function?.name === 'submit_answers');
+  if (call) {
+    const obj = extractJsonObject(call.function.arguments ?? '');
+    const a = obj?.answers;
+    if (a && typeof a === 'object' && !Array.isArray(a)) {
+      const message = typeof obj!.message === 'string' ? obj!.message : '';
+      return { message, answers: a as Record<string, unknown>, raw: call.function.arguments ?? '' };
+    }
+  }
+  return parseModelReply(reply.content ?? '');
 }
 
 // ---------------------------------------------------------------------------

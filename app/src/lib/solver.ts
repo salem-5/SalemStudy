@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Question, SubmitResult } from '../types';
 import {
-  aiChat, applyDeduction, extractJsonObject, getAiConfig, gradeFeedback, learnFromResults, loadImages,
-  normalizeAnswers, parseModelReply, questionImages, questionPrompt, SYSTEM_PROMPT, TRANSCRIBE_PROMPT,
-  validateAnswers, type AiConfig, type ApiContent, type ApiMessage,
+  aiChat, answersFromReply, applyDeduction, extractJsonObject, FORCE_SUBMIT, getAiConfig, gradeFeedback,
+  learnFromResults, loadImages, normalizeAnswers, questionImages, questionPrompt, SUBMIT_TOOL, SYSTEM_PROMPT,
+  TRANSCRIBE_PROMPT, validateAnswers, type AiConfig, type ApiContent, type ApiMessage,
 } from './ai';
 import { addUsage, bucketOf, emptyPair, fmtCost, fmtInt, pairCalls, pairCost, pairTotal, type Agg } from './usage';
 
@@ -212,7 +212,8 @@ export function useSolver(deps: SolverDeps) {
 
         let reply;
         try {
-          reply = await aiChat({ model, messages, thinking: a > 0, effort: a > 0 ? 'high' : undefined, json: true });
+          // Forced tool call: the reliable way to get structured answers.
+          reply = await aiChat({ model, messages, thinking: false, tools: [SUBMIT_TOOL], toolChoice: FORCE_SUBMIT });
         } catch (e) {
           push({ role: 'system', kind: 'error', tone: 'bad', text: errText(e) });
           setStat('failed');
@@ -221,7 +222,7 @@ export function useSolver(deps: SolverDeps) {
         if (stopRef.current) { setStat('stopped'); return 'stopped'; }
         trackUsage(model, reply.usage);
 
-        const parsed = parseModelReply(reply.content);
+        const parsed = answersFromReply(reply);
         const proposed = parsed.answers ? normalizeAnswers(q, parsed.answers) : {};
         const { answers, notes } = applyDeduction(q, proposed, correctRef.current, elimRef.current);
         const hasAnswers = Object.keys(answers).length > 0;
@@ -232,9 +233,10 @@ export function useSolver(deps: SolverDeps) {
         setAttempt(a + 1);
 
         if (!hasAnswers) {
-          const note = 'You did not return any answers. Reply with the JSON object containing "answers".';
-          push({ role: 'system', kind: 'feedback', tone: 'bad', text: note });
-          convoRef.current.push({ role: 'user', content: note });
+          // A malformed reply poisons the thread; a clean session reliably fixes
+          // it, so drop the conversation and retry from the question prompt.
+          convoRef.current = [];
+          push({ role: 'system', kind: 'feedback', tone: 'bad', text: 'No answers in the reply — resetting the conversation and retrying.' });
           continue;
         }
         const errs = validateAnswers(q, answers);

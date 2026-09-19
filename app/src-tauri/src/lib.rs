@@ -195,6 +195,8 @@ async fn deepseek_chat(
     thinking: Option<bool>,
     effort: Option<String>,
     json: Option<bool>,
+    tools: Option<Value>,
+    choice: Option<Value>,
 ) -> Result<Value, String> {
     let c = read_config(&app);
     if c.api_key.is_empty() {
@@ -212,6 +214,12 @@ async fn deepseek_chat(
     }
     if json == Some(true) {
         body["response_format"] = json!({ "type": "json_object" });
+    }
+    if let Some(t) = tools {
+        if !t.is_null() { body["tools"] = t; }
+    }
+    if let Some(ch) = choice {
+        if !ch.is_null() { body["tool_choice"] = ch; }
     }
 
     let resp = state
@@ -244,6 +252,7 @@ async fn deepseek_chat(
         "reasoning": message.get("reasoning_content").and_then(Value::as_str).unwrap_or(""),
         "model": value.get("model").and_then(Value::as_str).unwrap_or(""),
         "usage": value.get("usage").cloned().unwrap_or(Value::Null),
+        "tool_calls": message.get("tool_calls").cloned().unwrap_or(Value::Null),
     }))
 }
 
