@@ -60,7 +60,7 @@ const WA_BASE = 'https://www.webassign.net';
 // MathType's accessibility overlay can leak into the extracted text; never feed
 // it to the model or treat its icon as a figure.
 const CHROME_TEXT = /Press Space or Enter to edit this math answer\.?/gi;
-const CHROME_IMG = /mathtype|overlay/i;
+const CHROME_IMG = /mathtype|overlay|mcorrect|mincorrect|mpartial/i;
 
 export const stripChrome = (text: string): string =>
   text.replace(CHROME_TEXT, '').replace(/\[image: ([^\]]+)\]/gi, (m, url: string) => (CHROME_IMG.test(url) ? '' : m));
@@ -95,11 +95,45 @@ export async function loadImages(urls: string[]): Promise<string[]> {
   const LIMIT = 24 * 1024 * 1024;
   for (const r of results) {
     if (!r) continue;
-    if (total + r.length > LIMIT) break;
-    total += r.length;
-    out.push(r);
+    const usable = await toSupportedImage(r);
+    if (!usable) continue;
+    if (total + usable.length > LIMIT) break;
+    total += usable.length;
+    out.push(usable);
   }
   return out;
+}
+
+const RASTER = /^data:image\/(?:png|jpe?g|gif|webp)[;,]/i;
+
+/**
+ * DeepSeek only accepts png/jpeg/gif/webp. WebAssign also uses SVG, so convert
+ * anything else to PNG through a canvas (and drop it if it can't be decoded).
+ */
+async function toSupportedImage(dataUrl: string): Promise<string | null> {
+  if (RASTER.test(dataUrl)) return dataUrl;
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('decode failed'));
+      el.src = dataUrl;
+    });
+    const scale = Math.min(1, 1600 / Math.max(img.naturalWidth || 800, img.naturalHeight || 600));
+    const w = Math.max(1, Math.round((img.naturalWidth || 800) * scale));
+    const h = Math.max(1, Math.round((img.naturalHeight || 600) * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    return canvas.toDataURL('image/png');
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -122,6 +156,7 @@ Answer rules:
 - multiselect: a JSON array with one entry per dropdown, in order (use "" to leave one blank).
 - unsupported boxes: a raw response string only if you are sure; otherwise omit.
 - Omit a box, or set it to null, to leave it unchanged.
+- Delimiters the question already prints around a box belong to the question, not the answer. If a box sits inside parentheses, brackets, braces, angle brackets or absolute-value bars that are already shown (e.g. "= ( [2] )"), return only the inside — never repeat those outer delimiters. Only include delimiters that are part of the answer itself (e.g. a vector's own angle brackets).
 
 Math syntax:
 - Fractions: 1/2, (x+1)/(x-2). After "/", only one factor is the denominator, so use parentheses.
@@ -135,13 +170,32 @@ Math syntax:
 
 If the user gives extra instructions or corrections, follow them. If feedback says an answer was wrong, rethink from scratch and give a corrected answer. Always reply with the JSON object.`;
 
-export function describeBox(b: Box): string {
+export function describeBox(b: Box, ctx?: { before: string; after: string }): string {
   const lines = [`[${b.index}] kind=${b.kind}${b.display ? ` display=${b.display}` : ''}`];
   if (b.part.maxSubmissions != null) lines.push(`  attempts ${b.part.submissions ?? 0}/${b.part.maxSubmissions}`);
   if (b.choices?.length) lines.push('  choices: ' + b.choices.map((c) => `${JSON.stringify(c.value)}=${JSON.stringify(c.label)}`).join(' | '));
   if (b.hint) lines.push('  hint: ' + b.hint);
   if (b.status !== 'unanswered') lines.push(`  last grade: ${b.status}${b.mark?.title ? ` (${b.mark.title})` : ''}`);
+  if (ctx && (ctx.before || ctx.after)) {
+    lines.push(`  sits in the question as: …${ctx.before} [${b.index}] ${ctx.after}…`);
+  }
   return lines.join('\n');
+}
+
+/** Text immediately around each `[n]` marker, so the model sees printed delimiters. */
+function boxContexts(q: Question): Map<number, { before: string; after: string }> {
+  const out = new Map<number, { before: string; after: string }>();
+  const text = stripChrome(q.text);
+  const re = /\[(\d+)\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const n = Number(m[1]);
+    if (out.has(n)) continue;
+    const before = text.slice(Math.max(0, m.index - 48), m.index).replace(/\s+/g, ' ').trim();
+    const after = text.slice(m.index + m[0].length, m.index + m[0].length + 48).replace(/\s+/g, ' ').trim();
+    out.set(n, { before, after });
+  }
+  return out;
 }
 
 export function questionPrompt(q: Question, opts: { images: boolean; transcript: string | null }): string {
@@ -149,7 +203,8 @@ export function questionPrompt(q: Question, opts: { images: boolean; transcript:
   parts.push(`# Question ${q.number}${q.code ? ` — ${q.code}` : ''}`);
   if (q.total != null) parts.push(`Points: ${q.total}`);
   parts.push('## Problem\n' + stripChrome(q.text).trim());
-  parts.push('## Answer boxes\n' + (q.boxes.length ? q.boxes.map(describeBox).join('\n') : '(none)'));
+  const ctx = boxContexts(q);
+  parts.push('## Answer boxes\n' + (q.boxes.length ? q.boxes.map((b) => describeBox(b, ctx.get(b.index))).join('\n') : '(none)'));
   if (opts.transcript) parts.push('## Figures (transcribed from the images)\n' + opts.transcript);
   if (opts.images) parts.push('The referenced images are attached to this message — read them carefully.');
   return parts.join('\n\n');

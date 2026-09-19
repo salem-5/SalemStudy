@@ -37,6 +37,8 @@ function QuestionText({ text, boxes }: { text: string; boxes: Box[] }) {
         }
         const img = /^\[image: ([^\]]+)\]$/.exec(p);
         if (img) {
+          // MathType grading-mark icons are noise, not figures.
+          if (/mcorrect|mincorrect|mpartial/i.test(img[1])) return null;
           const src = img[1].startsWith('/') ? WA + img[1] : img[1];
           return <img key={i} className="qimg" src={src} alt="" />;
         }
