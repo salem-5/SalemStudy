@@ -373,9 +373,20 @@ function watexFraction(el: Element, ctx: Ctx): string | null {
   return build(cells[0], cells[cells.length - 1]);
 }
 
+/** The column alignment WebAssign gives a watexarray cell. */
+const cellAlign = (c: Element | undefined): string =>
+  c?.classList.contains('watexright') ? 'r'
+    : c?.classList.contains('watexcenter') ? 'c' : 'l';
+
 function table(el: Element, ctx: Ctx): string {
-  // watex builds layout out of tables; most are already glyphs and spans.
-  if (/watex/.test(el.className)) return watexFraction(el, ctx) ?? kids(el, ctx);
+  // watex builds layout out of tables. A fraction is put back together as
+  // \frac; an aligned array is a real grid, so keep its cells and alignment.
+  // Anything else is layout and its cells are already glyphs and spans.
+  if (/watex/.test(el.className)) {
+    const frac = watexFraction(el, ctx);
+    if (frac) return frac;
+    if (!el.classList.contains('watexarray')) return kids(el, ctx);
+  }
   const rows = rowsOf(el);
   if (!rows.length) return kids(el, ctx);
   const cols = Math.max(1, ...rows.map((r) => r.children.length));
@@ -385,7 +396,10 @@ function table(el: Element, ctx: Ctx): string {
     .join(' \\\\\n');
   if (!body) return '';
   const ruled = /border/i.test(el.getAttribute('style') ?? '') || el.hasAttribute('border');
-  const spec = ruled ? `|${'l|'.repeat(cols)}` : `@{}${'l@{\\hspace{1.4em}}'.repeat(cols - 1)}l@{}`;
+  const array = el.classList.contains('watexarray');
+  const spec = ruled ? `|${'l|'.repeat(cols)}`
+    : array ? `@{}${Array.from({ length: cols }, (_, i) => cellAlign(rows[0]?.children[i])).join('')}@{}`
+      : `@{}${'l@{\\hspace{1.4em}}'.repeat(cols - 1)}l@{}`;
   // A bordered table gets a rule under every row, the way the browser draws it.
   const grid = ruled ? body.replace(/ \\\\\n/g, ' \\\\\n\\hline\n') : body;
   return `\n\\par\\noindent{\\renewcommand{\\arraystretch}{1.3}%
