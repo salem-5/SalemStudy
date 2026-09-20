@@ -92,6 +92,8 @@ type Ctx = {
   boxes: Box[];
   imgRef: (url: string, alt: string) => string | null;
   seen: { statics: number };
+  /** Depth of inline-block ancestors: their block children stay on the line. */
+  inline: number;
 };
 
 const parse = (html: string): Element => {
@@ -229,6 +231,15 @@ const BLOCK = new Set(['p', 'div', 'section', 'article', 'tr', 'h1', 'h2', 'h3',
 const BLOCK_CLASS = ['ms', 'wa1par', 'wa1ans', 'wa1given', 'fitb', 'figure', 'multBox', 'watexline'];
 const SKIP = new Set(['script', 'style', 'noscript', 'select', 'input', 'textarea', 'button', 'option']);
 
+/**
+ * WebAssign lays a formula out as inline-block boxes, each holding a block
+ * `div`. The browser keeps them side by side on one line, so a block child of
+ * an inline-block must not become a paragraph of its own.
+ */
+const isInlineBox = (el: Element): boolean =>
+  el.classList.contains('watexinlineblock')
+  || /display\s*:\s*inline(-block|-table|-flex)?\b/i.test(el.getAttribute('style') ?? '');
+
 const kids = (el: Element, ctx: Ctx): string =>
   Array.from(el.childNodes).map((c) => node(c, ctx)).join('');
 
@@ -278,10 +289,12 @@ function node(n: Node, ctx: Ctx): string {
     return blank(body) ? '' : `\n{\\footnotesize\\color{wamuted}${body}\\par}\n`;
   }
 
-  const body = kids(el, ctx);
+  const inline = isInlineBox(el);
+  const body = inline ? kids(el, { ...ctx, inline: ctx.inline + 1 }) : kids(el, ctx);
   if (isBold(el)) return styled(body, 'mathbf', 'textbf');
   if (isItalic(el)) return styled(body, 'mathit', 'textit');
-  if (BLOCK.has(tag) || BLOCK_CLASS.some((c) => el.classList.contains(c))) return `\n${body}\n`;
+  const block = BLOCK.has(tag) || BLOCK_CLASS.some((c) => el.classList.contains(c));
+  if (block && !inline && !ctx.inline) return `\n${body}\n`;
   return body;
 }
 
@@ -916,6 +929,7 @@ export function assignmentToLatex(a: Assignment, meta: ExportMeta = {}): LatexEx
       plan,
       boxes: q.boxes,
       seen: { statics: 0 },
+      inline: 0,
       imgRef: (url, alt) => {
         const file = imgRef(url, alt);
         const fig = file && byUrl.get(url);
