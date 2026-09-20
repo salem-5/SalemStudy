@@ -603,6 +603,37 @@ function partsOf(q: Question, plan: Plan, ctx: Ctx): Part[] {
   });
 }
 
+/** A rough height in cm for a rendered question body — figures dominate it. */
+function bodyHeight(tex: string): number {
+  let cm = 0;
+  for (const m of tex.matchAll(/\\wafig(w|h)?\{([0-9.]+)pt\}/g)) {
+    // Height is known outright; a width only bounds it, so guess a square-ish
+    // figure. A figure with neither prints at its own size, around 5cm.
+    cm += m[1] === 'h' ? Number(m[2]) / 28.45 + 0.8 : 4.5;
+  }
+  cm += (tex.match(/\\wafig\{/g)?.length ?? 0) * 5;
+  const words = tex.replace(/\\[a-zA-Z]+\*?|[{}$&\\]/g, ' ').replace(/\s+/g, ' ').trim();
+  return cm + Math.ceil(words.length / 90) * 0.55;
+}
+
+/**
+ * Roughly how tall everything below a question's first line is, in cm: the
+ * working box, then one entry per answer. A question that does not fit in what
+ * is left of the page starts on the next one instead of being split.
+ * Capped, so a genuinely long question can still break somewhere.
+ */
+function needSpace(parts: Part[], workings: boolean, body: string): string {
+  let cm = 1.5 + bodyHeight(body); // heading and rule, then the question itself
+  if (workings) cm += Number.parseFloat(workingHeight(parts)) + 1.1;
+  for (const p of parts) {
+    if (p.inline) cm += 0.7;
+    else if (p.options?.length) cm += p.subs * (0.6 + 0.75 * Math.ceil(p.options.length / 3));
+    else if (p.kind === 'essay') cm += 4.2;
+    else cm += p.subs * 1.3;
+  }
+  return `${Math.min(cm, 11).toFixed(1)}cm`;
+}
+
 /** Room to work in, sized by how much the question asks for. */
 const WORK_CM: Record<string, number> = {
   essay: 3, math: 1.5, static: 1.5, text: 1.2, unsupported: 1.2,
@@ -768,8 +799,10 @@ const PREAMBLE = String.raw`\usepackage[margin=1.9cm,headheight=15pt,headsep=11p
 % Keep a heading with what follows it.
 \newcommand{\waneed}[1]{\par\penalty-150\vspace{0pt plus #1}\penalty-150\vspace{0pt plus -#1}}
 
-\newcommand{\waqhead}[3]{%
-  \waneed{4.5\baselineskip}%
+% #4 is how much room the whole question wants, so it is not started near the
+% bottom of a page and then broken before its working box.
+\newcommand{\waqhead}[4]{%
+  \waneed{#4}%
   \par\vspace{1.1em}%
   \noindent\textcolor{waaccent}{\rule{\linewidth}{1pt}}\par\vspace{0.35em}%
   \noindent{\large\bfseries\color{waaccent}#1}\hfill{\small\color{wamuted}#2}\hspace{0.7em}{\small\bfseries#3}%
@@ -811,7 +844,7 @@ const PREAMBLE = String.raw`\usepackage[margin=1.9cm,headheight=15pt,headsep=11p
   \parbox[t]{\dimexpr\linewidth-2.2em-3.2em\relax}{#3}%
   \makebox[3.2em][r]{\small\color{wamuted}#2}\par\vspace{0.35em}}
 % Room to work the answer out in, before the answer boxes.
-\newcommand{\wawork}[1]{\par\vspace{0.8em}\nobreak\noindent
+\newcommand{\wawork}[1]{\par\penalty400\vspace{0.8em}\nobreak\noindent
   {\footnotesize\bfseries\color{wamuted}WORKING}\hspace{0.6em}{\color{waline}\hrulefill}\par\nobreak\vspace{0.3em}
   \noindent\fcolorbox{waline}{white}{\parbox[c][#1][c]{\dimexpr\linewidth-2\fboxsep-2\fboxrule\relax}{\strut}}\par}
 \newcommand{\waansline}{\par\nobreak\vspace{1.3em}\noindent\hspace*{1.7em}%
@@ -895,9 +928,10 @@ export function assignmentToLatex(a: Assignment, meta: ExportMeta = {}): LatexEx
     scheme.push({ q: q.number, parts });
 
     const marks = q.total != null ? `[${q.total} mark${q.total === 1 ? '' : 's'}]` : '';
+    const printed = body || cleanBody(textBody(q));
     return [
-      `\\waqhead{Question ${q.number}}{${q.code ? escText(q.code) : ''}}{${marks}}`,
-      body || cleanBody(textBody(q)),
+      `\\waqhead{Question ${q.number}}{${q.code ? escText(q.code) : ''}}{${marks}}{${needSpace(parts, !!meta.workings, printed)}}`,
+      printed,
       meta.workings ? `\\wawork{${workingHeight(parts)}}` : '',
       answerArea(parts),
       meta.transcript === false ? '' : transcript(q, figures),
