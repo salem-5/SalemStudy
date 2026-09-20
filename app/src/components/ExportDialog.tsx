@@ -7,8 +7,16 @@ import { api, errorText } from '../api';
 import { Modal } from './Dialogs';
 
 export type ExportEntry = { id: number; name: string; assignment: Assignment };
-type Result = { tex: string; pdf: string | null };
+type Result = { tex: string | null; pdf: string | null };
 type Status = 'ready' | 'running' | 'done' | 'error';
+
+/**
+ * How many documents are compiled at the same time. A TeX run is a single
+ * process on a single core, so a batch finishes in roughly the time of the
+ * slowest few rather than the sum of them all; the cap leaves the machine
+ * usable and keeps memory in hand.
+ */
+const lanes = (count: number) => Math.max(1, Math.min(count, navigator.hardwareConcurrency || 4, 6));
 
 type Item = {
   /** What the sheet is called on its first page; the assignment name by default. */
@@ -31,15 +39,19 @@ export function ExportDialog({ entries, meta, onClose }: { entries: ExportEntry[
   const [running, setRunning] = useState(false);
   const [folder, setFolder] = useState<string | null>(null);
   const [done, setDone] = useState(0);
+  /** How many documents are compiling at once right now. */
+  const [width, setWidth] = useState(1);
   const [log, setLog] = useState<string[]>([]);
   const cancelRef = useRef(false);
   const logRef = useRef<HTMLPreElement>(null);
 
   useEffect(() => {
     let stop: (() => void) | undefined;
-    listen<{ stage?: string; line?: string }>('export://progress', (e) => {
-      const { stage, line } = e.payload;
-      setLog((l) => [...l.slice(-400), line ?? `— ${stage ?? ''} —`]);
+    listen<{ job?: string; stage?: string; line?: string }>('export://progress', (e) => {
+      const { job, stage, line } = e.payload;
+      const text = line ?? `— ${stage ?? ''} —`;
+      // Several documents write to this log at once, so each line says whose it is.
+      setLog((l) => [...l.slice(-400), entries.length > 1 && job ? `${job} │ ${text}` : text]);
     }).then((un) => { stop = un; }).catch(() => { /* not in Tauri */ });
     return () => stop?.();
   }, []);
@@ -88,24 +100,44 @@ export function ExportDialog({ entries, meta, onClose }: { entries: ExportEntry[
     return { tex, figures: ok };
   };
 
+  const exportOne = async (i: number, compile: boolean) => {
+    const name = items[i].file.trim() || entries[i].name;
+    patch(i, { status: 'running', error: undefined, result: undefined });
+    try {
+      const { tex, figures } = await prepare(docs[i]);
+      const res = await api.exportLatex(name, tex, compile, figures, name);
+      patch(i, { status: 'done', result: res });
+    } catch (e) {
+      patch(i, { status: 'error', error: errorText(e) });
+    }
+    setDone((d) => d + 1);
+  };
+
   const run = async (compile: boolean) => {
     cancelRef.current = false;
     setRunning(true);
     setDone(0);
-    for (let i = 0; i < entries.length; i++) {
-      if (cancelRef.current) break;
-      const name = items[i].file.trim() || entries[i].name;
-      setLog([`# ${name}`]);
-      patch(i, { status: 'running', error: undefined, result: undefined });
-      try {
-        const { tex, figures } = await prepare(docs[i]);
-        const res = await api.exportLatex(name, tex, compile, figures);
-        patch(i, { status: 'done', result: res });
-      } catch (e) {
-        patch(i, { status: 'error', error: errorText(e) });
-      }
-      setDone(i + 1);
+    setLog([]);
+    const todo = entries.map((_, i) => i);
+    // The first document goes alone: MiKTeX and Tectonic fetch the packages a
+    // document needs on first use, and several of them doing that at once is
+    // what breaks. After it, everything the batch needs is already cached.
+    if (compile && todo.length > 1) {
+      await exportOne(todo.shift()!, compile);
     }
+    // Only compiles run side by side. Saving the source is a file write, so
+    // there is nothing to gain — and the figures of several sheets share the
+    // export folder, which is tidier one document at a time.
+    const width = compile ? lanes(todo.length) : 1;
+    setWidth(width);
+    await Promise.all(
+      Array.from({ length: width }, async () => {
+        while (todo.length && !cancelRef.current) {
+          await exportOne(todo.shift()!, compile);
+        }
+      }),
+    );
+    setWidth(1);
     setRunning(false);
   };
 
@@ -133,7 +165,9 @@ export function ExportDialog({ entries, meta, onClose }: { entries: ExportEntry[
       <div className="export-dialog">
         <div className="export-bar">
           <span className="muted">
-            {running ? `Working… ${done}/${total}` : total > 1 ? `${total} assignments selected` : entries[0]?.name}
+            {running
+              ? `Working… ${done}/${total}${width > 1 ? ` · ${width} at a time` : ''}`
+              : total > 1 ? `${total} assignments selected` : entries[0]?.name}
           </span>
           <span className="spacer" />
           {running
@@ -191,8 +225,8 @@ export function ExportDialog({ entries, meta, onClose }: { entries: ExportEntry[
                   {it.showSource ? 'hide source' : 'source'}
                 </button>
                 {it.status === 'running' && <span className="export-status">compiling…</span>}
-                {it.status === 'done' && (it.result?.pdf || it.result?.tex) && (
-                  <button type="button" className="btn ghost" onClick={() => void open(it.result!.pdf ?? it.result!.tex)}>
+                {it.status === 'done' && (it.result?.pdf ?? it.result?.tex) && (
+                  <button type="button" className="btn ghost" onClick={() => void open((it.result?.pdf ?? it.result?.tex)!)}>
                     Open {it.result?.pdf ? 'PDF' : '.tex'}
                   </button>
                 )}

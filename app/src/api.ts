@@ -48,8 +48,9 @@ export const api = {
     return { ...r, question: normalizeQuestion(r.question) };
   },
   dryRun: (dep: number, n: number, answers: Answers) => call<DryRun>('POST', `${q(dep, n)}/submit?dryRun=1`, { answers }),
-  exportLatex: (name: string, tex: string, compile: boolean, images: { file: string; data: string }[]) =>
-    invoke<{ tex: string; pdf: string | null }>('export_latex', { name, tex, compile, images }),
+  /** `job` labels this document's progress lines when a batch compiles in parallel. */
+  exportLatex: (name: string, tex: string, compile: boolean, images: { file: string; data: string }[], job?: string) =>
+    invoke<{ tex: string | null; pdf: string | null }>('export_latex', { name, tex, compile, images, job: job ?? null }),
   exportPause: (paused: boolean) => invoke<void>('export_pause', { paused }),
   exportCancel: () => invoke<void>('export_cancel'),
   revealPath: (path: string) => invoke<void>('reveal_path', { path }),

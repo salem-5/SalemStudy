@@ -19,3 +19,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 base64 = "0.22"
 axum = "0.8"
 tokio = { version = "1", features = ["net", "sync", "time", "rt"] }
+
+[dev-dependencies]
+# `mock_app` gives the export tests an AppHandle without a window.
+tauri = { version = "2", features = ["test"] }

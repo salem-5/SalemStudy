@@ -11,7 +11,7 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -111,9 +111,13 @@ struct AppState {
     http: reqwest::Client,
     /// Separate client: thinking-model replies can take several minutes.
     deepseek: reqwest::Client,
-    /// Controls for an in-flight LaTeX export.
+    /// Controls for in-flight LaTeX exports. Several run at once, and they
+    /// share the pause/cancel switches: the dialog's buttons stop the batch.
     export_pause: Arc<AtomicBool>,
     export_cancel: Arc<AtomicBool>,
+    /// Exports currently running, so only the first one of a batch clears the
+    /// switches that a later Cancel sets.
+    export_active: Arc<AtomicUsize>,
 }
 
 /// `/api/*` for the webview. Dispatches straight to the in-process bridge, so
@@ -393,6 +397,10 @@ struct ExportImage {
     data: String,
 }
 
+/// Export one assignment. Several of these run at once when a batch is
+/// exported, so each builds in a scratch folder of its own — every document
+/// names its figures `figure-1.png`, and two jobs sharing a folder would
+/// overwrite each other's.
 #[tauri::command]
 async fn export_latex(
     app: AppHandle,
@@ -401,22 +409,63 @@ async fn export_latex(
     tex: String,
     compile: bool,
     images: Vec<ExportImage>,
+    job: Option<String>,
 ) -> Result<Value, String> {
     let dir = app
         .path()
         .document_dir()
         .or_else(|_| app.path().download_dir())
         .map_err(|e| format!("cannot find the Documents folder: {e}"))?;
-    state.export_cancel.store(false, Ordering::Relaxed);
-    state.export_pause.store(false, Ordering::Relaxed);
+    let work = scratch_dir(&app, &safe_name(&name))?;
+    // Only the first job of a batch clears the switches; a later one starting
+    // must not undo a Cancel the user has already pressed.
+    if state.export_active.fetch_add(1, Ordering::SeqCst) == 0 {
+        state.export_cancel.store(false, Ordering::Relaxed);
+        state.export_pause.store(false, Ordering::Relaxed);
+    }
     let pause = state.export_pause.clone();
     let cancel = state.export_cancel.clone();
+    let active = state.export_active.clone();
     let app2 = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        export_latex_blocking(&app2, &dir, &name, &tex, compile, &images, &pause, &cancel)
+    let job = job.unwrap_or_else(|| name.clone());
+    let out = tauri::async_runtime::spawn_blocking(move || {
+        let r = export_latex_blocking(&app2, &dir, &work, &name, &tex, compile, &images, &pause, &cancel, &job);
+        let _ = std::fs::remove_dir_all(&work);
+        r
     })
-    .await
-    .map_err(|e| format!("export task failed: {e}"))?
+    .await;
+    active.fetch_sub(1, Ordering::SeqCst);
+    out.map_err(|e| format!("export task failed: {e}"))?
+}
+
+/// A private folder to build one document in, under the app cache dir.
+fn scratch_dir(app: &AppHandle, base: &str) -> Result<PathBuf, String> {
+    let root = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| e.to_string())?
+        .join("export");
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let n = EXPORT_SEQ.fetch_add(1, Ordering::Relaxed);
+    let dir = root.join(format!("{base}-{stamp}-{n}"));
+    fs::create_dir_all(&dir).map_err(|e| format!("could not create a build folder: {e}"))?;
+    Ok(dir)
+}
+
+static EXPORT_SEQ: AtomicUsize = AtomicUsize::new(0);
+
+/// Build folders only outlive an export after a crash. Called once at startup.
+fn sweep_exports(app: &AppHandle) {
+    let Ok(root) = app.path().app_cache_dir().map(|d| d.join("export")) else { return };
+    let Ok(entries) = fs::read_dir(&root) else { return };
+    for e in entries.flatten() {
+        if e.path().is_dir() {
+            let _ = fs::remove_dir_all(e.path());
+        }
+    }
 }
 
 #[tauri::command]
@@ -514,28 +563,6 @@ fn reveal_path(path: String) -> Result<(), String> {
 }
 
 /// Delete the intermediate files an export creates, leaving only the PDF.
-fn cleanup_export(dir: &std::path::Path, base: &str, images: &[ExportImage]) {
-    let mut names: Vec<String> = vec![format!("{base}.tex")];
-    for ext in ["aux", "log", "out", "fls", "fdb_latexmk", "synctex.gz", "toc"] {
-        names.push(format!("{base}.{ext}"));
-    }
-    for img in images {
-        names.push(safe_name(&img.file));
-    }
-    for n in names {
-        let _ = std::fs::remove_file(dir.join(n));
-    }
-    // Any figure PNGs this app wrote for the export.
-    if let Ok(rd) = std::fs::read_dir(dir) {
-        for e in rd.flatten() {
-            let name = e.file_name().to_string_lossy().to_string();
-            if name.starts_with("figure-") && name.ends_with(".png") {
-                let _ = std::fs::remove_file(e.path());
-            }
-        }
-    }
-}
-
 fn safe_name(s: &str) -> String {
     let out: String = s
         .chars()
@@ -669,47 +696,83 @@ fn install_tex_help() -> &'static str {
     }
 }
 
+/// Move a finished file out of the build folder and into the export folder,
+/// across filesystems if that is where Documents lives.
+fn move_out(from: &std::path::Path, to: &std::path::Path) -> Result<(), String> {
+    if std::fs::rename(from, to).is_ok() {
+        return Ok(());
+    }
+    std::fs::copy(from, to).map_err(|e| format!("could not write {}: {e}", to.display()))?;
+    let _ = std::fs::remove_file(from);
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
-fn export_latex_blocking(
-    app: &AppHandle,
+// Generic over the runtime so the tests can drive it with a mock app; the only
+// thing the handle is used for is the progress event.
+fn export_latex_blocking<R: tauri::Runtime>(
+    app: &AppHandle<R>,
     dir: &std::path::Path,
+    work: &std::path::Path,
     name: &str,
     tex: &str,
     compile: bool,
     images: &[ExportImage],
     pause: &AtomicBool,
     cancel: &AtomicBool,
+    job: &str,
 ) -> Result<Value, String> {
     let emit = |stage: &str, line: &str| {
-        let _ = app.emit("export://progress", json!({ "stage": stage, "line": line }));
+        // `job` tells the dialog which document a line belongs to when several
+        // are compiling at once.
+        let _ = app.emit("export://progress", json!({ "job": job, "stage": stage, "line": line }));
     };
     emit("stage", "Writing files…");
     std::fs::create_dir_all(dir).ok();
     let base = safe_name(name);
-    let tex_path = dir.join(format!("{base}.tex"));
+    // Everything is written into this job's own folder; only the finished
+    // files move to `dir`.
+    let tex_path = work.join(format!("{base}.tex"));
     std::fs::write(&tex_path, tex).map_err(|e| format!("could not write the .tex file: {e}"))?;
-    let tex_s = tex_path.to_string_lossy().to_string();
+    let out_tex = dir.join(format!("{base}.tex"));
 
     // Figures, written next to the .tex so \includegraphics finds them.
+    let mut figures: Vec<std::path::PathBuf> = Vec::new();
     for img in images {
         let file = safe_name(&img.file);
         let b64 = img.data.split_once(',').map(|(_, b)| b).unwrap_or(&img.data);
         match base64::engine::general_purpose::STANDARD.decode(b64) {
             Ok(bytes) => {
-                let _ = std::fs::write(dir.join(file), bytes);
+                let path = work.join(&file);
+                if std::fs::write(&path, bytes).is_ok() {
+                    figures.push(path);
+                }
             }
             Err(e) => eprintln!("skipping image {}: {e}", img.file),
         }
     }
 
+    // The saved source is only useful with its figures beside it.
+    let save_source = |figs: &[std::path::PathBuf]| -> Result<String, String> {
+        move_out(&tex_path, &out_tex)?;
+        for f in figs {
+            if let Some(n) = f.file_name() {
+                let _ = move_out(f, &dir.join(n));
+            }
+        }
+        Ok(out_tex.to_string_lossy().to_string())
+    };
+
     if !compile {
+        let saved = save_source(&figures)?;
         emit("stage", "Saved LaTeX source.");
-        return Ok(json!({ "tex": tex_s, "pdf": Value::Null }));
+        return Ok(json!({ "tex": saved, "pdf": Value::Null }));
     }
 
     let tex_bin = match find_tex() {
         Some(t) => t,
         None => {
+            let _ = save_source(&figures);
             return Err(format!(
                 "Could not find a TeX engine to build the PDF. {} The .tex file was saved to {}.",
                 install_tex_help(),
@@ -751,16 +814,18 @@ fn export_latex_blocking(
                 cmd.arg("-interaction=nonstopmode")
                     .arg("-halt-on-error")
                     .arg("-output-directory")
-                    .arg(dir)
+                    .arg(work)
                     .arg(&tex_path);
             }
             TexEngine::Tectonic => {
                 // Tectonic downloads what the document needs on first use, so
                 // the first export on a new machine wants a network connection.
-                cmd.arg("--outdir").arg(dir).arg("--chatter").arg("minimal").arg(&tex_path);
+                cmd.arg("--outdir").arg(work).arg("--chatter").arg("minimal").arg(&tex_path);
             }
         }
-        cmd.current_dir(dir).env("PATH", &clean_path);
+        // The build happens entirely inside this job's folder: the .aux, .log
+        // and figures belong to it alone, so parallel exports cannot collide.
+        cmd.current_dir(work).env("PATH", &clean_path);
         // pdflatex reports on stdout, Tectonic on stderr.
         if engine == TexEngine::Tectonic {
             cmd.stdout(Stdio::null()).stderr(Stdio::piped());
@@ -772,6 +837,7 @@ fn export_latex_blocking(
         let mut child = match child {
             Ok(c) => c,
             Err(e) => {
+                let _ = save_source(&figures);
                 return Err(format!(
                     "Could not run '{}' ({e}). {} The .tex file was saved.",
                     bin.display(),
@@ -814,16 +880,25 @@ fn export_latex_blocking(
         let _ = child.wait();
     }
 
-    let pdf = dir.join(format!("{base}.pdf"));
-    if pdf.exists() {
-        // The PDF keeps exactly the name the export dialog asked for.
-        cleanup_export(dir, &base, images);
+    let built = work.join(format!("{base}.pdf"));
+    if built.exists() {
+        // Only the PDF leaves the build folder, under exactly the name the
+        // export dialog asked for; the source and the figures go with the
+        // folder when it is deleted.
+        let pdf = dir.join(format!("{base}.pdf"));
+        move_out(&built, &pdf)?;
         emit("stage", "PDF built.");
-        Ok(json!({ "tex": tex_s, "pdf": pdf.to_string_lossy() }))
+        Ok(json!({ "tex": Value::Null, "pdf": pdf.to_string_lossy() }))
     } else {
+        // Nothing to open, so leave the user the source to look at.
+        let saved = save_source(&figures).unwrap_or_default();
         let last: Vec<&str> = tail.iter().rev().take(25).map(|s| s.as_str()).collect();
         let last: Vec<&str> = last.into_iter().rev().collect();
-        Err(format!("pdflatex could not build the PDF:\n{}", last.join("\n")))
+        Err(format!(
+            "{} could not build the PDF (the .tex was saved to {saved}):\n{}",
+            engine.name(),
+            last.join("\n")
+        ))
     }
 }
 
@@ -889,12 +964,14 @@ pub fn run() {
             deepseek,
             export_pause: Arc::new(AtomicBool::new(false)),
             export_cancel: Arc::new(AtomicBool::new(false)),
+            export_active: Arc::new(AtomicUsize::new(0)),
         })
         .setup(move |app| {
             start_server(bridge.clone());
             bridge::spawn_logger(bridge.clone());
             // Sandbox folders only ever outlive a run after a crash.
             python::sweep_sandboxes(&app.handle().clone());
+            sweep_exports(&app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -921,4 +998,105 @@ pub fn run() {
         .expect("error while building WebAssign Desk");
 
     app.run(|_, _| {});
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::*;
+    use std::sync::atomic::AtomicBool;
+
+    const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+    fn doc(title: &str) -> String {
+        // Every document refers to `figure-1.png`, which is exactly the case
+        // that used to make two parallel exports overwrite each other.
+        format!(
+            "\\documentclass{{article}}\\usepackage{{graphicx}}\\begin{{document}}\
+             \\section*{{{title}}}\\includegraphics[width=1cm]{{figure-1.png}}\\end{{document}}"
+        )
+    }
+
+    fn figures() -> Vec<ExportImage> {
+        vec![ExportImage { file: "figure-1.png".into(), data: format!("data:image/png;base64,{PNG}") }]
+    }
+
+    /// Three documents compiled at once land as three PDFs, and nothing else
+    /// is left in the export folder.
+    #[test]
+    fn parallel_exports_do_not_collide() {
+        if find_tex().is_none() {
+            eprintln!("skipped: no TeX engine on this machine");
+            return;
+        }
+        let app = tauri::test::mock_app();
+        let root = std::env::temp_dir().join(format!(
+            "wa-export-test-{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let out = root.join("out");
+        fs::create_dir_all(&out).unwrap();
+
+        let names = ["Alpha sheet", "Beta sheet", "Gamma sheet"];
+        let handles: Vec<_> = names
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                let handle = app.handle().clone();
+                let out = out.clone();
+                let work = root.join(format!("work-{i}"));
+                let name = name.to_string();
+                let tex = doc(&name);
+                std::thread::spawn(move || {
+                    fs::create_dir_all(&work).unwrap();
+                    let pause = AtomicBool::new(false);
+                    let cancel = AtomicBool::new(false);
+                    let r = export_latex_blocking(
+                        &handle, &out, &work, &name, &tex, true, &figures(), &pause, &cancel, &name,
+                    );
+                    let _ = fs::remove_dir_all(&work);
+                    r
+                })
+            })
+            .collect();
+
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        for (name, r) in names.iter().zip(&results) {
+            let v = r.as_ref().unwrap_or_else(|e| panic!("{name} failed: {e}"));
+            let pdf = v["pdf"].as_str().expect("a pdf path");
+            assert!(std::path::Path::new(pdf).exists(), "{pdf} is missing");
+            assert!(pdf.ends_with(&format!("{}.pdf", safe_name(name))));
+        }
+        let left: Vec<String> = fs::read_dir(&out)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(left.len(), 3, "the export folder should hold only the PDFs: {left:?}");
+        assert!(left.iter().all(|n| n.ends_with(".pdf")), "{left:?}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Saving the source keeps the figures beside it, so it still compiles.
+    #[test]
+    fn saving_source_keeps_the_figures() {
+        let app = tauri::test::mock_app();
+        let root = std::env::temp_dir().join(format!(
+            "wa-export-src-{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let out = root.join("out");
+        let work = root.join("work");
+        fs::create_dir_all(&out).unwrap();
+        fs::create_dir_all(&work).unwrap();
+        let pause = AtomicBool::new(false);
+        let cancel = AtomicBool::new(false);
+        let v = export_latex_blocking(
+            &app.handle().clone(), &out, &work, "Delta sheet", &doc("Delta"), false, &figures(), &pause, &cancel, "Delta",
+        )
+        .unwrap();
+        assert!(v["pdf"].is_null());
+        assert!(std::path::Path::new(v["tex"].as_str().unwrap()).exists());
+        assert!(out.join("figure-1.png").exists(), "the figure should sit next to the .tex");
+        let _ = fs::remove_dir_all(&root);
+    }
 }

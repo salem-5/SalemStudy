@@ -162,6 +162,8 @@ Options in the export dialog:
 - **Readable text layer** — a plain-text copy of every question, the maths and each figure's description, typeset in invisible ink and taking no space. It never shows or prints, but anything that reads the PDF's text (a screen reader, NotebookLM, `pdftotext`) gets the question rather than a picture of it.
 - Each row's **title** (what the sheet is called) and **file name** can be edited before exporting.
 
+Several assignments compile at the same time — up to one per core, capped at six — so a batch takes about as long as its slowest few documents rather than the sum of them all. The first document of a batch is built alone, because MiKTeX and Tectonic fetch the packages a document needs on first use and dislike doing that from several processes at once; everything after it runs in parallel. Each document is built in a scratch folder of its own (every sheet names its figures `figure-1.png`, so a shared folder would mean one export overwriting another's), and only the finished PDF is moved into your Documents folder. **Save .tex** stays one at a time and still writes the source together with its figures, so it compiles as it is.
+
 Files land in your Documents folder. The PDF needs a TeX engine, found in this order:
 
 | Platform | Engine | Install |
