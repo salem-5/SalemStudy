@@ -53,6 +53,8 @@ export const api = {
   exportPause: (paused: boolean) => invoke<void>('export_pause', { paused }),
   exportCancel: () => invoke<void>('export_cancel'),
   revealPath: (path: string) => invoke<void>('reveal_path', { path }),
+  openPath: (path: string) => invoke<void>('open_path', { path }),
+  exportDir: () => invoke<string>('export_dir'),
   bridgeInfo: () => invoke<BridgeInfo>('bridge_info'),
   restartBridge: () => invoke<BridgeInfo>('restart_bridge'),
 };

@@ -89,6 +89,7 @@ type Plan = {
 
 type Ctx = {
   plan: Plan;
+  boxes: Box[];
   imgRef: (url: string, alt: string) => string | null;
   seen: { statics: number };
 };
@@ -188,8 +189,12 @@ const CLASS_RULES: [string, (el: Element, ctx: Ctx) => string][] = [
     const sub = (el as HTMLElement).dataset.sub;
     return `\\wavar{${boxLabel(box, sub === undefined ? null : Number(sub))}}`;
   }],
-  ['wa-opt', (el, ctx) => `\\waopt{${ctx.plan.optNo.get(el) ?? 1}}`],
-  ['static-opt', (el, ctx) => `\\waopt{${ctx.plan.optNo.get(el) ?? 1}}`],
+  ['wa-opt', (el, ctx) => {
+    const box = ctx.boxes[Number(el.getAttribute('data-box')) - 1];
+    return `${optMark(box?.kind === 'checkboxes' || box?.display === 'checkbox')}{${ctx.plan.optNo.get(el) ?? 1}}`;
+  }],
+  // A closed question keeps the original input's type on the marker.
+  ['static-opt', (el, ctx) => `${optMark(el.classList.contains('checkbox'))}{${ctx.plan.optNo.get(el) ?? 1}}`],
   ['wa-static', (_el, ctx) => `\\wavar{${ctx.plan.staticLabels[ctx.seen.statics++] ?? '?'}}`],
   ['wa-tex', (el) => {
     const src = texUnicode((el.textContent ?? '').trim());
@@ -373,6 +378,9 @@ function table(el: Element, ctx: Ctx): string {
   return `\n\\par\\noindent{\\renewcommand{\\arraystretch}{1.3}%
 \\begin{tabular}{${spec}}\n${ruled ? '\\hline\n' : ''}${grid}${ruled ? ' \\\\\n\\hline' : ''}\n\\end{tabular}}\\par\n`;
 }
+
+/** A square when several options can be chosen, a circle when only one can. */
+const optMark = (many: boolean | undefined) => (many ? '\\waopts' : '\\waoptc');
 
 /** Roughly how wide a rendered option is, ignoring TeX markup. */
 const visualLen = (s: string) => s.replace(/\\[a-zA-Z]+\*?|[{}$~\\]/g, '').trim().length;
@@ -620,7 +628,8 @@ function answerArea(parts: Part[]): string {
     // A part chosen from a list is answered by ticking one of the choices,
     // not by copying the wording into a box.
     if (p.options?.length) {
-      const grid = optionGrid(p.options.map((o, i) => `\\waopt{${i + 1}}${o}`));
+      const mark = optMark(p.kind === 'checkboxes');
+      const grid = optionGrid(p.options.map((o, i) => `${mark}{${i + 1}}${o}`));
       for (let i = 0; i < p.subs; i++) {
         const label = p.subs > 1 ? `${p.label}${i + 1}` : p.label;
         out.push(`\\waoptset{${label}}{${i === 0 ? marks : ''}}{${grid}}`);
@@ -730,6 +739,7 @@ const PREAMBLE = String.raw`\usepackage[margin=1.9cm,headheight=15pt,headsep=11p
 \definecolor{wamuted}{HTML}{6E7787}
 \definecolor{waline}{HTML}{C3CDDC}
 \definecolor{watint}{HTML}{EDF2FA}
+\definecolor{wamark}{HTML}{7C8AA0}
 
 \setlength{\parindent}{0pt}
 \setlength{\emergencystretch}{3em}
@@ -747,8 +757,13 @@ const PREAMBLE = String.raw`\usepackage[margin=1.9cm,headheight=15pt,headsep=11p
 
 % An answer placeholder inside the question, named like the box below it.
 \newcommand{\wavar}[1]{\,\fcolorbox{waline}{watint}{\rule[-0.3em]{0pt}{1.15em}\small\bfseries\color{waaccent}#1}\,}
-% A numbered tick box in front of an option.
-\newcommand{\waopt}[1]{\framebox[1em]{\rule[-0.2em]{0pt}{0.92em}}\kern0.3em\textbf{\color{waaccent}#1.}\kern0.25em}
+% Options to mark: a circle when the question takes one answer, a square when
+% it takes any number of them. The two glyphs are drawn at different sizes by
+% the fonts, so the square is scaled up to match the circle.
+\newcommand{\waoptmark}[2]{\raisebox{-0.16em}{\textcolor{wamark}{\large$#1$}}%
+  \kern0.45em\textbf{\color{waaccent}#2.}\kern0.35em}
+\newcommand{\waoptc}[1]{\waoptmark{\bigcirc}{#1}}
+\newcommand{\waopts}[1]{\waoptmark{\scalebox{1.35}{$\square$}}{#1}}
 
 % Keep a heading with what follows it.
 \newcommand{\waneed}[1]{\par\penalty-150\vspace{0pt plus #1}\penalty-150\vspace{0pt plus -#1}}
@@ -866,6 +881,7 @@ export function assignmentToLatex(a: Assignment, meta: ExportMeta = {}): LatexEx
     const figures: ExportImage[] = [];
     const ctx: Ctx = {
       plan,
+      boxes: q.boxes,
       seen: { statics: 0 },
       imgRef: (url, alt) => {
         const file = imgRef(url, alt);

@@ -29,6 +29,7 @@ export function ExportDialog({ entries, meta, onClose }: { entries: ExportEntry[
   const [nameFields, setNameFields] = useState(true);
   const [transcript, setTranscript] = useState(true);
   const [running, setRunning] = useState(false);
+  const [folder, setFolder] = useState<string | null>(null);
   const [done, setDone] = useState(0);
   const [log, setLog] = useState<string[]>([]);
   const cancelRef = useRef(false);
@@ -47,6 +48,14 @@ export function ExportDialog({ entries, meta, onClose }: { entries: ExportEntry[
     const el = logRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [log]);
+
+  // Where the files land, so the folder can be opened before exporting too.
+  // Outside Tauri the command is not there at all, hence the try.
+  useEffect(() => {
+    void (async () => {
+      try { setFolder(await api.exportDir()); } catch { setFolder(null); }
+    })();
+  }, []);
 
   const titles = items.map((it) => it.title);
   // The sheet is rebuilt whenever an option changes, so the preview and the
@@ -105,8 +114,15 @@ export function ExportDialog({ entries, meta, onClose }: { entries: ExportEntry[
     try { await api.exportCancel(); } catch { /* */ }
   };
 
-  const reveal = async (path: string) => {
-    try { await api.revealPath(path); } catch { /* */ }
+  const open = async (path: string) => {
+    try { await api.openPath(path); } catch (e) { setLog((l) => [...l, errorText(e)]); }
+  };
+
+  const openFolder = async () => {
+    try {
+      const done = items.find((x) => x.result)?.result;
+      await api.revealPath(done?.pdf ?? done?.tex ?? folder ?? '');
+    } catch { /* */ }
   };
 
   const total = entries.length;
@@ -175,8 +191,10 @@ export function ExportDialog({ entries, meta, onClose }: { entries: ExportEntry[
                   {it.showSource ? 'hide source' : 'source'}
                 </button>
                 {it.status === 'running' && <span className="export-status">compiling…</span>}
-                {it.status === 'done' && it.result?.pdf && (
-                  <button type="button" className="btn ghost" onClick={() => void reveal(it.result!.pdf!)}>Show in Explorer</button>
+                {it.status === 'done' && (it.result?.pdf || it.result?.tex) && (
+                  <button type="button" className="btn ghost" onClick={() => void open(it.result!.pdf ?? it.result!.tex)}>
+                    Open {it.result?.pdf ? 'PDF' : '.tex'}
+                  </button>
                 )}
               </div>
               {it.error && <div className="ai-settings-err export-err">{it.error}</div>}
@@ -189,6 +207,10 @@ export function ExportDialog({ entries, meta, onClose }: { entries: ExportEntry[
         {running && <pre ref={logRef} className="code-block export-log">{log.join('\n') || '…'}</pre>}
 
         <div className="export-bar">
+          <button type="button" className="btn ghost" onClick={() => void openFolder()} title={folder ?? 'the export folder'}>
+            Open folder
+          </button>
+          {folder && <span className="muted export-folder">{folder}</span>}
           <span className="spacer" />
           {finished && <button type="button" className="btn primary" onClick={onClose}>Close</button>}
         </div>

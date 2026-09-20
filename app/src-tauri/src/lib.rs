@@ -394,6 +394,49 @@ fn export_cancel(state: State<'_, AppState>) {
     state.export_pause.store(false, Ordering::Relaxed);
 }
 
+/// Hand a file to whatever the system opens it with (a PDF viewer, usually).
+#[tauri::command]
+fn open_path(path: String) -> Result<(), String> {
+    let p = std::path::PathBuf::from(&path);
+    if !p.exists() {
+        return Err(format!("{} is not there any more.", p.display()));
+    }
+    #[cfg(windows)]
+    let mut cmd = {
+        // `start` is a shell builtin, and its first quoted argument is a window
+        // title, so the path has to be the second one.
+        let mut c = std::process::Command::new("cmd.exe");
+        c.arg("/C").arg("start").arg("").arg(&p);
+        c
+    };
+    #[cfg(target_os = "macos")]
+    let mut cmd = {
+        let mut c = std::process::Command::new("open");
+        c.arg(&p);
+        c
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut cmd = {
+        let mut c = std::process::Command::new("xdg-open");
+        c.arg(&p);
+        c
+    };
+    hide_window(&mut cmd);
+    cmd.spawn().map_err(|e| format!("could not open the file: {e}"))?;
+    Ok(())
+}
+
+/// Where exports are written, so the app can offer to open the folder.
+#[tauri::command]
+fn export_dir(app: AppHandle) -> Result<String, String> {
+    let dir = app
+        .path()
+        .document_dir()
+        .or_else(|_| app.path().download_dir())
+        .map_err(|e| format!("cannot find the Documents folder: {e}"))?;
+    Ok(dir.to_string_lossy().to_string())
+}
+
 #[tauri::command]
 fn reveal_path(path: String) -> Result<(), String> {
     let p = std::path::PathBuf::from(&path);
@@ -829,6 +872,8 @@ pub fn run() {
             export_latex,
             export_pause,
             export_cancel,
+            export_dir,
+            open_path,
             reveal_path
         ])
         .build(tauri::generate_context!())
