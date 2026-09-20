@@ -405,10 +405,10 @@ fn reveal_path(path: String) -> Result<(), String> {
     };
     #[cfg(windows)]
     {
-        std::process::Command::new("explorer.exe")
-            .arg(&dir)
-            .spawn()
-            .map_err(|e| format!("could not open the folder: {e}"))?;
+        let mut cmd = std::process::Command::new("explorer.exe");
+        cmd.arg(&dir);
+        hide_window(&mut cmd);
+        cmd.spawn().map_err(|e| format!("could not open the folder: {e}"))?;
     }
     #[cfg(not(windows))]
     {
@@ -452,6 +452,16 @@ fn safe_name(s: &str) -> String {
     let out = out.trim().to_string();
     let out = if out.is_empty() { "assignment".to_string() } else { out };
     out.chars().take(80).collect()
+}
+
+/// Keep a spawned console program (pdflatex) from flashing a terminal window.
+fn hide_window(cmd: &mut std::process::Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
 }
 
 fn find_pdflatex() -> Option<std::path::PathBuf> {
@@ -561,8 +571,8 @@ fn export_latex_blocking(
             return Err("Export cancelled.".into());
         }
         emit("pass", &format!("pdflatex pass {}/2", pass + 1));
-        let child = std::process::Command::new(&bin)
-            .arg("-interaction=nonstopmode")
+        let mut cmd = std::process::Command::new(&bin);
+        cmd.arg("-interaction=nonstopmode")
             .arg("-halt-on-error")
             .arg("-output-directory")
             .arg(dir)
@@ -570,8 +580,9 @@ fn export_latex_blocking(
             .current_dir(dir)
             .env("PATH", &clean_path)
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn();
+            .stderr(Stdio::null());
+        hide_window(&mut cmd);
+        let child = cmd.spawn();
         let mut child = match child {
             Ok(c) => c,
             Err(e) => {
