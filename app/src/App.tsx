@@ -9,6 +9,7 @@ import {
   cacheAssignment, cacheAge, cachedAssignment, canRefetch, CACHE_TTL_MS, clearCache, isAssignmentComplete, recordRefetch, updateCachedQuestion,
 } from './lib/cache';
 import { useUsage, fmtInt, fmtCost, pairTotal, pairCost } from './lib/usage';
+import { assignmentToLatex } from './lib/latex';
 import { useSolver } from './lib/solver';
 import { fmtDue, parseDue, questionStatus, relTime } from './lib/format';
 import { QuestionView } from './components/QuestionView';
@@ -17,6 +18,7 @@ import { DryRunDialog, ShortcutsDialog, SubmitDialog } from './components/Dialog
 import { AiPanel, AiSettingsDialog } from './components/AiPanel';
 import { ContextMenu, type MenuItem } from './components/ContextMenu';
 import { QuestionSkeleton } from './components/Skeleton';
+import { ExportDialog, type ExportEntry } from './components/ExportDialog';
 import { ConnectPanel, MIN_USERSCRIPT, Sidebar, StatusBar, Toasts, scriptCurrent, type Toast } from './components/Chrome';
 import { Logo } from './components/Logo';
 
@@ -48,6 +50,7 @@ export default function App() {
   const [list, setList] = useState<AssignmentList | null>(null);
   const [listLoading, setListLoading] = useState(false);
   const [selected, setSelected] = useState<number | null>(() => Number(store.get('wa.selected')) || null);
+  const [multi, setMulti] = useState<number[]>([]);
   const [assignment, setAssignment] = useState<Assignment | null>(null);
   const [asgLoading, setAsgLoading] = useState(false);
   const [qnum, setQnum] = useState(1);
@@ -59,6 +62,8 @@ export default function App() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [aiOpen, setAiOpen] = useState(() => store.get('wa.ai.open') === '1');
   const [aiSettings, setAiSettings] = useState(false);
+  const [exportEntries, setExportEntries] = useState<ExportEntry[] | null>(null);
+  const [exportLoading, setExportLoading] = useState<{ done: number; total: number; label: string } | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const drafts = useDrafts();
   const usage = useUsage();
@@ -172,7 +177,12 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected]);
 
-  const selectAssignment = (id: number) => {
+  const selectAssignment = (id: number, additive = false) => {
+    if (additive) {
+      setMulti((m) => (m.includes(id) ? m.filter((x) => x !== id) : [...m, id]));
+      return;
+    }
+    setMulti([]);
     setSelected(id);
     store.set('wa.selected', String(id));
     if (assignment?.id !== id) {
@@ -292,9 +302,41 @@ export default function App() {
     if (nums.length) void solver.start(nums);
   };
 
+  const exportAssignment = async () => {
+    const ids = [...new Set((multi.length ? [selected, ...multi] : [selected]).filter((x): x is number => x != null))];
+    if (!ids.length) return;
+    setExportLoading({ done: 0, total: ids.length, label: 'Loading assignments…' });
+    await new Promise((r) => setTimeout(r, 30));
+    try {
+      const course = courses.find((c) => c.sectionId === section);
+      const meta = { course: course?.course, section: course?.section, term: course?.term };
+      const entries: ExportEntry[] = [];
+      for (let i = 0; i < ids.length; i++) {
+        const id = ids[i];
+        setExportLoading({ done: i, total: ids.length, label: `Loading assignment ${i + 1} of ${ids.length}…` });
+        await new Promise((r) => setTimeout(r, 0));
+        let a: Assignment | null = assignmentRef.current?.id === id ? assignmentRef.current : cachedAssignment(id);
+        if (!a) {
+          try { a = await api.assignment(id); cacheAssignment(a); } catch { a = null; }
+        }
+        if (a) {
+          setExportLoading({ done: i, total: ids.length, label: `Building LaTeX for ${a.name}…` });
+          await new Promise((r) => setTimeout(r, 0));
+          entries.push({ id: a.id, name: a.name || `Assignment ${a.id}`, data: assignmentToLatex(a, meta) });
+        }
+        setExportLoading({ done: i + 1, total: ids.length, label: 'Preparing…' });
+      }
+      if (entries.length) setExportEntries(entries);
+    } finally {
+      setExportLoading(null);
+    }
+  };
+
   const assignmentMenu = (id: number): MenuItem[] => [
     { kind: 'item', label: 'Solve with AI', hint: 'all', onClick: () => void solveAssignment(id) },
     { kind: 'item', label: 'Open AI chat', onClick: () => setAiOpen(true) },
+    { kind: 'sep' },
+    { kind: 'item', label: 'Export LaTeX / PDF…', onClick: () => exportAssignment() },
     { kind: 'sep' },
     { kind: 'item', label: 'AI settings…', onClick: () => { setAiOpen(true); setAiSettings(true); } },
   ];
@@ -438,12 +480,22 @@ export default function App() {
           </div>
         )}
         <button type="button" className="icon-btn" onClick={reload} title="Reload from WebAssign (Ctrl+R)" disabled={!connected}>⟳</button>
+        <button
+          type="button"
+          className="icon-btn"
+          disabled={!connected || !assignment}
+          title="Export assignment (LaTeX / PDF)"
+          onClick={() => exportAssignment()}
+        >
+          ⤓
+        </button>
       </header>
 
       <Sidebar
         list={list}
         loading={listLoading}
         selected={selected}
+        multi={multi}
         onSelect={selectAssignment}
         courses={courses}
         section={section}
@@ -538,6 +590,20 @@ export default function App() {
           onClearCache={clearQuestionCache}
           onSaved={(c) => { solver.reloadConfig(); toast('ok', `AI settings saved (${c.hasKey ? 'key set' : 'no key'}).`); }}
         />
+      )}
+      {exportLoading && (
+        <div className="export-loading">
+          <div className="export-loading-box">
+            <div className="export-loading-label">{exportLoading.label}</div>
+            <div className="export-progress">
+              <i style={{ width: `${exportLoading.total ? Math.round((exportLoading.done / exportLoading.total) * 100) : 0}%` }} />
+            </div>
+            <div className="muted">{exportLoading.done} / {exportLoading.total}</div>
+          </div>
+        </div>
+      )}
+      {exportEntries && (
+        <ExportDialog entries={exportEntries} onClose={() => setExportEntries(null)} />
       )}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
     </div>

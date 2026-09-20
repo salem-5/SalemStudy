@@ -2,11 +2,12 @@ import type { AssignmentList, AssignmentSummary, BridgeInfo, Course, Status } fr
 import { fmtDue, parseDue, relTime } from '../lib/format';
 import { AssignmentListSkeleton } from './Skeleton';
 
-export function Sidebar({ list, loading, selected, onSelect, courses, section, onSection, onRefresh, onContext, onAiSettings }: {
+export function Sidebar({ list, loading, selected, multi, onSelect, courses, section, onSection, onRefresh, onContext, onAiSettings }: {
   list: AssignmentList | null;
   loading: boolean;
   selected: number | null;
-  onSelect: (id: number) => void;
+  multi: number[];
+  onSelect: (id: number, additive?: boolean) => void;
   courses: Course[];
   section: string | undefined;
   onSection: (s: string) => void;
@@ -27,8 +28,8 @@ export function Sidebar({ list, loading, selected, onSelect, courses, section, o
       {loading && !list && <AssignmentListSkeleton />}
       {list && (
         <>
-          <Group title="CURRENT" items={list.current} selected={selected} onSelect={onSelect} onContext={onContext} />
-          <Group title="PAST" items={list.past} selected={selected} onSelect={onSelect} onContext={onContext} />
+          <Group title="CURRENT" items={list.current} selected={selected} multi={multi} onSelect={onSelect} onContext={onContext} />
+          <Group title="PAST" items={list.past} selected={selected} multi={multi} onSelect={onSelect} onContext={onContext} />
         </>
       )}
       <div className="side-foot">
@@ -40,11 +41,12 @@ export function Sidebar({ list, loading, selected, onSelect, courses, section, o
   );
 }
 
-function Group({ title, items, selected, onSelect, onContext }: {
+function Group({ title, items, selected, multi, onSelect, onContext }: {
   title: string;
   items: AssignmentSummary[];
   selected: number | null;
-  onSelect: (id: number) => void;
+  multi: number[];
+  onSelect: (id: number, additive?: boolean) => void;
   onContext?: (a: AssignmentSummary, e: React.MouseEvent) => void;
 }) {
   return (
@@ -55,12 +57,13 @@ function Group({ title, items, selected, onSelect, onContext }: {
         const late = due.getTime() < Date.now();
         const soon = !late && due.getTime() - Date.now() < 864e5;
         const pct = a.total ? Math.round(((a.score ?? 0) / a.total) * 100) : 0;
+        const picked = multi.includes(a.id);
         return (
           <button
             type="button"
             key={a.id}
-            className={`asg${a.id === selected ? ' on' : ''}`}
-            onClick={() => onSelect(a.id)}
+            className={`asg${a.id === selected ? ' on' : ''}${picked ? ' multi' : ''}`}
+            onClick={(e) => onSelect(a.id, e.ctrlKey || e.metaKey)}
             onContextMenu={(e) => { e.preventDefault(); onContext?.(a, e); }}
           >
             <span className="asg-name">{a.name}</span>

@@ -7,13 +7,17 @@
 mod bridge;
 
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
+use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use bridge::Bridge;
 
@@ -83,6 +87,9 @@ struct AppState {
     http: reqwest::Client,
     /// Separate client: thinking-model replies can take several minutes.
     deepseek: reqwest::Client,
+    /// Controls for an in-flight LaTeX export.
+    export_pause: Arc<AtomicBool>,
+    export_cancel: Arc<AtomicBool>,
 }
 
 /// `/api/*` for the webview. Dispatches straight to the in-process bridge, so
@@ -342,6 +349,283 @@ async fn fetch_image_any(state: State<'_, AppState>, url: String) -> Result<Stri
     Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes)))
 }
 
+/// Write a LaTeX document to the Downloads folder; optionally compile it to PDF
+/// with `pdflatex` (set `WA_PDFLATEX` to use a different binary).
+#[derive(Deserialize)]
+struct ExportImage {
+    file: String,
+    data: String,
+}
+
+#[tauri::command]
+async fn export_latex(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    name: String,
+    tex: String,
+    compile: bool,
+    images: Vec<ExportImage>,
+    ai: String,
+) -> Result<Value, String> {
+    let dir = app
+        .path()
+        .document_dir()
+        .or_else(|_| app.path().download_dir())
+        .map_err(|e| format!("cannot find the Documents folder: {e}"))?;
+    state.export_cancel.store(false, Ordering::Relaxed);
+    state.export_pause.store(false, Ordering::Relaxed);
+    let pause = state.export_pause.clone();
+    let cancel = state.export_cancel.clone();
+    let app2 = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        export_latex_blocking(&app2, &dir, &name, &tex, compile, &images, &ai, &pause, &cancel)
+    })
+    .await
+    .map_err(|e| format!("export task failed: {e}"))?
+}
+
+#[tauri::command]
+fn export_pause(state: State<'_, AppState>, paused: bool) {
+    state.export_pause.store(paused, Ordering::Relaxed);
+}
+
+#[tauri::command]
+fn export_cancel(state: State<'_, AppState>) {
+    state.export_cancel.store(true, Ordering::Relaxed);
+    state.export_pause.store(false, Ordering::Relaxed);
+}
+
+#[tauri::command]
+fn reveal_path(path: String) -> Result<(), String> {
+    let p = std::path::PathBuf::from(&path);
+    let dir = if p.is_dir() {
+        p
+    } else {
+        p.parent().map(|d| d.to_path_buf()).unwrap_or(p)
+    };
+    #[cfg(windows)]
+    {
+        std::process::Command::new("explorer.exe")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| format!("could not open the folder: {e}"))?;
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = dir;
+    }
+    Ok(())
+}
+
+/// Delete the intermediate files an export creates, leaving only the PDF.
+fn cleanup_export(dir: &std::path::Path, base: &str, images: &[ExportImage]) {
+    let mut names: Vec<String> = vec![
+        format!("{base}.tex"),
+        format!("{base}.ai.json"),
+        "ai-reference.json".to_string(),
+    ];
+    for ext in ["aux", "log", "out", "fls", "fdb_latexmk", "synctex.gz", "toc"] {
+        names.push(format!("{base}.{ext}"));
+    }
+    for img in images {
+        names.push(safe_name(&img.file));
+    }
+    for n in names {
+        let _ = std::fs::remove_file(dir.join(n));
+    }
+    // Any figure PNGs this app wrote for the export.
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with("figure-") && name.ends_with(".png") {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+}
+
+fn safe_name(s: &str) -> String {
+    let out: String = s
+        .chars()
+        .map(|c| if c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '(' | ')' | '.') { c } else { '_' })
+        .collect();
+    let out = out.trim().to_string();
+    let out = if out.is_empty() { "assignment".to_string() } else { out };
+    out.chars().take(80).collect()
+}
+
+fn find_pdflatex() -> Option<std::path::PathBuf> {
+    if let Ok(p) = std::env::var("WA_PDFLATEX") {
+        let pb = std::path::PathBuf::from(&p);
+        if pb.exists() {
+            return Some(pb);
+        }
+    }
+    if let Ok(path) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path) {
+            for exe in ["pdflatex.exe", "pdflatex"] {
+                let cand = dir.join(exe);
+                if cand.exists() {
+                    return Some(cand);
+                }
+            }
+        }
+    }
+    for base in [std::env::var("LOCALAPPDATA").ok(), std::env::var("ProgramFiles").ok()] {
+        if let Some(base) = base {
+            let cand = std::path::PathBuf::from(&base).join("Programs/MiKTeX/miktex/bin/x64/pdflatex.exe");
+            if cand.exists() {
+                return Some(cand);
+            }
+            let cand = std::path::PathBuf::from(&base).join("MiKTeX/miktex/bin/x64/pdflatex.exe");
+            if cand.exists() {
+                return Some(cand);
+            }
+        }
+    }
+    None
+}
+
+#[allow(clippy::too_many_arguments)]
+fn export_latex_blocking(
+    app: &AppHandle,
+    dir: &std::path::Path,
+    name: &str,
+    tex: &str,
+    compile: bool,
+    images: &[ExportImage],
+    ai: &str,
+    pause: &AtomicBool,
+    cancel: &AtomicBool,
+) -> Result<Value, String> {
+    let emit = |stage: &str, line: &str| {
+        let _ = app.emit("export://progress", json!({ "stage": stage, "line": line }));
+    };
+    emit("stage", "Writing files…");
+    std::fs::create_dir_all(dir).ok();
+    let base = safe_name(name);
+    let tex_path = dir.join(format!("{base}.tex"));
+    std::fs::write(&tex_path, tex).map_err(|e| format!("could not write the .tex file: {e}"))?;
+    let tex_s = tex_path.to_string_lossy().to_string();
+
+    // Figures, written next to the .tex so \includegraphics finds them.
+    for img in images {
+        let file = safe_name(&img.file);
+        let b64 = img.data.split_once(',').map(|(_, b)| b).unwrap_or(&img.data);
+        match base64::engine::general_purpose::STANDARD.decode(b64) {
+            Ok(bytes) => {
+                let _ = std::fs::write(dir.join(file), bytes);
+            }
+            Err(e) => eprintln!("skipping image {}: {e}", img.file),
+        }
+    }
+
+    // Machine-readable companion for AIs.
+    let ai_path = dir.join(format!("{base}.ai.json"));
+    let ai_s = ai_path.to_string_lossy().to_string();
+    std::fs::write(&ai_path, ai).map_err(|e| format!("could not write the .ai.json file: {e}"))?;
+    // The PDF embeds this copy (fixed, space-free name) as an attachment.
+    let _ = std::fs::write(dir.join("ai-reference.json"), ai);
+
+    if !compile {
+        emit("stage", "Saved LaTeX source.");
+        return Ok(json!({ "tex": tex_s, "pdf": Value::Null, "ai": ai_s }));
+    }
+
+    let bin = match find_pdflatex() {
+        Some(b) => b,
+        None => {
+            return Err(format!(
+                "Could not find pdflatex. Install a TeX distribution (MiKTeX or TeX Live), or set WA_PDFLATEX to its full path. The .tex and .ai.json were saved to {}.",
+                dir.display()
+            ));
+        }
+    };
+    let bin_dir = bin.parent().map(|p| p.to_path_buf());
+
+    // MiKTeX aborts on malformed PATH entries, so give the child a clean one.
+    let mut paths = Vec::new();
+    if let Some(bd) = bin_dir {
+        paths.push(bd);
+    }
+    if let Ok(sys) = std::env::var("SystemRoot") {
+        paths.push(std::path::PathBuf::from(&sys).join("System32"));
+        paths.push(std::path::PathBuf::from(&sys));
+    }
+    let clean_path = std::env::join_paths(paths).unwrap_or_default();
+
+    let mut tail: Vec<String> = Vec::new();
+    // Two passes so hyperref/bookmarks settle.
+    for pass in 0..2 {
+        if cancel.load(Ordering::Relaxed) {
+            return Err("Export cancelled.".into());
+        }
+        emit("pass", &format!("pdflatex pass {}/2", pass + 1));
+        let child = std::process::Command::new(&bin)
+            .arg("-interaction=nonstopmode")
+            .arg("-halt-on-error")
+            .arg("-output-directory")
+            .arg(dir)
+            .arg(&tex_path)
+            .current_dir(dir)
+            .env("PATH", &clean_path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn();
+        let mut child = match child {
+            Ok(c) => c,
+            Err(e) => {
+                return Err(format!(
+                    "Could not run '{}' ({e}). Install a TeX distribution or set WA_PDFLATEX. The .tex and .ai.json were saved.",
+                    bin.display()
+                ));
+            }
+        };
+
+        if let Some(stdout) = child.stdout.take() {
+            let mut reader = BufReader::new(stdout);
+            let mut buf = String::new();
+            loop {
+                if cancel.load(Ordering::Relaxed) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("Export cancelled.".into());
+                }
+                while pause.load(Ordering::Relaxed) && !cancel.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_millis(120));
+                }
+                buf.clear();
+                match reader.read_line(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {
+                        let line = buf.trim_end().to_string();
+                        tail.push(line.clone());
+                        if tail.len() > 500 {
+                            tail.remove(0);
+                        }
+                        emit("log", &line);
+                    }
+                }
+            }
+        }
+        let _ = child.wait();
+    }
+
+    let pdf = dir.join(format!("{base}.pdf"));
+    if pdf.exists() {
+        let final_pdf = dir.join(format!("{base} - WebAssign.pdf"));
+        let _ = std::fs::rename(&pdf, &final_pdf);
+        cleanup_export(dir, &base, images);
+        let out_pdf = if final_pdf.exists() { final_pdf } else { pdf };
+        emit("stage", "PDF built.");
+        Ok(json!({ "tex": tex_s, "pdf": out_pdf.to_string_lossy(), "ai": ai_s }))
+    } else {
+        let last: Vec<&str> = tail.iter().rev().take(25).map(|s| s.as_str()).collect();
+        let last: Vec<&str> = last.into_iter().rev().collect();
+        Err(format!("pdflatex could not build the PDF:\n{}", last.join("\n")))
+    }
+}
+
 #[tauri::command]
 fn bridge_info(state: State<'_, AppState>) -> Value {
     json!({
@@ -398,7 +682,13 @@ pub fn run() {
     let bridge = Bridge::new();
 
     let app = tauri::Builder::default()
-        .manage(AppState { bridge: bridge.clone(), http, deepseek })
+        .manage(AppState {
+            bridge: bridge.clone(),
+            http,
+            deepseek,
+            export_pause: Arc::new(AtomicBool::new(false)),
+            export_cancel: Arc::new(AtomicBool::new(false)),
+        })
         .setup(move |_app| {
             start_server(bridge.clone());
             bridge::spawn_logger(bridge.clone());
@@ -413,7 +703,11 @@ pub fn run() {
             get_config,
             set_config,
             deepseek_chat,
-            deepseek_balance
+            deepseek_balance,
+            export_latex,
+            export_pause,
+            export_cancel,
+            reveal_path
         ])
         .build(tauri::generate_context!())
         .expect("error while building WebAssign Desk");

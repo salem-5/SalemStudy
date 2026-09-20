@@ -135,22 +135,21 @@ export async function loadImages(urls: string[]): Promise<string[]> {
 
 const RASTER = /^data:image\/(?:png|jpe?g|gif|webp)[;,]/i;
 
-/**
- * DeepSeek only accepts png/jpeg/gif/webp. WebAssign also uses SVG, so convert
- * anything else to PNG through a canvas (and drop it if it can't be decoded).
- */
-async function toSupportedImage(dataUrl: string): Promise<string | null> {
-  if (RASTER.test(dataUrl)) return dataUrl;
+function decodeImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const el = new Image();
+    el.onload = () => resolve(el);
+    el.onerror = () => reject(new Error('decode failed'));
+    el.src = src;
+  });
+}
+
+async function drawToPng(dataUrl: string, maxSide: number): Promise<string | null> {
   try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const el = new Image();
-      el.onload = () => resolve(el);
-      el.onerror = () => reject(new Error('decode failed'));
-      el.src = dataUrl;
-    });
-    const scale = Math.min(1, 1600 / Math.max(img.naturalWidth || 800, img.naturalHeight || 600));
-    const w = Math.max(1, Math.round((img.naturalWidth || 800) * scale));
-    const h = Math.max(1, Math.round((img.naturalHeight || 600) * scale));
+    const img = await decodeImage(dataUrl);
+    const scale = Math.min(1, maxSide / Math.max(img.naturalWidth || 1000, img.naturalHeight || 800));
+    const w = Math.max(1, Math.round((img.naturalWidth || 1000) * scale));
+    const h = Math.max(1, Math.round((img.naturalHeight || 800) * scale));
     const canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
@@ -163,6 +162,20 @@ async function toSupportedImage(dataUrl: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * DeepSeek only accepts png/jpeg/gif/webp. WebAssign also uses SVG, so convert
+ * anything else to PNG through a canvas (and drop it if it can't be decoded).
+ */
+export async function toSupportedImage(dataUrl: string): Promise<string | null> {
+  if (RASTER.test(dataUrl)) return dataUrl;
+  return drawToPng(dataUrl, 1600);
+}
+
+/** Always a real PNG (pdflatex only reads PNG/JPEG/PDF). */
+export async function toPngImage(dataUrl: string): Promise<string | null> {
+  return drawToPng(dataUrl, 2000);
 }
 
 // ---------------------------------------------------------------------------
