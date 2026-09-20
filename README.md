@@ -125,3 +125,24 @@ npm run tauri build    # installers in app/src-tauri/target/release/bundle/
 - The math editor has live preview, autocomplete (Tab), templates (Ctrl+/ fraction, Ctrl+↑ power, Alt+R root, and more), smart brackets and history (Ctrl+Space). Press F1 for every shortcut.
 - `npm run dev` without Tauri opens the UI in a browser using fixture data (`src/mock.ts`, `src/fixtures.ts`), for UI work.
 - `src/lib/mathpad.js` is generated from the userscript by `npm run sync-mathpad`, which runs automatically before dev and build. Edit the parser in the userscript only.
+
+### Exporting a worksheet
+
+Right-click an assignment (or select several) and choose **Export LaTeX / PDF**. The export turns the assignment into a worksheet: the question is typeset the way WebAssign renders it (real maths, figures at the size the app shows them, sub-parts, option lists), every answer widget becomes a named placeholder such as `A`, and each part gets somewhere to answer under the same letter: a box to write in, or — when the part is chosen from a list — the choices themselves, to tick. The answers WebAssign has graded correct are collected in a compact mark scheme on the last page.
+
+Options in the export dialog:
+
+- **Space for working** — a blank, framed area under each question.
+- **Name & date fields** — the `Name / Class / Date` line under the title.
+- **Readable text layer** — a plain-text copy of every question, the maths and each figure's description, typeset in invisible ink and taking no space. It never shows or prints, but anything that reads the PDF's text (a screen reader, NotebookLM, `pdftotext`) gets the question rather than a picture of it.
+- Each row's **title** (what the sheet is called) and **file name** can be edited before exporting.
+
+Files land in your Documents folder. The PDF needs a TeX engine, found in this order:
+
+| Platform | Engine | Install |
+|---|---|---|
+| Windows | `pdflatex`, else `tectonic` | [MiKTeX](https://miktex.org/download) or [Tectonic](https://tectonic-typesetting.github.io/install.html) |
+| macOS | `tectonic`, else `pdflatex` | `brew install tectonic`, or MacTeX |
+| Linux | `tectonic`, else `pdflatex` | `sudo apt install tectonic` (or dnf/pacman/`cargo install tectonic`), or TeX Live |
+
+`WA_PDFLATEX` and `WA_TECTONIC` override the search with a full path to the binary. Tectonic downloads what a document needs the first time it runs, so that first export wants a network connection. Without an engine, **Save .tex** still writes the LaTeX source.

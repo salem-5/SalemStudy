@@ -365,7 +365,6 @@ async fn export_latex(
     tex: String,
     compile: bool,
     images: Vec<ExportImage>,
-    ai: String,
 ) -> Result<Value, String> {
     let dir = app
         .path()
@@ -378,7 +377,7 @@ async fn export_latex(
     let cancel = state.export_cancel.clone();
     let app2 = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        export_latex_blocking(&app2, &dir, &name, &tex, compile, &images, &ai, &pause, &cancel)
+        export_latex_blocking(&app2, &dir, &name, &tex, compile, &images, &pause, &cancel)
     })
     .await
     .map_err(|e| format!("export task failed: {e}"))?
@@ -399,31 +398,45 @@ fn export_cancel(state: State<'_, AppState>) {
 fn reveal_path(path: String) -> Result<(), String> {
     let p = std::path::PathBuf::from(&path);
     let dir = if p.is_dir() {
-        p
+        p.clone()
     } else {
-        p.parent().map(|d| d.to_path_buf()).unwrap_or(p)
+        p.parent().map(|d| d.to_path_buf()).unwrap_or_else(|| p.clone())
     };
+    // Windows and macOS can select the file itself; elsewhere open the folder.
     #[cfg(windows)]
-    {
-        let mut cmd = std::process::Command::new("explorer.exe");
-        cmd.arg(&dir);
-        hide_window(&mut cmd);
-        cmd.spawn().map_err(|e| format!("could not open the folder: {e}"))?;
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = dir;
-    }
+    let mut cmd = {
+        let mut c = std::process::Command::new("explorer.exe");
+        if p.is_file() {
+            c.arg(format!("/select,{}", p.display()));
+        } else {
+            c.arg(&dir);
+        }
+        c
+    };
+    #[cfg(target_os = "macos")]
+    let mut cmd = {
+        let mut c = std::process::Command::new("open");
+        if p.is_file() {
+            c.arg("-R").arg(&p);
+        } else {
+            c.arg(&dir);
+        }
+        c
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut cmd = {
+        let mut c = std::process::Command::new("xdg-open");
+        c.arg(&dir);
+        c
+    };
+    hide_window(&mut cmd);
+    cmd.spawn().map_err(|e| format!("could not open the folder: {e}"))?;
     Ok(())
 }
 
 /// Delete the intermediate files an export creates, leaving only the PDF.
 fn cleanup_export(dir: &std::path::Path, base: &str, images: &[ExportImage]) {
-    let mut names: Vec<String> = vec![
-        format!("{base}.tex"),
-        format!("{base}.ai.json"),
-        "ai-reference.json".to_string(),
-    ];
+    let mut names: Vec<String> = vec![format!("{base}.tex")];
     for ext in ["aux", "log", "out", "fls", "fdb_latexmk", "synctex.gz", "toc"] {
         names.push(format!("{base}.{ext}"));
     }
@@ -464,36 +477,117 @@ fn hide_window(cmd: &mut std::process::Command) {
     }
 }
 
-fn find_pdflatex() -> Option<std::path::PathBuf> {
-    if let Ok(p) = std::env::var("WA_PDFLATEX") {
-        let pb = std::path::PathBuf::from(&p);
-        if pb.exists() {
-            return Some(pb);
+/// The TeX program an export runs: MiKTeX/TeX Live's pdflatex, or Tectonic,
+/// which is a single binary that fetches what a document needs by itself.
+#[derive(Clone, Copy, PartialEq)]
+enum TexEngine {
+    PdfLatex,
+    Tectonic,
+}
+
+impl TexEngine {
+    fn name(self) -> &'static str {
+        match self {
+            TexEngine::PdfLatex => "pdflatex",
+            TexEngine::Tectonic => "tectonic",
         }
     }
-    if let Ok(path) = std::env::var("PATH") {
-        for dir in std::env::split_paths(&path) {
-            for exe in ["pdflatex.exe", "pdflatex"] {
-                let cand = dir.join(exe);
-                if cand.exists() {
-                    return Some(cand);
-                }
-            }
-        }
-    }
-    for base in [std::env::var("LOCALAPPDATA").ok(), std::env::var("ProgramFiles").ok()] {
-        if let Some(base) = base {
-            let cand = std::path::PathBuf::from(&base).join("Programs/MiKTeX/miktex/bin/x64/pdflatex.exe");
-            if cand.exists() {
-                return Some(cand);
-            }
-            let cand = std::path::PathBuf::from(&base).join("MiKTeX/miktex/bin/x64/pdflatex.exe");
-            if cand.exists() {
-                return Some(cand);
-            }
+}
+
+struct Tex {
+    bin: std::path::PathBuf,
+    engine: TexEngine,
+}
+
+fn exe_in(dir: &std::path::Path, stem: &str) -> Option<std::path::PathBuf> {
+    for name in [format!("{stem}.exe"), stem.to_string()] {
+        let cand = dir.join(name);
+        if cand.is_file() {
+            return Some(cand);
         }
     }
     None
+}
+
+/// Places a TeX binary lives that are not always on a GUI app's PATH.
+fn extra_tex_dirs() -> Vec<std::path::PathBuf> {
+    let mut dirs: Vec<std::path::PathBuf> = Vec::new();
+    let home = std::env::var("HOME").ok().or_else(|| std::env::var("USERPROFILE").ok());
+    if let Some(home) = &home {
+        for rel in [".cargo/bin", ".local/bin"] {
+            dirs.push(std::path::PathBuf::from(home).join(rel));
+        }
+    }
+    #[cfg(windows)]
+    for base in [std::env::var("LOCALAPPDATA").ok(), std::env::var("ProgramFiles").ok()] {
+        if let Some(base) = base {
+            let base = std::path::PathBuf::from(&base);
+            dirs.push(base.join("Programs/MiKTeX/miktex/bin/x64"));
+            dirs.push(base.join("MiKTeX/miktex/bin/x64"));
+            dirs.push(base.join("Programs/Tectonic"));
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        dirs.push(std::path::PathBuf::from("/Library/TeX/texbin"));
+        dirs.push(std::path::PathBuf::from("/opt/homebrew/bin"));
+        dirs.push(std::path::PathBuf::from("/usr/local/bin"));
+        dirs.push(std::path::PathBuf::from("/opt/local/bin"));
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        dirs.push(std::path::PathBuf::from("/usr/local/bin"));
+        dirs.push(std::path::PathBuf::from("/usr/bin"));
+        dirs.push(std::path::PathBuf::from("/var/lib/flatpak/exports/bin"));
+        dirs.push(std::path::PathBuf::from("/snap/bin"));
+        if let Some(home) = &home {
+            dirs.push(std::path::PathBuf::from(home).join(".nix-profile/bin"));
+        }
+    }
+    dirs
+}
+
+fn look_up(stem: &str) -> Option<std::path::PathBuf> {
+    if let Ok(path) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path) {
+            if let Some(found) = exe_in(&dir, stem) {
+                return Some(found);
+            }
+        }
+    }
+    extra_tex_dirs().iter().find_map(|d| exe_in(d, stem))
+}
+
+/// Windows machines usually have MiKTeX, so pdflatex comes first there;
+/// elsewhere Tectonic is the one binary people can install in a second.
+fn find_tex() -> Option<Tex> {
+    for (var, engine) in [("WA_PDFLATEX", TexEngine::PdfLatex), ("WA_TECTONIC", TexEngine::Tectonic)] {
+        if let Ok(p) = std::env::var(var) {
+            let bin = std::path::PathBuf::from(&p);
+            if bin.is_file() {
+                return Some(Tex { bin, engine });
+            }
+        }
+    }
+    let order = if cfg!(windows) {
+        [TexEngine::PdfLatex, TexEngine::Tectonic]
+    } else {
+        [TexEngine::Tectonic, TexEngine::PdfLatex]
+    };
+    order
+        .into_iter()
+        .find_map(|engine: TexEngine| look_up(engine.name()).map(|bin| Tex { bin, engine }))
+}
+
+/// What to tell someone who has no TeX installed, for their own platform.
+fn install_tex_help() -> &'static str {
+    if cfg!(windows) {
+        "Install MiKTeX (https://miktex.org/download) or Tectonic (https://tectonic-typesetting.github.io/install.html), then try again. You can also point WA_PDFLATEX or WA_TECTONIC at the binary."
+    } else if cfg!(target_os = "macos") {
+        "Install Tectonic with 'brew install tectonic' (or MacTeX for a full TeX Live), then try again. You can also point WA_TECTONIC or WA_PDFLATEX at the binary."
+    } else {
+        "Install Tectonic with your package manager ('sudo apt install tectonic', 'sudo dnf install tectonic', 'sudo pacman -S tectonic') or 'cargo install tectonic'; TeX Live's pdflatex works too. You can also point WA_TECTONIC or WA_PDFLATEX at the binary."
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -504,7 +598,6 @@ fn export_latex_blocking(
     tex: &str,
     compile: bool,
     images: &[ExportImage],
-    ai: &str,
     pause: &AtomicBool,
     cancel: &AtomicBool,
 ) -> Result<Value, String> {
@@ -530,71 +623,91 @@ fn export_latex_blocking(
         }
     }
 
-    // Machine-readable companion for AIs.
-    let ai_path = dir.join(format!("{base}.ai.json"));
-    let ai_s = ai_path.to_string_lossy().to_string();
-    std::fs::write(&ai_path, ai).map_err(|e| format!("could not write the .ai.json file: {e}"))?;
-    // The PDF embeds this copy (fixed, space-free name) as an attachment.
-    let _ = std::fs::write(dir.join("ai-reference.json"), ai);
-
     if !compile {
         emit("stage", "Saved LaTeX source.");
-        return Ok(json!({ "tex": tex_s, "pdf": Value::Null, "ai": ai_s }));
+        return Ok(json!({ "tex": tex_s, "pdf": Value::Null }));
     }
 
-    let bin = match find_pdflatex() {
-        Some(b) => b,
+    let tex_bin = match find_tex() {
+        Some(t) => t,
         None => {
             return Err(format!(
-                "Could not find pdflatex. Install a TeX distribution (MiKTeX or TeX Live), or set WA_PDFLATEX to its full path. The .tex and .ai.json were saved to {}.",
+                "Could not find a TeX engine to build the PDF. {} The .tex file was saved to {}.",
+                install_tex_help(),
                 dir.display()
             ));
         }
     };
-    let bin_dir = bin.parent().map(|p| p.to_path_buf());
+    let bin = tex_bin.bin.clone();
+    let engine = tex_bin.engine;
 
-    // MiKTeX aborts on malformed PATH entries, so give the child a clean one.
+    // MiKTeX aborts on malformed PATH entries, so give the child a clean one
+    // built from the binary's own directory plus the system essentials.
     let mut paths = Vec::new();
-    if let Some(bd) = bin_dir {
-        paths.push(bd);
+    if let Some(bd) = bin.parent() {
+        paths.push(bd.to_path_buf());
     }
+    #[cfg(windows)]
     if let Ok(sys) = std::env::var("SystemRoot") {
         paths.push(std::path::PathBuf::from(&sys).join("System32"));
         paths.push(std::path::PathBuf::from(&sys));
     }
+    #[cfg(not(windows))]
+    for d in ["/usr/bin", "/bin", "/usr/local/bin"] {
+        paths.push(std::path::PathBuf::from(d));
+    }
     let clean_path = std::env::join_paths(paths).unwrap_or_default();
 
     let mut tail: Vec<String> = Vec::new();
-    // Two passes so hyperref/bookmarks settle.
-    for pass in 0..2 {
+    // pdflatex needs two passes for hyperref to settle; Tectonic reruns itself.
+    let passes = if engine == TexEngine::Tectonic { 1 } else { 2 };
+    for pass in 0..passes {
         if cancel.load(Ordering::Relaxed) {
             return Err("Export cancelled.".into());
         }
-        emit("pass", &format!("pdflatex pass {}/2", pass + 1));
+        emit("pass", &format!("{} pass {}/{}", engine.name(), pass + 1, passes));
         let mut cmd = std::process::Command::new(&bin);
-        cmd.arg("-interaction=nonstopmode")
-            .arg("-halt-on-error")
-            .arg("-output-directory")
-            .arg(dir)
-            .arg(&tex_path)
-            .current_dir(dir)
-            .env("PATH", &clean_path)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+        match engine {
+            TexEngine::PdfLatex => {
+                cmd.arg("-interaction=nonstopmode")
+                    .arg("-halt-on-error")
+                    .arg("-output-directory")
+                    .arg(dir)
+                    .arg(&tex_path);
+            }
+            TexEngine::Tectonic => {
+                // Tectonic downloads what the document needs on first use, so
+                // the first export on a new machine wants a network connection.
+                cmd.arg("--outdir").arg(dir).arg("--chatter").arg("minimal").arg(&tex_path);
+            }
+        }
+        cmd.current_dir(dir).env("PATH", &clean_path);
+        // pdflatex reports on stdout, Tectonic on stderr.
+        if engine == TexEngine::Tectonic {
+            cmd.stdout(Stdio::null()).stderr(Stdio::piped());
+        } else {
+            cmd.stdout(Stdio::piped()).stderr(Stdio::null());
+        }
         hide_window(&mut cmd);
         let child = cmd.spawn();
         let mut child = match child {
             Ok(c) => c,
             Err(e) => {
                 return Err(format!(
-                    "Could not run '{}' ({e}). Install a TeX distribution or set WA_PDFLATEX. The .tex and .ai.json were saved.",
-                    bin.display()
+                    "Could not run '{}' ({e}). {} The .tex file was saved.",
+                    bin.display(),
+                    install_tex_help()
                 ));
             }
         };
 
-        if let Some(stdout) = child.stdout.take() {
-            let mut reader = BufReader::new(stdout);
+        let out: Option<Box<dyn std::io::Read + Send>> = if engine == TexEngine::Tectonic {
+            child.stderr.take().map(|p| Box::new(p) as Box<dyn std::io::Read + Send>)
+        } else {
+            child.stdout.take().map(|p| Box::new(p) as Box<dyn std::io::Read + Send>)
+        };
+        if let Some(out) = out {
+            let mut reader = BufReader::new(out);
             let mut buf = String::new();
             loop {
                 if cancel.load(Ordering::Relaxed) {
@@ -624,12 +737,10 @@ fn export_latex_blocking(
 
     let pdf = dir.join(format!("{base}.pdf"));
     if pdf.exists() {
-        let final_pdf = dir.join(format!("{base} - WebAssign.pdf"));
-        let _ = std::fs::rename(&pdf, &final_pdf);
+        // The PDF keeps exactly the name the export dialog asked for.
         cleanup_export(dir, &base, images);
-        let out_pdf = if final_pdf.exists() { final_pdf } else { pdf };
         emit("stage", "PDF built.");
-        Ok(json!({ "tex": tex_s, "pdf": out_pdf.to_string_lossy(), "ai": ai_s }))
+        Ok(json!({ "tex": tex_s, "pdf": pdf.to_string_lossy() }))
     } else {
         let last: Vec<&str> = tail.iter().rev().take(25).map(|s| s.as_str()).collect();
         let last: Vec<&str> = last.into_iter().rev().collect();

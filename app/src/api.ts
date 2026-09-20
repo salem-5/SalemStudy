@@ -48,8 +48,8 @@ export const api = {
     return { ...r, question: normalizeQuestion(r.question) };
   },
   dryRun: (dep: number, n: number, answers: Answers) => call<DryRun>('POST', `${q(dep, n)}/submit?dryRun=1`, { answers }),
-  exportLatex: (name: string, tex: string, compile: boolean, images: { file: string; data: string }[], ai: string) =>
-    invoke<{ tex: string; pdf: string | null; ai: string }>('export_latex', { name, tex, compile, images, ai }),
+  exportLatex: (name: string, tex: string, compile: boolean, images: { file: string; data: string }[]) =>
+    invoke<{ tex: string; pdf: string | null }>('export_latex', { name, tex, compile, images }),
   exportPause: (paused: boolean) => invoke<void>('export_pause', { paused }),
   exportCancel: () => invoke<void>('export_cancel'),
   revealPath: (path: string) => invoke<void>('reveal_path', { path }),

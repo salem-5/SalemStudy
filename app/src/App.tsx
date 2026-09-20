@@ -9,7 +9,7 @@ import {
   cacheAssignment, cacheAge, cachedAssignment, canRefetch, CACHE_TTL_MS, clearCache, isAssignmentComplete, recordRefetch, updateCachedQuestion,
 } from './lib/cache';
 import { useUsage, fmtInt, fmtCost, pairTotal, pairCost } from './lib/usage';
-import { assignmentToLatex } from './lib/latex';
+import type { ExportMeta } from './lib/latex';
 import { useSolver } from './lib/solver';
 import { fmtDue, parseDue, questionStatus, relTime } from './lib/format';
 import { QuestionView } from './components/QuestionView';
@@ -62,7 +62,7 @@ export default function App() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [aiOpen, setAiOpen] = useState(() => store.get('wa.ai.open') === '1');
   const [aiSettings, setAiSettings] = useState(false);
-  const [exportEntries, setExportEntries] = useState<ExportEntry[] | null>(null);
+  const [exportEntries, setExportEntries] = useState<{ entries: ExportEntry[]; meta: ExportMeta } | null>(null);
   const [exportLoading, setExportLoading] = useState<{ done: number; total: number; label: string } | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const drafts = useDrafts();
@@ -319,14 +319,11 @@ export default function App() {
         if (!a) {
           try { a = await api.assignment(id); cacheAssignment(a); } catch { a = null; }
         }
-        if (a) {
-          setExportLoading({ done: i, total: ids.length, label: `Building LaTeX for ${a.name}…` });
-          await new Promise((r) => setTimeout(r, 0));
-          entries.push({ id: a.id, name: a.name || `Assignment ${a.id}`, data: assignmentToLatex(a, meta) });
-        }
+        if (a) entries.push({ id: a.id, name: a.name || `Assignment ${a.id}`, assignment: a });
         setExportLoading({ done: i + 1, total: ids.length, label: 'Preparing…' });
       }
-      if (entries.length) setExportEntries(entries);
+      // The dialog builds the LaTeX itself, so its options can change it.
+      if (entries.length) setExportEntries({ entries, meta });
     } finally {
       setExportLoading(null);
     }
@@ -603,7 +600,7 @@ export default function App() {
         </div>
       )}
       {exportEntries && (
-        <ExportDialog entries={exportEntries} onClose={() => setExportEntries(null)} />
+        <ExportDialog entries={exportEntries.entries} meta={exportEntries.meta} onClose={() => setExportEntries(null)} />
       )}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
     </div>

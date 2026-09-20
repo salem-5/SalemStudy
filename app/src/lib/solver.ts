@@ -5,6 +5,7 @@ import {
   learnFromResults, loadImages, normalizeAnswers, questionImages, questionPrompt, SUBMIT_TOOL, SYSTEM_PROMPT,
   TRANSCRIBE_PROMPT, validateAnswers, type AiConfig, type ApiContent, type ApiMessage,
 } from './ai';
+import { fixAnswers } from './answer-fix';
 import { addUsage, bucketOf, emptyPair, fmtCost, fmtInt, pairCalls, pairCost, pairTotal, type Agg } from './usage';
 
 export type ChatEntry = {
@@ -224,7 +225,18 @@ export function useSolver(deps: SolverDeps) {
 
         const parsed = answersFromReply(reply);
         const proposed = parsed.answers ? normalizeAnswers(q, parsed.answers) : {};
-        const { answers, notes } = applyDeduction(q, proposed, correctRef.current, elimRef.current);
+        // Strip anything the question already prints around a box before it
+        // can cost a submission.
+        const cleaned = fixAnswers(q, proposed);
+        const { answers, notes } = applyDeduction(q, cleaned.answers, correctRef.current, elimRef.current);
+        notes.unshift(...cleaned.notes);
+        // Tell the model, so the next attempt in this thread does it right.
+        if (cleaned.notes.length) {
+          convoRef.current.push({
+            role: 'user',
+            content: `Your answer repeated text the question already prints, so it was corrected: ${cleaned.notes.join(' | ')}. Type only what goes inside the box.`,
+          });
+        }
         const hasAnswers = Object.keys(answers).length > 0;
         push({ role: 'assistant', kind: 'solve', text: parsed.message || '(no explanation)', answers: hasAnswers ? answers : null, model: reply.model || model });
         convoRef.current.push({ role: 'assistant', content: reply.content });
@@ -431,7 +443,9 @@ export function useSolver(deps: SolverDeps) {
       push({ role: 'system', kind: 'manual', tone: 'bad', text: 'Could not read that answer. For several boxes use {"1": "...", "2": "..."}.' });
       return;
     }
-    const answers = normalizeAnswers(q, parsed);
+    const fixed = fixAnswers(q, normalizeAnswers(q, parsed));
+    const answers = fixed.answers;
+    for (const note of fixed.notes) push({ role: 'system', kind: 'manual', tone: 'muted', text: note });
     const errs = validateAnswers(q, answers);
     if (errs.length) { push({ role: 'system', kind: 'manual', tone: 'bad', text: errs.join('\n') }); return; }
     depsRef.current.applyAnswers(q, answers);

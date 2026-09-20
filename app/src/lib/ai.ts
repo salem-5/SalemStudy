@@ -73,7 +73,13 @@ export const SUBMIT_TOOL = {
       type: 'object',
       properties: {
         message: { type: 'string', description: 'Short reasoning the student can read.' },
-        answers: { type: 'object', description: 'Map from box index (as a string, e.g. "1") to the answer.', additionalProperties: true },
+        answers: {
+          type: 'object',
+          // The schema is the last thing the model reads before it writes the
+          // answer, so the rule it breaks most often is repeated here.
+          description: 'Map from box index (as a string, e.g. "1") to the answer typed into that box. Type only what goes inside the box: never repeat brackets, "=" signs, units or symbols that the question already prints around it.',
+          additionalProperties: true,
+        },
       },
       required: ['answers'],
     },
@@ -188,19 +194,32 @@ You will be given a question, its answer boxes, and sometimes images (or a trans
 
 {"message": "brief reasoning the student can read", "answers": {"<box index>": <answer>}}
 
-Answer rules:
+## Hard rules — every one of these loses the mark if you break it
+
+1. TYPE ONLY WHAT GOES IN THE BOX. Each box description shows the printed text around it as "sits in the question as: …before [n] after…". Anything in that surrounding text is already on the page: never retype it.
+   - Printed brackets stay printed. For "= ( [1] , [2] )" answer 1 and 2, NOT "(1" or "(1, 2)". For "⟨ [1] ⟩" answer the contents, not "⟨…⟩".
+   - Printed "=" stays printed. For "u · v = [1]" answer "-3", never "u . v = -3" and never "= -3".
+   - Printed symbols and units stay printed. For "[1] °" answer "60", not "60°". Same for %, $, m/s and any unit in the sentence.
+   - Only include a bracket when it is part of the value itself and nothing like it is already printed — an interval "(0, 5]", or a vector "<1, 2, 3>" typed into a bare box.
+2. Follow the problem's own wording. If it says to enter a word in a special case ("if the planes are parallel, enter PARALLEL"), enter that word instead of a number when the case applies.
+3. Answer every box you can work out. Omit a box, or set it to null, only to leave it unchanged.
+
+## What each kind of box takes
+
 - Keys are the box numbers shown as [n], written as strings.
-- math boxes: a plain expression in the app's math syntax below. Never return MathML or LaTeX, and never include "=".
-- text boxes: the exact string WebAssign expects (often a number, fraction or short phrase).
-- essay boxes: a full written answer as a plain string.
-- choice boxes: the exact choice label or value.
+- math: a plain expression in the app's math syntax below. Never MathML, never LaTeX, never an "=".
+- text: the exact string WebAssign expects (often a number, fraction or short phrase).
+- essay: a full written answer as a plain string.
+- choice: the exact choice label or value from the list given for that box.
 - checkboxes: a JSON array of the selected labels/values.
 - multiselect: a JSON array with one entry per dropdown, in order (use "" to leave one blank).
-- unsupported boxes: a raw response string only if you are sure; otherwise omit.
-- Omit a box, or set it to null, to leave it unchanged.
-- Delimiters the question already prints around a box belong to the question, not the answer. If a box sits inside parentheses, brackets, braces, angle brackets or absolute-value bars that are already shown (e.g. "= ( [2] )"), return only the inside — never repeat those outer delimiters. Only include delimiters that are part of the answer itself (e.g. a vector's own angle brackets).
-- Follow the problem's own instructions exactly. If it says to enter a specific word for a special case (for example "if the planes are parallel or perpendicular, enter PARALLEL or PERPENDICULAR"), output that word for those cases instead of a number.
-- Never include units or symbols the question prints around the box (such as °, %, or $). Give just the value.
+- unsupported: a raw response string only if you are sure; otherwise omit.
+
+## Worked example
+
+Question: "Find a · b. a = ⟨2, 3⟩, b = ⟨4, 1⟩. a · b = [1]. The angle is [2] °."
+Correct: {"message": "Dot product 2(4)+3(1)=11; cos θ = 11/(√13·√17).", "answers": {"1": "11", "2": "arccos(11/sqrt(221))"}}
+Wrong: {"answers": {"1": "a . b = 11", "2": "arccos(11/sqrt(221))°"}}
 
 Math syntax:
 - Fractions: 1/2, (x+1)/(x-2). After "/", only one factor is the denominator, so use parentheses.
@@ -214,6 +233,28 @@ Math syntax:
 
 If the user gives extra instructions or corrections, follow them. If feedback says an answer was wrong, rethink from scratch and give a corrected answer. Always reply with the JSON object.`;
 
+const BRACKETS: [string, string][] = [['(', ')'], ['[', ']'], ['{', '}'], ['<', '>'], ['⟨', '⟩'], ['|', '|'], ['‖', '‖']];
+const PRINTED_UNITS = ['°', '%', '$', '£', '€'];
+
+/**
+ * Spell out, for this box, exactly what the page already prints around it.
+ * The general rule is in the system prompt; models follow it far better when
+ * the instruction sits next to the box it applies to.
+ */
+function printedAlready(ctx: { before: string; after: string }): string[] {
+  const out: string[] = [];
+  const before = ctx.before.trimEnd();
+  const after = ctx.after.trimStart();
+  const pair = BRACKETS.find(([o, c]) => before.endsWith(o) && after.startsWith(c));
+  if (pair) {
+    out.push(`the question already prints ${pair[0]} ${pair[1]} around this box — give only what goes inside them`);
+  }
+  if (/[=:]$/.test(before)) out.push('the question already prints the "=" — give only the value, with no "=" in it');
+  const unit = PRINTED_UNITS.find((u) => after.startsWith(u)) ?? PRINTED_UNITS.find((u) => before.endsWith(u));
+  if (unit) out.push(`the question already prints "${unit}" — leave it out of the answer`);
+  return out;
+}
+
 export function describeBox(b: Box, ctx?: { before: string; after: string }, specials?: string[]): string {
   const lines = [`[${b.index}] kind=${b.kind}${b.display ? ` display=${b.display}` : ''}`];
   if (b.part.maxSubmissions != null) lines.push(`  attempts ${b.part.submissions ?? 0}/${b.part.maxSubmissions}`);
@@ -222,6 +263,7 @@ export function describeBox(b: Box, ctx?: { before: string; after: string }, spe
   if (b.status !== 'unanswered') lines.push(`  last grade: ${b.status}${b.mark?.title ? ` (${b.mark.title})` : ''}`);
   if (ctx && (ctx.before || ctx.after)) {
     lines.push(`  sits in the question as: …${ctx.before} [${b.index}] ${ctx.after}…`);
+    for (const warning of printedAlready(ctx)) lines.push(`  ${warning}`);
   }
   if (specials?.length) {
     lines.push(`  obey the problem's special-case rule: when it applies, this box takes the word ${specials.join(' or ')}, otherwise the computed value.`);
@@ -242,7 +284,7 @@ function specialInstructions(text: string): string[] {
 }
 
 /** Text immediately around each `[n]` marker, so the model sees printed delimiters. */
-function boxContexts(q: Question): Map<number, { before: string; after: string }> {
+export function boxContexts(q: Question): Map<number, { before: string; after: string }> {
   const out = new Map<number, { before: string; after: string }>();
   const text = stripChrome(q.text);
   const re = /\[(\d+)\]/g;
