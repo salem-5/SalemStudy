@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Box, Question } from '../types';
 import type { ChatEntry, useSolver } from '../lib/solver';
 import { deepseekBalance, getAiConfig, setAiConfig, type AiConfig, type Balance, type ConfigPatch } from '../lib/ai';
+import { onPythonProgress, pythonSetup, pythonStatus, type PythonStatus } from '../lib/python';
 import { fmtCost, fmtInt, pairCalls, pairCost, pairTotal, type UsageRecord } from '../lib/usage';
 import { refetchesLeft } from '../lib/cache';
 import { MathView } from './MathView';
@@ -47,7 +48,29 @@ function AnswerList({ answers, boxes }: { answers: Record<string, unknown>; boxe
   );
 }
 
+/** A sandboxed Python run: the snippet, and its output once it finishes. */
+function PythonEntry({ e }: { e: ChatEntry }) {
+  const [open, setOpen] = useState(false);
+  const tone = e.running ? 'run' : e.tone === 'bad' ? 'bad' : 'ok';
+  return (
+    <div className={`ai-py ${tone}`}>
+      <button type="button" className="ai-py-head" onClick={() => setOpen((v) => !v)}>
+        <span className="ai-py-tag">PY</span>
+        <span className="ai-py-line">{e.running ? 'running…' : e.text}</span>
+        <span className="ai-py-toggle">{open ? '−' : '+'}</span>
+      </button>
+      {open && (
+        <div className="ai-py-body">
+          <pre className="ai-py-code">{e.code}</pre>
+          {e.output && <pre className="ai-py-out">{e.output}</pre>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Entry({ e, boxes }: { e: ChatEntry; boxes: Box[] }) {
+  if (e.kind === 'python') return <PythonEntry e={e} />;
   if (e.role === 'user') {
     return <div className="ai-msg user"><div className="ai-bubble">{e.text}</div></div>;
   }
@@ -144,6 +167,18 @@ export function AiPanel({ solver, question, questions, open, onOpenSettings, onC
         <span className="ai-title">AI SOLVE</span>
         {solver.attempt > 0 && <span className="ai-attempt">try {solver.attempt}</span>}
         <span className="spacer" />
+        <button
+          type="button"
+          className={`ai-py-chip ${!cfg?.pythonEnabled ? 'off' : solver.python?.ready ? 'ok' : 'bad'}`}
+          title={
+            !cfg?.pythonEnabled ? 'Python is switched off — click to open settings'
+              : solver.python?.ready ? `Python ${solver.python.version} sandbox ready — the solver computes with sympy/numpy`
+                : 'Python is not installed yet — click to set it up'
+          }
+          onClick={onOpenSettings}
+        >
+          py
+        </button>
         <button
           type="button"
           className="ai-balance"
@@ -279,11 +314,116 @@ function BalanceRow({ onChanged }: { onChanged?: () => void }) {
   );
 }
 
-export function AiSettingsDialog({ onClose, onSaved, usageMap, onClearCache }: {
+/**
+ * The Python sandbox: what is installed, and the one button that installs it.
+ * The environment is the app's own virtualenv, so nothing on the machine's
+ * Python is touched.
+ */
+function PythonSection({ cfg, patch, onChanged }: {
+  cfg: { enabled: boolean; auto: boolean; path: string; timeout: number; maxCalls: number };
+  patch: (p: Partial<{ enabled: boolean; auto: boolean; path: string; timeout: number; maxCalls: number }>) => void;
+  onChanged: () => void;
+}) {
+  const [status, setStatus] = useState<PythonStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [line, setLine] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+
+  const refresh = () => {
+    pythonStatus().then(setStatus).catch((e) => setErr(errText(e)));
+  };
+  useEffect(refresh, []);
+  useEffect(() => {
+    // Outside Tauri (browser dev mode) there is no event bus; ignore it.
+    const un = onPythonProgress((p) => setLine(p.line)).catch(() => null);
+    return () => { void un.then((f) => f?.()); };
+  }, []);
+
+  const install = async (repair: boolean) => {
+    setBusy(true);
+    setErr(null);
+    setLine('Starting…');
+    try {
+      // The interpreter override has to be on disk before setup reads it.
+      await setAiConfig({ pythonPath: cfg.path });
+      setStatus(await pythonSetup(repair));
+      onChanged();
+    } catch (e) {
+      setErr(errText(e));
+      refresh();
+    } finally {
+      setBusy(false);
+      setLine('');
+    }
+  };
+
+  const ready = status?.ready === true;
+  return (
+    <section>
+      <h4>PYTHON</h4>
+      <div className="account-row">
+        <span className={`py-badge ${ready ? 'ok' : 'bad'}`}>{ready ? 'READY' : 'NOT SET UP'}</span>
+        {status?.version && <span className="muted">Python {status.version} · {status.source === 'venv' ? 'app environment' : 'custom interpreter'}</span>}
+        <span className="spacer" />
+        <button type="button" className="btn ghost" disabled={busy} onClick={() => void install(false)}>
+          {busy ? 'Working…' : ready ? 'Update packages' : 'Install'}
+        </button>
+        {ready && (
+          <button type="button" className="btn ghost danger" disabled={busy} onClick={() => void install(true)} title="Delete the environment and build it again">
+            Rebuild
+          </button>
+        )}
+      </div>
+      {busy && line && <div className="py-log">{line}</div>}
+      {status && status.packages.length > 0 && (
+        <div className="py-packages">
+          {status.packages.map((p) => (
+            <span key={p.name} className={p.version ? 'py-pkg ok' : 'py-pkg'}>{p.name} {p.version ?? '—'}</span>
+          ))}
+        </div>
+      )}
+      {status && !ready && <p className="muted">{status.error ? `${status.error} ` : ''}{status.help}</p>}
+      {err && <div className="ai-settings-err">{err}</div>}
+      <label className="account-check">
+        <input type="checkbox" checked={cfg.enabled} onChange={(e) => patch({ enabled: e.target.checked })} />
+        <span>Let the solver run Python</span>
+      </label>
+      <label className="account-check">
+        <input type="checkbox" checked={cfg.auto} onChange={(e) => patch({ auto: e.target.checked })} />
+        <span>Require it for any question that needs calculating (off: only after a wrong answer)</span>
+      </label>
+      <div className="ai-settings-row">
+        <label>
+          <span>Seconds per run</span>
+          <input type="number" min={1} max={180} value={cfg.timeout} onChange={(e) => patch({ timeout: Number(e.target.value) })} />
+        </label>
+        <label>
+          <span>Runs per attempt</span>
+          <input type="number" min={1} max={20} value={cfg.maxCalls} onChange={(e) => patch({ maxCalls: Number(e.target.value) })} />
+        </label>
+      </div>
+      <label>
+        <span>Interpreter to build the environment with (blank = found automatically)</span>
+        <input
+          value={cfg.path}
+          spellCheck={false}
+          placeholder={status?.interpreter ?? 'e.g. C:\\Python313\\python.exe or /opt/homebrew/bin/python3'}
+          onChange={(e) => patch({ path: e.target.value })}
+        />
+      </label>
+      <p className="muted">
+        Code runs in a throwaway folder with no network, no other programs and no access to your files, and is stopped when it runs past its time.
+      </p>
+    </section>
+  );
+}
+
+export function AiSettingsDialog({ onClose, onSaved, usageMap, onClearCache, onPythonChanged }: {
   onClose: () => void;
   onSaved: (c: AiConfig) => void;
   usageMap: Record<string, UsageRecord>;
   onClearCache: () => void;
+  onPythonChanged: () => void;
 }) {
   const [cfg, setCfg] = useState<AiConfig | null>(null);
   const [key, setKey] = useState('');
@@ -292,6 +432,7 @@ export function AiSettingsDialog({ onClose, onSaved, usageMap, onClearCache }: {
   const [base, setBase] = useState('');
   const [maxA, setMaxA] = useState(4);
   const [pause, setPause] = useState(2);
+  const [py, setPy] = useState({ enabled: true, auto: true, path: '', timeout: 25, maxCalls: 6 });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [sel, setSel] = useState<string | null>(null);
@@ -303,6 +444,13 @@ export function AiSettingsDialog({ onClose, onSaved, usageMap, onClearCache }: {
     setBase(c.baseUrl);
     setMaxA(c.maxAttempts);
     setPause(c.pauseAfter);
+    setPy({
+      enabled: c.pythonEnabled,
+      auto: c.pythonAuto,
+      path: c.pythonPath,
+      timeout: c.pythonTimeout,
+      maxCalls: c.pythonMaxCalls,
+    });
   };
 
   useEffect(() => {
@@ -313,7 +461,11 @@ export function AiSettingsDialog({ onClose, onSaved, usageMap, onClearCache }: {
     setSaving(true);
     setErr(null);
     try {
-      const patch: ConfigPatch = { flashModel: flash, proModel: pro, baseUrl: base, maxAttempts: maxA, pauseAfter: pause };
+      const patch: ConfigPatch = {
+        flashModel: flash, proModel: pro, baseUrl: base, maxAttempts: maxA, pauseAfter: pause,
+        pythonEnabled: py.enabled, pythonAuto: py.auto, pythonPath: py.path,
+        pythonTimeout: py.timeout, pythonMaxCalls: py.maxCalls,
+      };
       if (key.trim()) patch.apiKey = key.trim();
       const next = await setAiConfig(patch);
       onSaved(next);
@@ -416,6 +568,8 @@ export function AiSettingsDialog({ onClose, onSaved, usageMap, onClearCache }: {
             </>
           )}
         </section>
+
+        <PythonSection cfg={py} patch={(p) => setPy((v) => ({ ...v, ...p }))} onChanged={onPythonChanged} />
 
         <section>
           <h4>CACHE</h4>

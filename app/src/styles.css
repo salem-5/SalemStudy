@@ -978,6 +978,76 @@ code { color: var(--neon); font-size: 0.92em; }
 }
 .ai-balance:hover { border-color: var(--neon); color: var(--neon); }
 .ai-sys.usage { color: var(--neon-2); }
+
+/* ------------------------------------------------ sandboxed python in chat */
+
+.ai-py { border: 1px solid var(--line-2); border-left: 2px solid var(--line-3); background: var(--panel); }
+.ai-py.ok { border-left-color: var(--neon-dim); }
+.ai-py.bad { border-left-color: var(--bad); }
+.ai-py.run { border-left-color: var(--mid); }
+.ai-py-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+  font: 11.5px var(--mono);
+  color: var(--text-2);
+}
+.ai-py-head:hover { background: var(--neon-wash); }
+.ai-py-tag { color: var(--neon); letter-spacing: 0.14em; font-weight: 700; }
+.ai-py.bad .ai-py-tag { color: var(--bad); }
+.ai-py.run .ai-py-tag { color: var(--mid); animation: blink 1s steps(1) infinite; }
+.ai-py-line { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-py-toggle { color: var(--muted); }
+.ai-py-body { border-top: 1px solid var(--line-2); }
+.ai-py-code, .ai-py-out {
+  margin: 0;
+  padding: 7px 9px;
+  font: 11.5px/1.5 var(--mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 260px;
+  overflow: auto;
+}
+.ai-py-code { color: var(--text); background: var(--bg); }
+.ai-py-out { color: var(--text-2); border-top: 1px dashed var(--line-2); }
+.ai-py-chip {
+  background: transparent;
+  border: 1px solid var(--line-2);
+  color: var(--muted);
+  font: 10.5px var(--mono);
+  letter-spacing: 0.1em;
+  padding: 2px 7px;
+  cursor: pointer;
+}
+.ai-py-chip.ok { color: var(--neon-2); border-color: var(--neon-dim); }
+.ai-py-chip.bad { color: var(--mid); border-color: rgba(255, 154, 31, 0.5); }
+.ai-py-chip:hover { border-color: var(--neon); }
+
+.py-badge { font: 10px var(--mono); letter-spacing: 0.14em; padding: 2px 7px; border: 1px solid var(--line-3); color: var(--muted); }
+.py-badge.ok { color: var(--neon-2); border-color: var(--neon-dim); }
+.py-badge.bad { color: var(--mid); border-color: rgba(255, 154, 31, 0.5); }
+.py-packages { display: flex; flex-wrap: wrap; gap: 6px; }
+.py-pkg { font: 11px var(--mono); padding: 2px 7px; border: 1px solid var(--line-2); color: var(--muted); }
+.py-pkg.ok { color: var(--text-2); border-color: var(--line-3); }
+.py-log {
+  font: 11px var(--mono);
+  color: var(--text-2);
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--line-2);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 60px;
+  overflow: hidden;
+}
+.account-check { flex-direction: row !important; align-items: center; gap: 8px !important; font-size: 12.5px; }
+.account-check input { width: 14px; height: 14px; accent-color: var(--neon); }
 .btn.ghost.danger { color: var(--bad); border-color: rgba(255, 46, 99, 0.4); }
 .btn.ghost.danger:hover:not(:disabled) { border-color: var(--bad); color: var(--bad); }
 

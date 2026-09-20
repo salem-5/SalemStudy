@@ -126,6 +126,31 @@ npm run tauri build    # installers in app/src-tauri/target/release/bundle/
 - `npm run dev` without Tauri opens the UI in a browser using fixture data (`src/mock.ts`, `src/fixtures.ts`), for UI work.
 - `src/lib/mathpad.js` is generated from the userscript by `npm run sync-mathpad`, which runs automatically before dev and build. Edit the parser in the userscript only.
 
+### Solving with Python
+
+The AI solver has a `run_python` tool and reaches for it whenever a question has to be worked out rather than recalled: it writes a snippet, reads the output, refines it, checks the answer a second way, and only then submits. Multiple-choice, definitions and one-step arithmetic are still answered directly. A question it got wrong by hand is retried with Python required.
+
+Open **AI settings → Python** and press **Install**. The app finds a Python 3 on the machine (`WA_PYTHON`, the `PATH`, the usual install folders on Windows and macOS, and the `py` launcher on Windows), builds its own virtualenv under the app data folder, and installs `sympy`, `numpy`, `mpmath` and `scipy` into it. Nothing on your system Python is touched, and **Rebuild** starts the environment again from scratch.
+
+Available to the model: `sympy` (as `sp`, with `solve`, `diff`, `integrate`, `limit`, `Matrix`, `simplify`, `nsimplify` and friends already in the namespace), `numpy` (`np`), `mpmath` (`mp`), `scipy`, plus `math`, `cmath`, `statistics`, `itertools`, `Fraction` and 50-digit `Decimal`. Each call starts from a fresh interpreter, prints what it wants to see, and a trailing bare expression is echoed back like a REPL.
+
+Every run is sandboxed:
+
+- a throwaway folder per run, deleted afterwards, and an environment scrubbed down to `PATH` and a temp dir;
+- `-I` isolated mode, so no `PYTHON*` variables and no user site-packages;
+- an audit hook that refuses subprocesses, sockets and any write outside that folder;
+- POSIX limits on CPU, file size and address space;
+- a timeout inside the runner, and the app killing the process if that is not enough.
+
+Settings cover the seconds per run, the number of runs per attempt, whether Python is required for calculation questions or only after a wrong answer, and an interpreter path if you want a specific one. The `py` chip in the AI panel header shows whether the sandbox is ready.
+
+The sandbox has its own tests, which need an interpreter to run against:
+
+```bash
+python3 -m venv /tmp/wa-py && /tmp/wa-py/bin/pip install sympy numpy mpmath
+cd app/src-tauri && WA_TEST_PYTHON=/tmp/wa-py/bin/python cargo test --lib python
+```
+
 ### Exporting a worksheet
 
 Right-click an assignment (or select several) and choose **Export LaTeX / PDF**. The export turns the assignment into a worksheet: the question is typeset the way WebAssign renders it (real maths, figures at the size the app shows them, sub-parts, option lists), every answer widget becomes a named placeholder such as `A`, and each part gets somewhere to answer under the same letter: a box to write in, or — when the part is chosen from a list — the choices themselves, to tick. The answers WebAssign has graded correct are collected in a compact mark scheme on the last page.

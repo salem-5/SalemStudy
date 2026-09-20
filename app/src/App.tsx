@@ -585,7 +585,12 @@ export default function App() {
           usageMap={usage.map}
           onClose={() => setAiSettings(false)}
           onClearCache={clearQuestionCache}
-          onSaved={(c) => { solver.reloadConfig(); toast('ok', `AI settings saved (${c.hasKey ? 'key set' : 'no key'}).`); }}
+          onSaved={(c) => {
+            solver.reloadConfig();
+            solver.reloadPython();
+            toast('ok', `AI settings saved (${c.hasKey ? 'key set' : 'no key'}).`);
+          }}
+          onPythonChanged={() => solver.reloadPython()}
         />
       )}
       {exportLoading && (

@@ -5,6 +5,7 @@
 //! the bridge, while the userscript still talks to it over HTTP on 127.0.0.1.
 
 mod bridge;
+mod python;
 
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -29,13 +30,24 @@ const DEFAULT_PRO_MODEL: &str = "deepseek-v4-pro";
 /// has to live in the webview or the repo.
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(default)]
-struct Config {
+pub struct Config {
     api_key: String,
     flash_model: String,
     pro_model: String,
     base_url: String,
     max_attempts: u32,
     pause_after: u32,
+    /// Let the solver call the sandboxed `run_python` tool (see python.rs).
+    pub python_enabled: bool,
+    /// Always reach for Python on a question that involves calculation.
+    python_auto: bool,
+    /// Interpreter override; empty means the app's managed virtualenv.
+    pub python_path: String,
+    /// Seconds a single snippet may run before it is stopped.
+    pub python_timeout: u32,
+    pub python_memory_mb: u32,
+    /// Snippets the model may run per solve attempt.
+    python_max_calls: u32,
 }
 
 impl Default for Config {
@@ -47,6 +59,12 @@ impl Default for Config {
             base_url: DEFAULT_BASE_URL.into(),
             max_attempts: 4,
             pause_after: 2,
+            python_enabled: true,
+            python_auto: true,
+            python_path: String::new(),
+            python_timeout: 25,
+            python_memory_mb: 4096,
+            python_max_calls: 6,
         }
     }
 }
@@ -60,6 +78,12 @@ struct ConfigPatch {
     base_url: Option<String>,
     max_attempts: Option<u32>,
     pause_after: Option<u32>,
+    python_enabled: Option<bool>,
+    python_auto: Option<bool>,
+    python_path: Option<String>,
+    python_timeout: Option<u32>,
+    python_memory_mb: Option<u32>,
+    python_max_calls: Option<u32>,
 }
 
 fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -68,7 +92,7 @@ fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("config.json"))
 }
 
-fn read_config(app: &AppHandle) -> Config {
+pub fn read_config(app: &AppHandle) -> Config {
     let Ok(path) = config_path(app) else { return Config::default() };
     fs::read_to_string(path)
         .ok()
@@ -174,6 +198,12 @@ fn get_config(app: AppHandle) -> Value {
         "baseUrl": c.base_url,
         "maxAttempts": c.max_attempts,
         "pauseAfter": c.pause_after,
+        "pythonEnabled": c.python_enabled,
+        "pythonAuto": c.python_auto,
+        "pythonPath": c.python_path,
+        "pythonTimeout": c.python_timeout,
+        "pythonMemoryMb": c.python_memory_mb,
+        "pythonMaxCalls": c.python_max_calls,
     })
 }
 
@@ -186,6 +216,12 @@ fn set_config(app: AppHandle, patch: ConfigPatch) -> Result<Value, String> {
     if let Some(v) = patch.base_url { if !v.trim().is_empty() { c.base_url = v.trim().to_string(); } }
     if let Some(v) = patch.max_attempts { c.max_attempts = v.clamp(1, 10); }
     if let Some(v) = patch.pause_after { c.pause_after = v.min(10); }
+    if let Some(v) = patch.python_enabled { c.python_enabled = v; }
+    if let Some(v) = patch.python_auto { c.python_auto = v; }
+    if let Some(v) = patch.python_path { c.python_path = v.trim().to_string(); }
+    if let Some(v) = patch.python_timeout { c.python_timeout = v.clamp(1, 180); }
+    if let Some(v) = patch.python_memory_mb { c.python_memory_mb = v.clamp(256, 16384); }
+    if let Some(v) = patch.python_max_calls { c.python_max_calls = v.clamp(1, 20); }
     write_config(&app, &c)?;
     Ok(get_config(app))
 }
@@ -854,9 +890,11 @@ pub fn run() {
             export_pause: Arc::new(AtomicBool::new(false)),
             export_cancel: Arc::new(AtomicBool::new(false)),
         })
-        .setup(move |_app| {
+        .setup(move |app| {
             start_server(bridge.clone());
             bridge::spawn_logger(bridge.clone());
+            // Sandbox folders only ever outlive a run after a crash.
+            python::sweep_sandboxes(&app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -874,7 +912,10 @@ pub fn run() {
             export_cancel,
             export_dir,
             open_path,
-            reveal_path
+            reveal_path,
+            python::python_status,
+            python::python_setup,
+            python::run_python
         ])
         .build(tauri::generate_context!())
         .expect("error while building WebAssign Desk");

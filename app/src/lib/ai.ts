@@ -14,6 +14,16 @@ export type AiConfig = {
   baseUrl: string;
   maxAttempts: number;
   pauseAfter: number;
+  /** Offer the sandboxed run_python tool to the model. */
+  pythonEnabled: boolean;
+  /** Insist on Python for anything that needs calculating. */
+  pythonAuto: boolean;
+  /** Interpreter override; empty means the app's managed virtualenv. */
+  pythonPath: string;
+  pythonTimeout: number;
+  pythonMemoryMb: number;
+  /** Snippets the model may run per attempt. */
+  pythonMaxCalls: number;
 };
 
 export type ConfigPatch = {
@@ -23,6 +33,12 @@ export type ConfigPatch = {
   baseUrl?: string;
   maxAttempts?: number;
   pauseAfter?: number;
+  pythonEnabled?: boolean;
+  pythonAuto?: boolean;
+  pythonPath?: string;
+  pythonTimeout?: number;
+  pythonMemoryMb?: number;
+  pythonMaxCalls?: number;
 };
 
 export const getAiConfig = () => invoke<AiConfig>('get_config');
@@ -39,9 +55,16 @@ export const deepseekBalance = () => invoke<Balance>('deepseek_balance');
 export type TextPart = { type: 'text'; text: string };
 export type ImagePart = { type: 'image_url'; image_url: { url: string } };
 export type ApiContent = string | (TextPart | ImagePart)[];
-export type ApiMessage = { role: 'system' | 'user' | 'assistant'; content: ApiContent };
-
 export type ToolCall = { id: string; type: string; function: { name: string; arguments: string } };
+/** An assistant turn that asked for tools, plus the results that answer it —
+ *  both have to stay in the thread, in order, or the API rejects the next call. */
+export type ToolCallMessage = { role: 'assistant'; content: string; tool_calls: ToolCall[] };
+export type ToolResultMessage = { role: 'tool'; content: string; tool_call_id: string; name?: string };
+export type ApiMessage =
+  | { role: 'system' | 'user' | 'assistant'; content: ApiContent }
+  | ToolCallMessage
+  | ToolResultMessage;
+
 export type AiReply = { content: string; reasoning: string; model: string; usage: unknown; tool_calls?: ToolCall[] | null };
 
 export const aiChat = (args: {
@@ -86,6 +109,31 @@ export const SUBMIT_TOOL = {
   },
 };
 export const FORCE_SUBMIT = { type: 'function', function: { name: 'submit_answers' } };
+
+/**
+ * Sandboxed Python. The description is what the model reads before deciding
+ * whether to compute or guess, so it lists the libraries and spells out the
+ * sandbox's limits.
+ */
+export const PYTHON_TOOL = {
+  type: 'function',
+  function: {
+    name: 'run_python',
+    description:
+      'Run Python in a sandbox and get its output back. Use it for every calculation: algebra, calculus, linear algebra, series, statistics, unit arithmetic, checking a candidate answer. sympy (sp), numpy (np), mpmath (mp), scipy, math, cmath, statistics, fractions.Fraction and decimal.Decimal are installed and the first few are already imported. You can call it several times — compute, look at the output, then continue. No network, no files outside the sandbox, no shell; print() what you want to see (a trailing bare expression is echoed too).',
+    parameters: {
+      type: 'object',
+      properties: {
+        code: {
+          type: 'string',
+          description: 'Python source to run. Print every value you need — nothing carries over to the next call.',
+        },
+      },
+      required: ['code'],
+    },
+  },
+};
+export const FORCE_PYTHON = { type: 'function', function: { name: 'run_python' } };
 
 // ---------------------------------------------------------------------------
 // Images
@@ -188,7 +236,7 @@ export async function toPngImage(dataUrl: string): Promise<string | null> {
 // Prompt building
 // ---------------------------------------------------------------------------
 
-export const SYSTEM_PROMPT = `You are an expert STEM tutor that solves WebAssign questions correctly and completely.
+const BASE_PROMPT = `You are an expert STEM tutor that solves WebAssign questions correctly and completely.
 
 You will be given a question, its answer boxes, and sometimes images (or a transcription of them). Solve it and return ONLY a single JSON object, with no markdown fences and nothing before or after it:
 
@@ -232,6 +280,58 @@ Math syntax:
 - Prefer exact values (fractions, sqrt, pi). If a decimal is required, give enough digits.
 
 If the user gives extra instructions or corrections, follow them. If feedback says an answer was wrong, rethink from scratch and give a corrected answer. Always reply with the JSON object.`;
+
+/**
+ * Appended when the sandbox is ready. The model only reaches for a tool it
+ * believes in, so this spells out what is installed, what the tool is good at,
+ * and that it is expected to compute rather than recall.
+ */
+const PYTHON_PROMPT = `
+
+## You can run Python — use it for the maths
+
+You have a \`run_python\` tool that runs real Python in a sandbox and hands you its output. Work the calculation out with it instead of doing it in your head.
+
+WHEN TO USE IT — any question whose answer has to be computed: solving equations and systems, derivatives, integrals, limits, series and sums, matrices, eigenvalues, vectors (dot, cross, projections, angles), geometry, probability and statistics, roots, logs, unit conversions, awkward arithmetic, rounding to a required number of digits, and checking an answer you already have. If the question has numbers or symbols in it, run the code.
+WHEN NOT TO BOTHER — definitions, concept questions, a multiple choice you can reason about, reading a label off a figure, or arithmetic as simple as 2+3. Answer those directly.
+
+WHAT IS INSTALLED
+- sympy, imported as \`sp\`, with \`symbols, Symbol, Eq, solve, solveset, nsolve, simplify, nsimplify, expand, factor, diff, integrate, limit, series, summation, Sum, Matrix, sqrt, pi, E, I, oo, exp, log, sin, cos, tan, asin, acos, atan, atan2, sinh, cosh, tanh, Rational, N, binomial, factorial, gcd, lcm, latex\` already in the namespace.
+- numpy as \`np\`, mpmath as \`mp\`, and \`math, cmath, itertools, functools, statistics, random, re, json, Fraction, Decimal\` (Decimal set to 50 digits).
+- scipy is installed — \`import scipy.optimize / scipy.integrate / scipy.stats / scipy.linalg\` when you want it.
+
+HOW TO USE IT
+- Write a short script and \`print()\` every value you care about; a bare expression on the last line is echoed back as well.
+- Nothing carries over between calls: each call starts from a fresh interpreter, so repeat the definitions you need.
+- Call it as many times as it takes — compute, read the output, refine, compute again.
+- Give yourself both forms of the answer: the exact one (\`sp.simplify\`, \`sp.nsimplify\`, \`sp.Rational\`) and a decimal (\`sp.N(x, 10)\`), then type whichever the question asks for.
+- Check before you submit: substitute the answer back into the equation, or get it a second way, and see that it agrees.
+- If the code raises, read the traceback, fix it and run it again. Never submit a number you could not compute.
+
+LIMITS OF THE SANDBOX — no internet, no other programs, no files outside its own folder, and a few seconds of CPU per call. If something is too slow, switch to a numeric method (\`sp.nsolve\`, \`mp.findroot\`, \`np.linalg\`) instead of a brute-force search.
+
+Read the maths out of the question yourself, compute it in Python, then write the final answer back in the app's math syntax (not Python syntax, and not the repr sympy prints — convert \`**\` to \`^\`, \`Rational(1,2)\` to \`1/2\`, and so on).`;
+
+/** The system prompt, with the Python section only when the sandbox is ready. */
+export const systemPrompt = (python: boolean): string => (python ? BASE_PROMPT + PYTHON_PROMPT : BASE_PROMPT);
+
+/** Kept for the free-form chat, which has no tools. */
+export const SYSTEM_PROMPT = BASE_PROMPT;
+
+const MATH_OPS = /[+*/^=<>≤≥∫√∑∏πθ°]|(?<![a-z])-\s*\d|\b(sqrt|sin|cos|tan|sec|csc|cot|log|ln|exp|pi)\b/i;
+const MATH_WORDS = /\b(solve|evaluate|compute|calculate|determine|find|integral|integrate|derivative|differentiate|limit|matrix|determinant|eigen|vector|dot product|cross product|projection|probability|mean|median|deviation|variance|angle|area|volume|perimeter|slope|tangent|root|zero|sum|series|converge|diverge|equation|inequality|interval|velocity|acceleration|force|mass|concentration|moles|percent|rate)\b/i;
+
+/**
+ * Whether a question is worth spending a Python call on. A math box always
+ * counts; otherwise it takes numbers together with an operator or a "work this
+ * out" verb, so a pure concept multiple-choice is answered straight away.
+ */
+export function needsPython(q: Question): boolean {
+  if (q.boxes.some((b) => b.kind === 'math')) return true;
+  const text = stripChrome(q.text);
+  if (/\d/.test(text) && (MATH_OPS.test(text) || MATH_WORDS.test(text))) return true;
+  return MATH_OPS.test(text) && MATH_WORDS.test(text);
+}
 
 const BRACKETS: [string, string][] = [['(', ')'], ['[', ']'], ['{', '}'], ['<', '>'], ['⟨', '⟩'], ['|', '|'], ['‖', '‖']];
 const PRINTED_UNITS = ['°', '%', '$', '£', '€'];

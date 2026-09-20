@@ -1,0 +1,309 @@
+"""Sandboxed runner for model-written Python.
+
+Started as `python -I -B sandbox_runner.py <job.json> <result.json>` with the
+working directory set to a throwaway folder and a scrubbed environment (see
+python.rs). It reads the code out of the job file, runs it with the math
+libraries already imported, and writes the captured output to the result file
+as JSON. Nothing is ever printed to the real stdout, so a crash of this script
+is the only thing the parent sees there.
+
+Layers of containment, weakest to strongest:
+  * `-I` isolated mode + a scrubbed environment + a throwaway cwd,
+  * an audit hook that refuses processes, sockets and writes outside the cwd,
+  * POSIX resource limits on memory, CPU time and file size,
+  * a watchdog that interrupts the main thread on timeout,
+  * the parent, which kills the whole process after a grace period.
+"""
+
+import ast
+import io
+import json
+import os
+import sys
+import threading
+import time
+import traceback
+import _thread
+
+JOB_PATH, RESULT_PATH = sys.argv[1], sys.argv[2]
+
+with open(JOB_PATH, encoding="utf-8") as fh:
+    JOB = json.load(fh)
+
+CODE = JOB.get("code") or ""
+TIMEOUT = float(JOB.get("timeout", 20))
+MEMORY_MB = int(JOB.get("memory_mb", 4096))
+MAX_OUTPUT = int(JOB.get("max_output", 20000))
+# normcase so a Windows path that differs only in case still matches.
+SANDBOX = os.path.normcase(os.path.realpath(os.getcwd()))
+
+
+def write_result(payload):
+    payload.setdefault("stdout", "")
+    payload.setdefault("stderr", "")
+    payload.setdefault("result", None)
+    payload.setdefault("error", None)
+    tmp = RESULT_PATH + ".part"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh)
+    os.replace(tmp, RESULT_PATH)
+
+
+# --------------------------------------------------------------------------
+# Resource limits (POSIX only; on Windows the parent's kill is the backstop)
+# --------------------------------------------------------------------------
+
+def apply_limits():
+    try:
+        import resource
+    except ImportError:
+        return
+    cpu = max(1, int(TIMEOUT) + 2)
+    limits = [
+        ("RLIMIT_CPU", (cpu, cpu + 2)),
+        ("RLIMIT_FSIZE", (32 * 1024 * 1024,) * 2),
+        ("RLIMIT_NOFILE", (256, 256)),
+        ("RLIMIT_CORE", (0, 0)),
+    ]
+    # numpy/scipy reserve a lot of address space up front, so the address-space
+    # cap is generous and only there to stop a runaway allocation.
+    if MEMORY_MB > 0 and sys.platform != "darwin":
+        limits.append(("RLIMIT_AS", (MEMORY_MB * 1024 * 1024,) * 2))
+    for name, value in limits:
+        limit = getattr(resource, name, None)
+        if limit is None:
+            continue
+        try:
+            soft, hard = resource.getrlimit(limit)
+            want_soft, want_hard = value
+            if hard != resource.RLIM_INFINITY:
+                want_soft = min(want_soft, hard)
+                want_hard = min(want_hard, hard)
+            resource.setrlimit(limit, (want_soft, want_hard))
+        except (ValueError, OSError):
+            pass
+
+
+# --------------------------------------------------------------------------
+# Audit hook: no processes, no network, no writing outside the sandbox
+# --------------------------------------------------------------------------
+
+class Denied(RuntimeError):
+    pass
+
+
+PROCESS_EVENTS = (
+    "subprocess.Popen", "os.system", "os.exec", "os.spawn", "os.posix_spawn",
+    "os.fork", "os.forkpty", "pty.spawn", "webbrowser.open", "os.startfile",
+)
+NETWORK_EVENTS = (
+    "socket.connect", "socket.bind", "socket.getaddrinfo", "socket.gethostbyname",
+    "socket.gethostbyaddr", "socket.sendto", "socket.sendmsg", "socket.__new__",
+    "urllib.Request", "ftplib.connect", "smtplib.connect", "imaplib.open",
+    "poplib.connect", "telnetlib.Telnet", "http.client.connect",
+)
+WRITE_EVENTS = (
+    "os.remove", "os.rename", "os.mkdir", "os.rmdir", "os.chmod", "os.chown",
+    "os.link", "os.symlink", "os.truncate", "os.utime", "shutil.copyfile",
+    "shutil.copymode", "shutil.copystat", "shutil.move", "shutil.rmtree",
+    "shutil.unpack_archive", "os.setuid", "os.setgid",
+)
+WRITE_FLAGS = (
+    getattr(os, "O_WRONLY", 0) | getattr(os, "O_RDWR", 0) | getattr(os, "O_CREAT", 0)
+    | getattr(os, "O_APPEND", 0) | getattr(os, "O_TRUNC", 0)
+)
+
+
+def inside_sandbox(path):
+    try:
+        real = os.path.normcase(os.path.realpath(os.fspath(path)))
+    except (TypeError, ValueError):
+        return False
+    return real == SANDBOX or real.startswith(SANDBOX + os.sep)
+
+
+def audit(event, args):
+    if event in PROCESS_EVENTS or event.startswith("subprocess."):
+        raise Denied(f"the sandbox does not allow running programs ({event})")
+    if event in NETWORK_EVENTS:
+        raise Denied(f"the sandbox has no network access ({event})")
+    if event == "open":
+        path, mode, flags = (list(args) + [None, None, None])[:3]
+        writing = (isinstance(mode, str) and any(c in mode for c in "wax+")) or (
+            isinstance(flags, int) and bool(flags & WRITE_FLAGS)
+        )
+        if writing and path is not None and not inside_sandbox(path):
+            raise Denied("the sandbox can only write inside its own folder")
+        return
+    if event in WRITE_EVENTS:
+        for arg in args:
+            if isinstance(arg, (str, bytes, os.PathLike)) and not inside_sandbox(arg):
+                raise Denied(f"the sandbox can only touch files in its own folder ({event})")
+
+
+# --------------------------------------------------------------------------
+# Namespace
+# --------------------------------------------------------------------------
+
+def build_namespace():
+    """Import the math stack *before* the audit hook goes up: some libraries
+    read config files and probe the machine on import, which the hook would
+    refuse."""
+    ns = {"__name__": "__main__", "__builtins__": __builtins__}
+    loaded, failed = [], []
+    for alias, module in (
+        ("sp", "sympy"), ("sympy", "sympy"), ("np", "numpy"), ("numpy", "numpy"),
+        ("mp", "mpmath"), ("mpmath", "mpmath"), ("math", "math"), ("cmath", "cmath"),
+        ("itertools", "itertools"), ("functools", "functools"), ("statistics", "statistics"),
+        ("random", "random"), ("re", "re"), ("json", "json"),
+    ):
+        try:
+            ns[alias] = __import__(module)
+            if module not in loaded:
+                loaded.append(module)
+        except Exception:
+            if module not in failed:
+                failed.append(module)
+    try:
+        from fractions import Fraction
+        from decimal import Decimal, getcontext
+        getcontext().prec = 50
+        ns["Fraction"] = Fraction
+        ns["Decimal"] = Decimal
+    except Exception:
+        pass
+    sympy = ns.get("sympy")
+    if sympy is not None:
+        for name in (
+            "symbols", "Symbol", "S", "Eq", "solve", "solveset", "nsolve", "simplify",
+            "expand", "factor", "diff", "integrate", "limit", "series", "Matrix",
+            "sqrt", "pi", "E", "I", "oo", "exp", "log", "sin", "cos", "tan", "asin",
+            "acos", "atan", "atan2", "sinh", "cosh", "tanh", "Rational", "N", "nsimplify",
+            "latex", "summation", "Sum", "Product", "binomial", "factorial", "gcd", "lcm",
+        ):
+            if hasattr(sympy, name):
+                ns.setdefault(name, getattr(sympy, name))
+    return ns, loaded, failed
+
+
+NAMESPACE, LOADED, FAILED = build_namespace()
+
+
+# --------------------------------------------------------------------------
+# Run
+# --------------------------------------------------------------------------
+
+def clip(text):
+    if len(text) <= MAX_OUTPUT:
+        return text, False
+    return text[:MAX_OUTPUT] + f"\n… [{len(text) - MAX_OUTPUT} more characters cut]", True
+
+
+def describe(value):
+    """A readable form of the last expression's value, sympy included."""
+    try:
+        text = repr(value)
+    except Exception:
+        return "<unrepresentable value>"
+    sympy = NAMESPACE.get("sympy")
+    if sympy is not None:
+        try:
+            if isinstance(value, sympy.Basic):
+                pretty = sympy.sstr(value)
+                if pretty != text:
+                    return f"{pretty}"
+        except Exception:
+            pass
+    return text
+
+
+FINISHED = threading.Event()
+
+
+def watchdog():
+    # Only interrupt while the model's code is still running: once it is done
+    # the process is busy writing the result, which must not be disturbed.
+    if not FINISHED.wait(TIMEOUT):
+        _thread.interrupt_main()
+
+
+def main():
+    apply_limits()
+    out, err = io.StringIO(), io.StringIO()
+    result_repr = None
+    error = None
+    timed_out = False
+    started = time.time()
+
+    try:
+        tree = ast.parse(CODE, filename="<answer>", mode="exec")
+    except SyntaxError as exc:
+        write_result({
+            "ok": False,
+            "error": "".join(traceback.format_exception_only(type(exc), exc)).strip(),
+            "duration_ms": 0,
+            "loaded": LOADED,
+            "missing": FAILED,
+        })
+        return
+
+    # A trailing expression is echoed the way a REPL would, so the model gets
+    # an answer even when it forgets to print.
+    tail = None
+    if tree.body and isinstance(tree.body[-1], ast.Expr):
+        tail = ast.Expression(tree.body.pop().value)
+
+    body = compile(tree, "<answer>", "exec")
+    tail_code = compile(tail, "<answer>", "eval") if tail is not None else None
+
+    sys.addaudithook(audit)
+    threading.Thread(target=watchdog, daemon=True).start()
+    real_out, real_err = sys.stdout, sys.stderr
+    sys.stdout, sys.stderr = out, err
+    try:
+        exec(body, NAMESPACE, NAMESPACE)
+        if tail_code is not None:
+            value = eval(tail_code, NAMESPACE, NAMESPACE)
+            if value is not None:
+                result_repr = describe(value)
+    except KeyboardInterrupt:
+        timed_out = True
+        error = f"the code was still running after {TIMEOUT:g}s and was stopped"
+    except Denied as exc:
+        error = f"blocked by the sandbox: {exc}"
+    except SystemExit:
+        pass
+    except MemoryError:
+        error = "the code ran out of memory in the sandbox"
+    except BaseException:
+        lines = traceback.format_exception(*sys.exc_info())
+        # Drop this runner's own frames; keep the ones from the model's code.
+        error = "".join([lines[0]] + [ln for ln in lines[1:] if "sandbox_runner.py" not in ln]).strip()
+    finally:
+        FINISHED.set()
+        sys.stdout, sys.stderr = real_out, real_err
+
+    stdout, cut_out = clip(out.getvalue())
+    stderr, cut_err = clip(err.getvalue())
+    write_result({
+        "ok": error is None,
+        "stdout": stdout,
+        "stderr": stderr,
+        "result": result_repr,
+        "error": error,
+        "timed_out": timed_out,
+        "truncated": cut_out or cut_err,
+        "duration_ms": int((time.time() - started) * 1000),
+        "loaded": LOADED,
+        "missing": FAILED,
+    })
+
+
+try:
+    main()
+except BaseException:
+    try:
+        write_result({"ok": False, "error": "the sandbox runner failed:\n" + traceback.format_exc()})
+    except Exception:
+        pass
+    raise

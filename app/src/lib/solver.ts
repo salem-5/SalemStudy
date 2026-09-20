@@ -1,21 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Question, SubmitResult } from '../types';
 import {
-  aiChat, answersFromReply, applyDeduction, extractJsonObject, FORCE_SUBMIT, getAiConfig, gradeFeedback,
-  learnFromResults, loadImages, normalizeAnswers, questionImages, questionPrompt, SUBMIT_TOOL, SYSTEM_PROMPT,
-  TRANSCRIBE_PROMPT, validateAnswers, type AiConfig, type ApiContent, type ApiMessage,
+  aiChat, answersFromReply, applyDeduction, extractJsonObject, FORCE_PYTHON, FORCE_SUBMIT, getAiConfig,
+  gradeFeedback, learnFromResults, loadImages, needsPython, normalizeAnswers, PYTHON_TOOL, questionImages,
+  questionPrompt, SUBMIT_TOOL, systemPrompt, TRANSCRIBE_PROMPT, validateAnswers,
+  type AiConfig, type AiReply, type ApiContent, type ApiMessage, type ToolCall,
 } from './ai';
+import { formatResult, pythonStatus, runPython, summarize, type PythonStatus } from './python';
 import { fixAnswers } from './answer-fix';
 import { addUsage, bucketOf, emptyPair, fmtCost, fmtInt, pairCalls, pairCost, pairTotal, type Agg } from './usage';
 
 export type ChatEntry = {
   id: number;
   role: 'user' | 'assistant' | 'system';
-  kind: 'chat' | 'solve' | 'feedback' | 'vision' | 'error' | 'manual' | 'usage';
+  kind: 'chat' | 'solve' | 'feedback' | 'vision' | 'error' | 'manual' | 'usage' | 'python';
   text: string;
   answers?: Record<string, unknown> | null;
   model?: string;
   tone?: 'info' | 'ok' | 'bad' | 'muted';
+  /** kind === 'python': the snippet, its output, and whether it is still running. */
+  code?: string;
+  output?: string;
+  running?: boolean;
 };
 
 export type SolverStatus = 'idle' | 'running' | 'awaiting' | 'done' | 'failed' | 'stopped';
@@ -74,6 +80,7 @@ export function useSolver(deps: SolverDeps) {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [queue, setQueue] = useState<number[]>([]);
   const [config, setConfig] = useState<AiConfig | null>(null);
+  const [python, setPython] = useState<PythonStatus | null>(null);
 
   const statusRef = useRef<SolverStatus>('idle');
   const qnumRef = useRef<number | null>(null);
@@ -94,11 +101,22 @@ export function useSolver(deps: SolverDeps) {
   const usagePostedRef = useRef(false);
   const runSizeRef = useRef(0);
   const hasLogRef = useRef(false);
+  const pythonRef = useRef<PythonStatus | null>(null);
+  /** Did this question's attempts actually run Python? */
+  const pyUsedRef = useRef(false);
+  /** Attempts that were worked out by hand and still came back wrong. */
+  const handMissesRef = useRef(0);
 
   const setStat = (s: SolverStatus) => { statusRef.current = s; setStatus(s); };
   const push = useCallback((e: Omit<ChatEntry, 'id'>) => {
     hasLogRef.current = true;
-    setEntries((prev) => [...prev, entry(e)]);
+    const it = entry(e);
+    setEntries((prev) => [...prev, it]);
+    return it.id;
+  }, []);
+  /** Fill in an entry that was logged before its result existed (a Python run). */
+  const amend = useCallback((id: number, patch: Partial<ChatEntry>) => {
+    setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, ...patch } : e)));
   }, []);
 
   const reloadConfig = useCallback(async () => {
@@ -112,7 +130,23 @@ export function useSolver(deps: SolverDeps) {
     }
   }, []);
 
-  useEffect(() => { void reloadConfig(); }, [reloadConfig]);
+  const reloadPython = useCallback(async () => {
+    try {
+      const s = await pythonStatus();
+      pythonRef.current = s;
+      setPython(s);
+      return s;
+    } catch {
+      pythonRef.current = null;
+      setPython(null);
+      return null;
+    }
+  }, []);
+
+  useEffect(() => { void reloadConfig(); void reloadPython(); }, [reloadConfig, reloadPython]);
+
+  /** The sandbox is only offered when it is installed and switched on. */
+  const pythonOn = () => Boolean(pythonRef.current?.ready && configRef.current?.pythonEnabled);
 
   function trackUsage(model: string, usage: unknown) {
     if (!usage || typeof usage !== 'object') return;
@@ -169,6 +203,58 @@ export function useSolver(deps: SolverDeps) {
     }
   }
 
+  /** Run one snippet for the model, log it, and return what the model sees. */
+  async function callPython(code: string): Promise<string> {
+    const id = push({ role: 'assistant', kind: 'python', text: 'Running Python…', code, running: true });
+    try {
+      const r = await runPython(code, configRef.current?.pythonTimeout);
+      pyUsedRef.current = true;
+      amend(id, {
+        running: false,
+        text: summarize(r),
+        output: formatResult(r),
+        tone: r.ok ? 'ok' : 'bad',
+      });
+      return formatResult(r);
+    } catch (e) {
+      const msg = errText(e);
+      amend(id, { running: false, text: `Python could not run: ${msg}`, output: msg, tone: 'bad' });
+      // Tell the model instead of failing the attempt: it can still answer by
+      // hand, and a broken sandbox should not cost a WebAssign submission.
+      return `The sandbox could not run that code: ${msg}\nAnswer without Python.`;
+    }
+  }
+
+  /**
+   * Answer every tool call in one assistant turn, appending the assistant
+   * message and one reply per call — the API rejects the next request if a
+   * call is left unanswered. Returns how many snippets were actually run.
+   */
+  async function answerToolCalls(thread: ApiMessage[], calls: ToolCall[], content: string, budget: number): Promise<number> {
+    thread.push({ role: 'assistant', content: content ?? '', tool_calls: calls });
+    let used = 0;
+    for (const c of calls) {
+      const reply = (text: string) => thread.push({ role: 'tool', tool_call_id: c.id, name: c.function?.name, content: text });
+      if (c.function?.name !== 'run_python') {
+        reply(`There is no tool called "${c.function?.name}". Use run_python or submit_answers.`);
+        continue;
+      }
+      if (used >= budget) {
+        reply('The Python budget for this attempt is used up. Finish with what you have and call submit_answers now.');
+        continue;
+      }
+      const args = extractJsonObject(c.function.arguments ?? '');
+      const code = typeof args?.code === 'string' ? args.code : '';
+      if (!code.trim()) {
+        reply('No code was given. Send the snippet in the "code" argument.');
+        continue;
+      }
+      used += 1;
+      reply(await callPython(code));
+    }
+    return used;
+  }
+
   async function solveCurrent(): Promise<SolverStatus> {
     if (runningRef.current) return statusRef.current;
     const cfg = configRef.current;
@@ -200,28 +286,79 @@ export function useSolver(deps: SolverDeps) {
         }
         const model = a === 0 ? cfg.flashModel : cfg.proModel;
         const useVision = a === 0 && imagesRef.current.length > 0;
+        const py = pythonOn();
+        // Insist on Python when the question needs calculating, and always
+        // after the model has tried to do it in its head and been wrong.
+        const forcePython = py && (
+          (cfg.pythonAuto && needsPython(q)) || handMissesRef.current >= 1 || (a > 0 && !pyUsedRef.current)
+        );
+        if (py && a > 0 && !pyUsedRef.current) {
+          convoRef.current.push({
+            role: 'user',
+            content: 'You worked that out by hand and it was marked wrong. Redo the whole calculation with run_python this time, check the result a second way, and only then answer.',
+          });
+        }
         const firstUser = questionPrompt(q, { images: useVision, transcript: a > 0 ? transcriptRef.current : null });
         const content: ApiContent = useVision
           ? [{ type: 'text', text: firstUser }, ...imagesRef.current.map((url) => ({ type: 'image_url' as const, image_url: { url } }))]
           : firstUser;
         const messages: ApiMessage[] = [
-          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'system', content: systemPrompt(py) },
           { role: 'user', content },
           ...convoRef.current,
         ];
-        push({ role: 'system', kind: 'solve', tone: 'muted', text: `Attempt ${a + 1}/${cfg.maxAttempts} · ${model}${useVision ? ' · images' : ''}` });
+        // Anything appended past this point is this attempt's tool traffic.
+        const baseLen = messages.length;
+        push({
+          role: 'system',
+          kind: 'solve',
+          tone: 'muted',
+          text: `Attempt ${a + 1}/${cfg.maxAttempts} · ${model}${useVision ? ' · images' : ''}${py ? (forcePython ? ' · python (required)' : ' · python') : ''}`,
+        });
 
-        let reply;
-        try {
-          // Forced tool call: the reliable way to get structured answers.
-          reply = await aiChat({ model, messages, thinking: false, tools: [SUBMIT_TOOL], toolChoice: FORCE_SUBMIT });
-        } catch (e) {
-          push({ role: 'system', kind: 'error', tone: 'bad', text: errText(e) });
-          setStat('failed');
-          return 'failed';
+        // The model may run Python as often as its budget allows before it
+        // answers; `submit_answers` is what ends the turn.
+        const tools = py ? [PYTHON_TOOL, SUBMIT_TOOL] : [SUBMIT_TOOL];
+        const budget = py ? Math.max(1, cfg.pythonMaxCalls || 6) : 0;
+        let choice: unknown = py ? (forcePython ? FORCE_PYTHON : 'auto') : FORCE_SUBMIT;
+        let reply: AiReply | null = null;
+        let ranPython = 0;
+        let failed = false;
+        for (let round = 0; round < budget + 3; round++) {
+          if (stopRef.current) { setStat('stopped'); return 'stopped'; }
+          let turn: AiReply;
+          try {
+            turn = await aiChat({ model, messages, thinking: false, tools, toolChoice: choice });
+          } catch (e) {
+            push({ role: 'system', kind: 'error', tone: 'bad', text: errText(e) });
+            failed = true;
+            break;
+          }
+          trackUsage(model, turn.usage);
+          const calls = (turn.tool_calls ?? []).filter((c) => c.function?.name);
+          if (calls.some((c) => c.function.name === 'submit_answers')) { reply = turn; break; }
+          if (!calls.length) {
+            // Prose instead of an answer: keep it and ask for the answer.
+            messages.push({ role: 'assistant', content: turn.content ?? '' });
+            choice = FORCE_SUBMIT;
+            continue;
+          }
+          ranPython += await answerToolCalls(messages, calls, turn.content ?? '', budget - ranPython);
+          choice = ranPython >= budget ? FORCE_SUBMIT : 'auto';
         }
+        if (failed) { setStat('failed'); return 'failed'; }
         if (stopRef.current) { setStat('stopped'); return 'stopped'; }
-        trackUsage(model, reply.usage);
+        if (!reply) {
+          push({ role: 'system', kind: 'feedback', tone: 'bad', text: 'The model never came back with an answer — retrying.' });
+          convoRef.current = [];
+          attemptRef.current = a + 1;
+          setAttempt(a + 1);
+          continue;
+        }
+        // Everything the tool rounds added belongs to the thread, so the next
+        // attempt can see what was already computed.
+        convoRef.current.push(...messages.slice(baseLen));
+        const usedPythonHere = ranPython > 0;
 
         const parsed = answersFromReply(reply);
         const proposed = parsed.answers ? normalizeAnswers(q, parsed.answers) : {};
@@ -239,7 +376,12 @@ export function useSolver(deps: SolverDeps) {
         }
         const hasAnswers = Object.keys(answers).length > 0;
         push({ role: 'assistant', kind: 'solve', text: parsed.message || '(no explanation)', answers: hasAnswers ? answers : null, model: reply.model || model });
-        convoRef.current.push({ role: 'assistant', content: reply.content });
+        // The answer came back as a tool call, so the thread keeps a plain
+        // transcript of it rather than an unanswered call.
+        convoRef.current.push({
+          role: 'assistant',
+          content: reply.content?.trim() || JSON.stringify({ message: parsed.message, answers }),
+        });
         for (const note of notes) push({ role: 'system', kind: 'feedback', tone: 'muted', text: note });
         attemptRef.current = a + 1;
         setAttempt(a + 1);
@@ -277,6 +419,9 @@ export function useSolver(deps: SolverDeps) {
           setStat('done');
           return 'done';
         }
+        // A miss that was worked out by hand is what makes the next attempt
+        // insist on Python.
+        if (!usedPythonHere) handMissesRef.current += 1;
         const fb = gradeFeedback(r.results.map((x) => ({ index: x.index, status: x.status, message: x.message })));
         push({ role: 'system', kind: 'feedback', tone: 'bad', text: fb });
         convoRef.current.push({ role: 'user', content: fb });
@@ -307,6 +452,8 @@ export function useSolver(deps: SolverDeps) {
     correctRef.current = new Map();
     qUsageRef.current = emptyPair();
     usagePostedRef.current = false;
+    pyUsedRef.current = false;
+    handMissesRef.current = 0;
     stopRef.current = false;
     pendingAdvanceRef.current = false;
     approveRef.current = true;
@@ -317,7 +464,14 @@ export function useSolver(deps: SolverDeps) {
       push({ role: 'system', kind: 'solve', tone: 'muted', text: `── Q${n} ──` });
     }
     setStat('running');
-    push({ role: 'system', kind: 'solve', tone: 'info', text: `Solving Q${n} — ${cfg.flashModel}, switching to ${cfg.proModel} after the first miss.` });
+    const py = pythonOn();
+    push({
+      role: 'system',
+      kind: 'solve',
+      tone: 'info',
+      text: `Solving Q${n} — ${cfg.flashModel}, switching to ${cfg.proModel} after the first miss.`
+        + (py ? ` Python sandbox ready (${cfg.pythonTimeout}s per run).` : ''),
+    });
     imagesRef.current = await imagesFor(q);
     return solveCurrent();
   }
@@ -399,6 +553,8 @@ export function useSolver(deps: SolverDeps) {
     correctRef.current = new Map();
     qUsageRef.current = emptyPair();
     usagePostedRef.current = false;
+    pyUsedRef.current = false;
+    handMissesRef.current = 0;
     setStat('idle');
   }
 
@@ -420,14 +576,34 @@ export function useSolver(deps: SolverDeps) {
     const cfg = configRef.current;
     if (!cfg?.hasKey) { push({ role: 'system', kind: 'error', tone: 'bad', text: 'No DeepSeek API key set.' }); return; }
     const q = qnumRef.current != null ? depsRef.current.questionOf(qnumRef.current) : undefined;
-    const messages: ApiMessage[] = [{ role: 'system', content: SYSTEM_PROMPT }];
+    const py = pythonOn();
+    const messages: ApiMessage[] = [{ role: 'system', content: systemPrompt(py) }];
     if (q) messages.push({ role: 'user', content: questionPrompt(q, { images: false, transcript: transcriptRef.current }) });
     messages.push(...convoRef.current);
+    const baseLen = messages.length;
+    const budget = py ? Math.max(1, cfg.pythonMaxCalls || 6) : 0;
     try {
-      const r = await aiChat({ model: cfg.flashModel, messages, thinking: false });
-      trackUsage(cfg.flashModel, r.usage);
-      convoRef.current.push({ role: 'assistant', content: r.content });
-      push({ role: 'assistant', kind: 'chat', text: r.content.trim() || '(empty)', model: r.model });
+      // The chat can compute too: it keeps answering tool calls until the
+      // model writes a normal reply.
+      let used = 0;
+      for (let round = 0; round < budget + 1; round++) {
+        const r = await aiChat({
+          model: cfg.flashModel,
+          messages,
+          thinking: false,
+          tools: py ? [PYTHON_TOOL] : undefined,
+        });
+        trackUsage(cfg.flashModel, r.usage);
+        const calls = (r.tool_calls ?? []).filter((c) => c.function?.name === 'run_python');
+        if (calls.length && used < budget) {
+          used += await answerToolCalls(messages, calls, r.content ?? '', budget - used);
+          continue;
+        }
+        convoRef.current.push(...messages.slice(baseLen), { role: 'assistant', content: r.content });
+        push({ role: 'assistant', kind: 'chat', text: r.content.trim() || '(empty)', model: r.model });
+        return;
+      }
+      push({ role: 'system', kind: 'feedback', tone: 'bad', text: 'The model kept calling Python without answering. Ask again.' });
     } catch (e) {
       push({ role: 'system', kind: 'error', tone: 'bad', text: errText(e) });
     }
@@ -473,7 +649,7 @@ export function useSolver(deps: SolverDeps) {
   }
 
   return {
-    status, qnum, attempt, entries, queue, config,
-    start, continueSolve, nextQuestion, stop, focus, send, manualFill, clearChat, reloadConfig,
+    status, qnum, attempt, entries, queue, config, python,
+    start, continueSolve, nextQuestion, stop, focus, send, manualFill, clearChat, reloadConfig, reloadPython,
   };
 }
