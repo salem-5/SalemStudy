@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
+import { ChevronDown } from 'lucide-react';
 import type { Choice } from '../types';
 
 type Props = {
@@ -88,7 +89,7 @@ export function Combo({ choices, value, onChange, inline, status, label }: Props
         onChange={(e) => { setQuery(e.target.value); setOpen(true); setActive(0); }}
         onKeyDown={onKeyDown}
       />
-      <span className="combo-caret" aria-hidden>▾</span>
+      <ChevronDown className="combo-caret" aria-hidden />
       {open && (
         <ul className="combo-list" role="listbox">
           {filtered.map((c, i) => (

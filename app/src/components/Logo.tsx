@@ -1,25 +1,18 @@
-/** The app mark: a neon radical over x, matching the application icon. */
+/** The app mark: an open book with a prompt on the right page, drawn flat to match the terminal theme. */
 export function Logo({ className }: { className?: string }) {
   return (
-    <svg className={className} viewBox="0 0 512 512" aria-hidden>
-      <defs>
-        <linearGradient id="logo-grad" x1="0" y1="1" x2="1" y2="0">
-          <stop offset="0" stopColor="#2f8bff" />
-          <stop offset="0.55" stopColor="#3ad7ff" />
-          <stop offset="1" stopColor="#6cf5e4" />
-        </linearGradient>
-        <radialGradient id="logo-bg" cx="0.5" cy="0.32" r="0.95">
-          <stop offset="0" stopColor="#0c141a" />
-          <stop offset="1" stopColor="#000000" />
-        </radialGradient>
-      </defs>
-      <rect width="512" height="512" rx="108" fill="url(#logo-bg)" />
-      <rect x="4" y="4" width="504" height="504" rx="104" fill="none" stroke="url(#logo-grad)" strokeOpacity="0.22" strokeWidth="4" />
-      <g fill="none" stroke="url(#logo-grad)" strokeWidth="34" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M96 288 H150 L196 382 L292 142 H432" />
-        <path d="M320 226 L400 326" />
-        <path d="M400 226 L320 326" />
+    <svg className={className} viewBox="228 300 568 450" aria-hidden>
+      <g fill="none" stroke="currentColor" strokeWidth="40" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M512 372 C450 330 350 318 252 338 V690 C350 670 450 682 512 724 C574 682 674 670 772 690 V338 C674 318 574 330 512 372 Z" />
+        <path d="M512 372 V724" />
+        <path d="M580 446 L632 492 L580 538" stroke="var(--mid, #d7a266)" strokeWidth="32" />
       </g>
+      <g stroke="currentColor" strokeOpacity="0.5" strokeWidth="26" strokeLinecap="round">
+        <path d="M318 440 C360 432 400 434 446 446" />
+        <path d="M318 512 C360 504 400 506 446 518" />
+        <path d="M318 584 C350 578 376 579 404 584" />
+      </g>
+      <rect x="656" y="516" width="60" height="26" rx="4" fill="var(--mid, #d7a266)" />
     </svg>
   );
 }

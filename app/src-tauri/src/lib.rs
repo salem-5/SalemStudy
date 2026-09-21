@@ -5,7 +5,9 @@
 //! the bridge, while the userscript still talks to it over HTTP on 127.0.0.1.
 
 mod bridge;
+mod data;
 mod python;
+mod study;
 
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -31,8 +33,8 @@ const DEFAULT_PRO_MODEL: &str = "deepseek-v4-pro";
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct Config {
-    api_key: String,
-    flash_model: String,
+    pub(crate) api_key: String,
+    pub(crate) flash_model: String,
     pro_model: String,
     base_url: String,
     max_attempts: u32,
@@ -100,7 +102,7 @@ pub fn read_config(app: &AppHandle) -> Config {
         .unwrap_or_default()
 }
 
-fn write_config(app: &AppHandle, cfg: &Config) -> Result<(), String> {
+pub(crate) fn write_config(app: &AppHandle, cfg: &Config) -> Result<(), String> {
     let path = config_path(app)?;
     let body = serde_json::to_string_pretty(cfg).map_err(|e| e.to_string())?;
     fs::write(path, body).map_err(|e| format!("cannot write config: {e}"))
@@ -118,6 +120,8 @@ struct AppState {
     /// Exports currently running, so only the first one of a batch clears the
     /// switches that a later Cancel sets.
     export_active: Arc<AtomicUsize>,
+    /// Stream ids the user stopped; `deepseek_stream` checks between chunks.
+    cancelled_streams: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 /// `/api/*` for the webview. Dispatches straight to the in-process bridge, so
@@ -236,7 +240,9 @@ fn set_config(app: AppHandle, patch: ConfigPatch) -> Result<Value, String> {
 #[tauri::command]
 async fn deepseek_chat(
     state: State<'_, AppState>,
+    db: State<'_, study::StudyDb>,
     app: AppHandle,
+    feature: Option<String>,
     model: String,
     messages: Value,
     thinking: Option<bool>,
@@ -293,6 +299,7 @@ async fn deepseek_chat(
         return Err(format!("DeepSeek HTTP {}: {msg}", status.as_u16()));
     }
 
+    record_usage(&app, &db, value.get("model").and_then(Value::as_str).unwrap_or(&model), feature.as_deref(), value.get("usage"));
     let message = value.get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("message")).cloned().unwrap_or(Value::Null);
     Ok(json!({
         "content": message.get("content").and_then(Value::as_str).unwrap_or(""),
@@ -301,6 +308,181 @@ async fn deepseek_chat(
         "usage": value.get("usage").cloned().unwrap_or(Value::Null),
         "tool_calls": message.get("tool_calls").cloned().unwrap_or(Value::Null),
     }))
+}
+
+/// Streamed chat completion: the same request as `deepseek_chat` with
+/// `stream: true`. Every text delta is emitted as an `ai://stream` event
+/// tagged with `id`, so the chat can show tokens as they arrive; tool calls are
+/// reassembled from their fragments. Returns the whole message at the end, in
+/// the same shape as `deepseek_chat`. `ai_cancel(id)` stops it mid-stream.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn deepseek_stream(
+    state: State<'_, AppState>,
+    db: State<'_, study::StudyDb>,
+    app: AppHandle,
+    feature: Option<String>,
+    id: String,
+    model: String,
+    messages: Value,
+    thinking: Option<bool>,
+    effort: Option<String>,
+    tools: Option<Value>,
+    choice: Option<Value>,
+) -> Result<Value, String> {
+    let c = read_config(&app);
+    if c.api_key.is_empty() {
+        return Err("No DeepSeek API key set. Open AI settings and paste your key.".into());
+    }
+    let base = if c.base_url.trim().is_empty() { DEFAULT_BASE_URL } else { c.base_url.trim() };
+    let url = format!("{}/chat/completions", base.trim_end_matches('/'));
+    let mut body = json!({
+        "model": model, "messages": messages, "stream": true, "max_tokens": 16384,
+        "stream_options": { "include_usage": true },
+    });
+    if let Some(t) = thinking {
+        body["thinking"] = json!({ "type": if t { "enabled" } else { "disabled" } });
+    }
+    if let Some(e) = effort {
+        if !e.trim().is_empty() { body["reasoning_effort"] = json!(e.trim()); }
+    }
+    if let Some(t) = tools {
+        if !t.is_null() { body["tools"] = t; }
+    }
+    if let Some(ch) = choice {
+        if !ch.is_null() { body["tool_choice"] = ch; }
+    }
+
+    let mut resp = state
+        .deepseek
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", c.api_key))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("DeepSeek request failed: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        let msg = serde_json::from_str::<Value>(&text)
+            .ok()
+            .and_then(|v| v.get("error").and_then(|e| e.get("message")).and_then(Value::as_str).map(str::to_string))
+            .unwrap_or_else(|| text.chars().take(400).collect());
+        return Err(format!("DeepSeek HTTP {}: {msg}", status.as_u16()));
+    }
+
+    let mut acc = StreamAcc::default();
+    let mut buf = String::new();
+    'read: loop {
+        if state.cancelled_streams.lock().map(|mut s| s.remove(&id)).unwrap_or(false) {
+            acc.cancelled = true;
+            break;
+        }
+        let chunk = match resp.chunk().await {
+            Ok(Some(c)) => c,
+            Ok(None) => break,
+            Err(e) => return Err(format!("DeepSeek stream broke off: {e}")),
+        };
+        buf.push_str(&String::from_utf8_lossy(&chunk));
+        while let Some(nl) = buf.find('\n') {
+            let line = buf[..nl].trim_end_matches('\r').to_string();
+            buf.drain(..=nl);
+            let Some(data) = line.strip_prefix("data:") else { continue };
+            let data = data.trim();
+            if data == "[DONE]" {
+                break 'read;
+            }
+            let Ok(v) = serde_json::from_str::<Value>(data) else { continue };
+            let (content, reasoning) = acc.absorb(&v);
+            if !content.is_empty() || !reasoning.is_empty() {
+                let _ = app.emit("ai://stream", json!({ "id": id, "content": content, "reasoning": reasoning }));
+            }
+        }
+    }
+    let model_used = if acc.model.is_empty() { model.clone() } else { acc.model.clone() };
+    record_usage(&app, &db, &model_used, feature.as_deref(), Some(&acc.usage));
+    Ok(acc.finish())
+}
+
+/// Log a completion's tokens and cost. Usage is bookkeeping: a failure here
+/// must never fail the request.
+fn record_usage(app: &AppHandle, db: &study::StudyDb, model: &str, feature: Option<&str>, usage: Option<&Value>) {
+    let Some(u) = usage.filter(|u| u.is_object()) else { return };
+    let _ = study::with_db(app, db, |c| study::usage::record(c, model, feature.unwrap_or("other"), u));
+}
+
+/// Stop a streamed completion; the next chunk boundary ends it.
+#[tauri::command]
+fn ai_cancel(state: State<'_, AppState>, id: String) {
+    if let Ok(mut s) = state.cancelled_streams.lock() {
+        s.insert(id);
+    }
+}
+
+/// Pieces of a streamed reply, put back together.
+#[derive(Default)]
+struct StreamAcc {
+    content: String,
+    reasoning: String,
+    model: String,
+    usage: Value,
+    /// Tool calls by index: id, name, argument text so far.
+    tools: std::collections::BTreeMap<u64, (String, String, String)>,
+    cancelled: bool,
+}
+
+impl StreamAcc {
+    /// Fold one SSE chunk in; returns the new content and reasoning text.
+    fn absorb(&mut self, v: &Value) -> (String, String) {
+        if let Some(m) = v.get("model").and_then(Value::as_str) {
+            self.model = m.to_string();
+        }
+        if let Some(u) = v.get("usage") {
+            if !u.is_null() { self.usage = u.clone(); }
+        }
+        let Some(delta) = v.get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("delta")) else {
+            return (String::new(), String::new());
+        };
+        let content = delta.get("content").and_then(Value::as_str).unwrap_or("").to_string();
+        let reasoning = delta.get("reasoning_content").and_then(Value::as_str).unwrap_or("").to_string();
+        self.content.push_str(&content);
+        self.reasoning.push_str(&reasoning);
+        if let Some(calls) = delta.get("tool_calls").and_then(Value::as_array) {
+            for (pos, call) in calls.iter().enumerate() {
+                let index = call.get("index").and_then(Value::as_u64).unwrap_or(pos as u64);
+                let entry = self.tools.entry(index).or_default();
+                if let Some(id) = call.get("id").and_then(Value::as_str) {
+                    if !id.is_empty() { entry.0 = id.to_string(); }
+                }
+                if let Some(f) = call.get("function") {
+                    if let Some(n) = f.get("name").and_then(Value::as_str) {
+                        entry.1.push_str(n);
+                    }
+                    if let Some(a) = f.get("arguments").and_then(Value::as_str) {
+                        entry.2.push_str(a);
+                    }
+                }
+            }
+        }
+        (content, reasoning)
+    }
+
+    fn finish(self) -> Value {
+        let calls: Vec<Value> = self
+            .tools
+            .into_values()
+            .filter(|(_, name, _)| !name.is_empty())
+            .map(|(id, name, args)| json!({ "id": id, "type": "function", "function": { "name": name, "arguments": args } }))
+            .collect();
+        json!({
+            "content": self.content,
+            "reasoning": self.reasoning,
+            "model": self.model,
+            "usage": self.usage,
+            "tool_calls": if calls.is_empty() { Value::Null } else { Value::Array(calls) },
+            "cancelled": self.cancelled,
+        })
+    }
 }
 
 /// Current DeepSeek account balance (`GET /user/balance`).
@@ -512,6 +694,35 @@ fn open_path(path: String) -> Result<(), String> {
 }
 
 /// Where exports are written, so the app can offer to open the folder.
+/// Open an http(s) link in the default browser (YouTube timestamps, citations).
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(&url).map_err(|e| format!("not a link: {e}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("Only http and https links can be opened.".into());
+    }
+    #[cfg(windows)]
+    let mut cmd = {
+        let mut c = std::process::Command::new("rundll32");
+        c.arg("url.dll,FileProtocolHandler").arg(parsed.as_str());
+        c
+    };
+    #[cfg(target_os = "macos")]
+    let mut cmd = {
+        let mut c = std::process::Command::new("open");
+        c.arg(parsed.as_str());
+        c
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut cmd = {
+        let mut c = std::process::Command::new("xdg-open");
+        c.arg(parsed.as_str());
+        c
+    };
+    hide_window(&mut cmd);
+    cmd.spawn().map(|_| ()).map_err(|e| format!("could not open the link: {e}"))
+}
+
 #[tauri::command]
 fn export_dir(app: AppHandle) -> Result<String, String> {
     let dir = app
@@ -958,6 +1169,8 @@ pub fn run() {
     let bridge = Bridge::new();
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             bridge: bridge.clone(),
             http,
@@ -965,7 +1178,9 @@ pub fn run() {
             export_pause: Arc::new(AtomicBool::new(false)),
             export_cancel: Arc::new(AtomicBool::new(false)),
             export_active: Arc::new(AtomicUsize::new(0)),
+            cancelled_streams: std::sync::Mutex::new(std::collections::HashSet::new()),
         })
+        .manage(study::StudyDb(std::sync::Mutex::new(None)))
         .setup(move |app| {
             start_server(bridge.clone());
             bridge::spawn_logger(bridge.clone());
@@ -983,6 +1198,8 @@ pub fn run() {
             get_config,
             set_config,
             deepseek_chat,
+            deepseek_stream,
+            ai_cancel,
             deepseek_balance,
             export_latex,
             export_pause,
@@ -992,12 +1209,117 @@ pub fn run() {
             reveal_path,
             python::python_status,
             python::python_setup,
-            python::run_python
+            python::run_python,
+            study::study_tree,
+            study::study_create_subject,
+            study::study_update_subject,
+            study::study_delete_subject,
+            study::study_create_notebook,
+            study::study_update_notebook,
+            study::study_delete_notebook,
+            study::chat::chat_list,
+            study::chat::chat_create,
+            study::chat::chat_rename,
+            study::chat::chat_delete,
+            study::chat::chat_clear,
+            study::chat::chat_truncate,
+            study::notebook_set_overview,
+            study::activity,
+            study::usage::usage_summary,
+            data::data_export,
+            data::data_inspect,
+            data::data_import,
+            data::data_reset,
+            study::memory::memory_list,
+            study::memory::memory_add,
+            study::memory::memory_update,
+            study::memory::memory_delete,
+            study::memory::memory_clear,
+            study::syllabus::syllabus_set,
+            study::syllabus::syllabus_clear,
+            study::syllabus::syllabus_text,
+            study::usage::usage_reset,
+            study::events::events_between,
+            study::events::event_add,
+            study::events::event_update,
+            study::events::event_delete,
+            study::search::search_everything,
+            study::sources::source_image_add,
+            study::sources::source_images_clear,
+            study::sources::source_images,
+            study::sources::source_image_data,
+            study::chat::chat_delete_all,
+            study::notes::notes_list,
+            study::notes::note_get,
+            study::notes::note_create,
+            study::notes::note_update,
+            study::notes::note_delete,
+            study::chat::chat_messages,
+            study::chat::chat_add_message,
+            study::chat::attachment_add,
+            study::chat::attachment_data,
+            study::chat::attachment_set_text,
+            study::chat::attachments_info,
+            study::cards::decks_list,
+            study::cards::deck_create,
+            study::cards::deck_rename,
+            study::cards::deck_delete,
+            study::cards::deck_cards,
+            study::cards::cards_add,
+            study::cards::card_update,
+            study::cards::card_delete,
+            study::cards::deck_run_add,
+            study::cards::deck_runs_list,
+            study::cards::reviews_list,
+            study::sources::sources_list,
+            study::sources::source_add,
+            study::sources::source_set_content,
+            study::sources::source_set_status,
+            study::sources::source_rename,
+            study::sources::source_delete,
+            study::sources::source_units,
+            study::sources::source_data,
+            study::sources::sources_search,
+            study::sources::sources_sample,
+            python::youtube_transcript,
+            open_url,
+            study::cards::quizzes_list,
+            study::cards::quiz_get,
+            study::cards::quiz_create,
+            study::cards::quiz_delete,
+            study::cards::quiz_attempt_add,
+            study::cards::attempts_list
         ])
         .build(tauri::generate_context!())
         .expect("error while building WebAssign Desk");
 
     app.run(|_, _| {});
+}
+
+#[cfg(test)]
+mod stream_tests {
+    use super::*;
+
+    #[test]
+    fn reassembles_text_and_split_tool_calls() {
+        let mut acc = StreamAcc::default();
+        let chunks = [
+            json!({"model": "deepseek-flash", "choices": [{"delta": {"content": "The line is "}}]}),
+            json!({"choices": [{"delta": {"content": "r = r0 + tv."}}]}),
+            json!({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_1", "function": {"name": "run_", "arguments": "{\"co"}}]}}]}),
+            json!({"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"name": "python", "arguments": "de\": \"print(1)\"}"}}]}}]}),
+            json!({"choices": [], "usage": {"total_tokens": 42}}),
+        ];
+        let deltas: Vec<String> = chunks.iter().map(|c| acc.absorb(c).0).collect();
+        assert_eq!(deltas[..2], ["The line is ".to_string(), "r = r0 + tv.".to_string()]);
+        let v = acc.finish();
+        assert_eq!(v["content"], "The line is r = r0 + tv.");
+        assert_eq!(v["model"], "deepseek-flash");
+        assert_eq!(v["usage"]["total_tokens"], 42);
+        assert_eq!(v["tool_calls"][0]["function"]["name"], "run_python");
+        assert_eq!(v["tool_calls"][0]["function"]["arguments"], "{\"code\": \"print(1)\"}");
+        assert_eq!(v["tool_calls"][0]["id"], "call_1");
+    }
 }
 
 #[cfg(test)]

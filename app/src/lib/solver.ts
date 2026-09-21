@@ -191,7 +191,7 @@ export function useSolver(deps: SolverDeps) {
         { type: 'text', text: `${questionPrompt(q, { images: false, transcript: null })}\n\n${TRANSCRIBE_PROMPT}` },
         ...images.map((url) => ({ type: 'image_url' as const, image_url: { url } })),
       ];
-      const r = await aiChat({ model: cfg.flashModel, messages: [{ role: 'user', content }], thinking: false });
+      const r = await aiChat({ feature: 'solver', model: cfg.flashModel, messages: [{ role: 'user', content }], thinking: false });
       trackUsage(cfg.flashModel, r.usage);
       const t = r.content.trim();
       if (!t) return null;
@@ -328,7 +328,7 @@ export function useSolver(deps: SolverDeps) {
           if (stopRef.current) { setStat('stopped'); return 'stopped'; }
           let turn: AiReply;
           try {
-            turn = await aiChat({ model, messages, thinking: false, tools, toolChoice: choice });
+            turn = await aiChat({ feature: 'solver', model, messages, thinking: false, tools, toolChoice: choice });
           } catch (e) {
             push({ role: 'system', kind: 'error', tone: 'bad', text: errText(e) });
             failed = true;
@@ -587,7 +587,7 @@ export function useSolver(deps: SolverDeps) {
       // model writes a normal reply.
       let used = 0;
       for (let round = 0; round < budget + 1; round++) {
-        const r = await aiChat({
+        const r = await aiChat({ feature: 'solver',
           model: cfg.flashModel,
           messages,
           thinking: false,

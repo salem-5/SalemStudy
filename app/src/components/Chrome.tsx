@@ -1,3 +1,4 @@
+import { RotateCw, Settings as SettingsIcon } from 'lucide-react';
 import type { AssignmentList, AssignmentSummary, BridgeInfo, Course, Status } from '../types';
 import { fmtDue, parseDue, relTime } from '../lib/format';
 import { AssignmentListSkeleton } from './Skeleton';
@@ -23,7 +24,7 @@ export function Sidebar({ list, loading, selected, multi, onSelect, courses, sec
             <option key={c.id} value={c.sectionId}>{c.course} · {c.section} · {c.term}</option>
           ))}
         </select>
-        <button type="button" className="icon-btn" onClick={onRefresh} title="Reload assignment list">⟳</button>
+        <button type="button" className="icon-btn" onClick={onRefresh} title="Reload assignment list"><RotateCw /></button>
       </div>
       {loading && !list && <AssignmentListSkeleton />}
       {list && (
@@ -34,7 +35,7 @@ export function Sidebar({ list, loading, selected, multi, onSelect, courses, sec
       )}
       <div className="side-foot">
         <button type="button" className="btn ghost side-ai" onClick={onAiSettings} title="API key, balance and usage">
-          ⚙ AI settings
+          <SettingsIcon /> AI settings
         </button>
       </div>
     </aside>

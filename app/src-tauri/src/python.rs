@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use base64::Engine;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -26,12 +27,14 @@ const RUNNER: &str = include_str!("sandbox_runner.py");
 /// Imported by the runner before the sandbox closes; the first three are what
 /// the tool description promises, so a missing one means "not ready".
 pub const CORE_PACKAGES: [&str; 3] = ["sympy", "numpy", "mpmath"];
-pub const EXTRA_PACKAGES: [&str; 1] = ["scipy"];
+/// Optional: each is installed on its own, so one without a wheel for this
+/// Python does not block the others.
+pub const EXTRA_PACKAGES: [&str; 6] = ["scipy", "matplotlib", "pint", "pymupdf", "python-pptx", "yt-dlp"];
 
 const PROBE: &str = r#"
 import json, sys
 mods = {}
-for m in ("sympy", "numpy", "mpmath", "scipy"):
+for m in ("sympy", "numpy", "mpmath", "scipy", "matplotlib", "pint", "pymupdf", "pptx", "yt_dlp"):
     try:
         mods[m] = getattr(__import__(m), "__version__", "?")
     except Exception:
@@ -526,10 +529,12 @@ fn setup_blocking(app: &AppHandle, configured: &str, repair: bool) -> Result<Val
     };
 
     install(&CORE_PACKAGES, "sympy, numpy and mpmath")?;
-    // scipy has no wheel for every Python version; it is a bonus, not a
-    // requirement, so a failure here is only a note.
-    if let Err(e) = install(&EXTRA_PACKAGES, "scipy") {
-        emit("log", &format!("scipy was skipped — {e}"));
+    // The extras have no wheel for every Python version; they are a bonus, not
+    // a requirement, so a failure here is only a note.
+    for pkg in EXTRA_PACKAGES {
+        if let Err(e) = install(&[pkg], pkg) {
+            emit("log", &format!("{pkg} was skipped — {e}"));
+        }
     }
 
     emit("stage", "Checking the environment…");
@@ -617,7 +622,40 @@ fn child_path(python: &Path) -> std::ffi::OsString {
     std::env::join_paths(dirs).unwrap_or_default()
 }
 
-fn run_blocking(app: &AppHandle, configured: &str, code: String, timeout: u64, memory_mb: u64) -> Result<Value, String> {
+/// A file handed to the code: written into the run folder under `name`.
+pub struct InputFile {
+    pub name: String,
+    pub data: Vec<u8>,
+}
+
+/// A name that is safe to create inside the run folder: no directories, no
+/// clash with the runner's own `_`-prefixed files.
+fn safe_file_name(name: &str) -> String {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or("");
+    let cleaned: String = base
+        .chars()
+        .map(|c| if c.is_alphanumeric() || matches!(c, '.' | '-' | '_' | ' ') { c } else { '_' })
+        .collect();
+    let cleaned = cleaned.trim().trim_start_matches(['.', '_']).to_string();
+    if cleaned.is_empty() { "file".into() } else { cleaned.chars().take(120).collect() }
+}
+
+fn image_mime(name: &str) -> Option<&'static str> {
+    let lower = name.to_ascii_lowercase();
+    [(".png", "image/png"), (".jpg", "image/jpeg"), (".jpeg", "image/jpeg"), (".gif", "image/gif"), (".svg", "image/svg+xml"), (".webp", "image/webp")]
+        .iter()
+        .find(|(ext, _)| lower.ends_with(ext))
+        .map(|(_, m)| *m)
+}
+
+/// Output and figure caps for one run; the defaults suit model-written code,
+/// source extraction asks for more.
+pub struct Limits {
+    pub max_output: usize,
+    pub max_figures: usize,
+}
+
+fn run_blocking(app: &AppHandle, configured: &str, code: String, timeout: u64, memory_mb: u64, files: Vec<InputFile>, limits: Limits) -> Result<Value, String> {
     let python = ready_interpreter(app, configured)?;
 
     let dir = sandbox_dir(app)?;
@@ -634,12 +672,24 @@ fn run_blocking(app: &AppHandle, configured: &str, code: String, timeout: u64, m
         .and_then(|_| {
             write(
                 &job,
-                &json!({ "code": code, "timeout": timeout, "memory_mb": memory_mb, "max_output": 20000 }).to_string(),
+                &json!({ "code": code, "timeout": timeout, "memory_mb": memory_mb, "max_output": limits.max_output, "max_figures": limits.max_figures }).to_string(),
             )
         })
     {
         cleanup(&dir);
         return Err(e);
+    }
+    let mut placed: Vec<String> = Vec::new();
+    for f in files {
+        let mut name = safe_file_name(&f.name);
+        while placed.contains(&name) {
+            name = format!("1-{name}");
+        }
+        if let Err(e) = std::fs::write(dir.join(&name), &f.data) {
+            cleanup(&dir);
+            return Err(format!("could not copy {name} into the sandbox: {e}"));
+        }
+        placed.push(name);
     }
 
     let mut cmd = Command::new(&python);
@@ -657,6 +707,13 @@ fn run_blocking(app: &AppHandle, configured: &str, code: String, timeout: u64, m
     cmd.env("PYTHONDONTWRITEBYTECODE", "1");
     cmd.env("PYTHONNOUSERSITE", "1");
     cmd.env("MPLBACKEND", "Agg");
+    // matplotlib builds its font cache once, here, instead of on every run.
+    if let Ok(cache) = app.path().app_cache_dir() {
+        let mpl = cache.join("mpl-config");
+        if std::fs::create_dir_all(&mpl).is_ok() {
+            cmd.env("MPLCONFIGDIR", mpl);
+        }
+    }
     // Keep a linear-algebra call from taking every core on the machine.
     for var in ["OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"] {
         cmd.env(var, "2");
@@ -684,9 +741,28 @@ fn run_blocking(app: &AppHandle, configured: &str, code: String, timeout: u64, m
         }
     };
 
-    let parsed = std::fs::read_to_string(&result)
+    let mut parsed = std::fs::read_to_string(&result)
         .ok()
         .and_then(|s| serde_json::from_str::<Value>(&s).ok());
+    // Figures come back as data URLs; the folder is gone after this.
+    if let Some(Value::Object(map)) = parsed.as_mut() {
+        let names: Vec<String> = map
+            .get("figures")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+            .unwrap_or_default();
+        let figures: Vec<Value> = names
+            .iter()
+            .filter(|n| !n.contains(['/', '\\']))
+            .filter_map(|n| {
+                let mime = image_mime(n)?;
+                let bytes = std::fs::read(dir.join(n)).ok()?;
+                let data = base64::engine::general_purpose::STANDARD.encode(bytes);
+                Some(json!({ "name": n.trim_start_matches('_'), "dataUrl": format!("data:{mime};base64,{data}") }))
+            })
+            .collect();
+        map.insert("figures".into(), Value::Array(figures));
+    }
     cleanup(&dir);
 
     let mut value = match parsed {
@@ -714,7 +790,16 @@ fn run_blocking(app: &AppHandle, configured: &str, code: String, timeout: u64, m
 }
 
 #[tauri::command]
-pub async fn run_python(app: AppHandle, code: String, timeout: Option<u64>) -> Result<Value, String> {
+pub async fn run_python(
+    app: AppHandle,
+    db: tauri::State<'_, crate::study::StudyDb>,
+    code: String,
+    timeout: Option<u64>,
+    files: Option<Vec<i64>>,
+    sources: Option<Vec<i64>>,
+    max_output: Option<usize>,
+    max_figures: Option<usize>,
+) -> Result<Value, String> {
     let cfg = crate::read_config(&app);
     if !cfg.python_enabled {
         return Err("Python is switched off in AI settings.".into());
@@ -722,9 +807,99 @@ pub async fn run_python(app: AppHandle, code: String, timeout: Option<u64>) -> R
     let configured = cfg.python_path;
     let timeout = timeout.unwrap_or(cfg.python_timeout as u64).clamp(1, 180);
     let memory_mb = (cfg.python_memory_mb as u64).clamp(256, 16384);
-    tauri::async_runtime::spawn_blocking(move || run_blocking(&app, &configured, code, timeout, memory_mb))
+    let mut inputs: Vec<InputFile> = crate::study::attachment_files(&app, &db, &files.unwrap_or_default())?
+        .into_iter()
+        .map(|(name, data)| InputFile { name, data })
+        .collect();
+    inputs.extend(
+        crate::study::sources::source_files(&app, &db, &sources.unwrap_or_default())?
+            .into_iter()
+            .map(|(name, data)| InputFile { name, data }),
+    );
+    let limits = Limits {
+        max_output: max_output.unwrap_or(20_000).clamp(1_000, 8_000_000),
+        max_figures: max_figures.unwrap_or(8).clamp(1, 40),
+    };
+    tauri::async_runtime::spawn_blocking(move || run_blocking(&app, &configured, code, timeout, memory_mb, inputs, limits))
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// Captions of a YouTube video, fetched with yt-dlp from the app's virtualenv.
+/// This is the one Python run that needs the network, so it does not go
+/// through the sandbox; it runs a fixed script, never model-written code, and
+/// only downloads subtitles (never the video).
+const YT_SCRIPT: &str = r#"
+import json, sys
+import yt_dlp
+
+ENGLISH = ["en", "en-US", "en-GB", "en-CA", "en-AU", "en-IN", "en-IE", "en-NZ"]
+
+def pick(tracks, prefer):
+    # Exactly one track, by explicit code: YouTube also lists machine
+    # translations (e.g. "en-bn"), and fetching those gets rate-limited.
+    for code in prefer:
+        if code in tracks:
+            return tracks[code]
+    return None
+
+url = sys.argv[1]
+with yt_dlp.YoutubeDL({"skip_download": True, "quiet": True, "no_warnings": True}) as ydl:
+    info = ydl.extract_info(url, download=False)
+    auto = info.get("automatic_captions") or {}
+    # Hand-made English captions, else auto-captions in the spoken language.
+    track = (pick(info.get("subtitles") or {}, ENGLISH)
+             or pick(auto, ["en-orig", "en"])
+             or pick(auto, [c for c in auto if c.endswith("-orig")]))
+    segs = []
+    if track:
+        fmt = next((f for f in track if f.get("ext") == "json3"), None)
+        if fmt:
+            data = json.loads(ydl.urlopen(fmt["url"]).read().decode("utf-8"))
+            for ev in data.get("events", []):
+                text = "".join(s.get("utf8", "") for s in ev.get("segs", []) or []).strip()
+                if text:
+                    segs.append({"start": ev.get("tStartMs", 0) / 1000.0, "text": text})
+print(json.dumps({
+    "title": info.get("title"), "channel": info.get("channel"), "duration": info.get("duration"),
+    "chapters": [{"start": c.get("start_time"), "title": c.get("title")} for c in (info.get("chapters") or [])],
+    "segments": segs,
+}))
+"#;
+
+#[tauri::command]
+pub async fn youtube_transcript(app: AppHandle, url: String) -> Result<Value, String> {
+    let parsed = reqwest::Url::parse(url.trim()).map_err(|_| "That is not a link.".to_string())?;
+    let host = parsed.host_str().unwrap_or_default().trim_start_matches("www.").trim_start_matches("m.").to_string();
+    if !matches!(host.as_str(), "youtube.com" | "youtu.be" | "music.youtube.com") {
+        return Err("Only YouTube links are supported.".into());
+    }
+    let configured = crate::read_config(&app).python_path;
+    tauri::async_runtime::spawn_blocking(move || {
+        let python = ready_interpreter(&app, &configured)?;
+        let dir = sandbox_dir(&app)?;
+        let script = dir.join("_yt.py");
+        std::fs::write(&script, YT_SCRIPT).map_err(|e| e.to_string())?;
+        let mut cmd = Command::new(&python);
+        cmd.arg("-I").arg(&script).arg(parsed.as_str());
+        cmd.current_dir(&dir);
+        let out = run(cmd, Duration::from_secs(180));
+        let _ = std::fs::remove_dir_all(&dir);
+        let out = out?;
+        if out.timed_out {
+            return Err("YouTube took too long to answer.".into());
+        }
+        if out.code != Some(0) {
+            let err = out.stderr.trim();
+            if err.contains("No module named 'yt_dlp'") {
+                return Err("yt-dlp is not installed. Open Settings → Python and press Update packages.".into());
+            }
+            return Err(format!("Could not read the video: {}", err.lines().last().unwrap_or("unknown error")));
+        }
+        serde_json::from_str::<Value>(out.stdout.trim()).map_err(|e| format!("unexpected output from yt-dlp: {e}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Delete any sandbox folder left behind by a crash. Called once at startup.
@@ -758,7 +933,10 @@ mod tests {
             return None;
         };
         let python = PathBuf::from(var);
-        let dir = std::env::temp_dir().join(format!("wa-test-{}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        // A counter as well as the clock: macOS timestamps are only microsecond
+        // precise, and parallel tests sharing a folder delete it under each other.
+        let n = RUN_SEQ.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("wa-test-{}-{n}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
         std::fs::create_dir_all(&dir).unwrap();
         let runner = dir.join("_runner.py");
         let job = dir.join("_job.json");
@@ -792,6 +970,29 @@ mod tests {
         let Some(v) = exec("import socket; socket.gethostbyname('example.com')", 20) else { return };
         assert_eq!(v["ok"], json!(false));
         assert!(v["error"].as_str().unwrap().contains("no network"), "{v}");
+    }
+
+    #[test]
+    fn returns_matplotlib_figures() {
+        let code = "x = np.linspace(0, 6, 50)\nplt.plot(x, np.sin(x))\nplt.title('sin')\nplt.show()";
+        let Some(v) = exec(code, 60) else { return };
+        assert_eq!(v["ok"], json!(true), "{v}");
+        assert_eq!(v["figures"], json!(["_figure-1.png"]), "{v}");
+    }
+
+    #[test]
+    fn pint_checks_units() {
+        let Some(v) = exec("(Q_(3, 'm') / Q_(2, 's')).to('km/h').magnitude", 60) else { return };
+        assert_eq!(v["ok"], json!(true), "{v}");
+        assert_eq!(v["result"].as_str().unwrap(), "5.4");
+    }
+
+    #[test]
+    fn file_names_cannot_escape_the_folder() {
+        assert_eq!(safe_file_name("../../etc/passwd"), "passwd");
+        assert_eq!(safe_file_name("C:\\Users\\me\\data.csv"), "data.csv");
+        assert_eq!(safe_file_name("_runner.py"), "runner.py");
+        assert_eq!(safe_file_name(".."), "file");
     }
 
     #[test]

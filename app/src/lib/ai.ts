@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import type { Box, Draft, Question } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -58,7 +59,7 @@ export type ApiContent = string | (TextPart | ImagePart)[];
 export type ToolCall = { id: string; type: string; function: { name: string; arguments: string } };
 /** An assistant turn that asked for tools, plus the results that answer it —
  *  both have to stay in the thread, in order, or the API rejects the next call. */
-export type ToolCallMessage = { role: 'assistant'; content: string; tool_calls: ToolCall[] };
+export type ToolCallMessage = { role: 'assistant'; content: string; tool_calls: ToolCall[]; reasoning_content?: string };
 export type ToolResultMessage = { role: 'tool'; content: string; tool_call_id: string; name?: string };
 export type ApiMessage =
   | { role: 'system' | 'user' | 'assistant'; content: ApiContent }
@@ -67,7 +68,11 @@ export type ApiMessage =
 
 export type AiReply = { content: string; reasoning: string; model: string; usage: unknown; tool_calls?: ToolCall[] | null };
 
+/** What an AI call is for, so Settings can show where the tokens went. */
+export type AiFeature = 'solver' | 'chat' | 'notebook' | 'notes' | 'flashcards' | 'quiz' | 'sources' | 'overview' | 'other';
+
 export const aiChat = (args: {
+  feature?: AiFeature;
   model: string;
   messages: ApiMessage[];
   thinking?: boolean;
@@ -77,6 +82,7 @@ export const aiChat = (args: {
   toolChoice?: unknown;
 }) =>
   invoke<AiReply>('deepseek_chat', {
+    feature: args.feature ?? 'other',
     model: args.model,
     messages: args.messages,
     thinking: args.thinking ?? null,
@@ -85,6 +91,37 @@ export const aiChat = (args: {
     tools: args.tools ?? null,
     choice: args.toolChoice ?? null,
   });
+
+/**
+ * Streamed chat: `onDelta` gets every piece of text as DeepSeek produces it;
+ * the promise resolves with the whole reply (tool calls reassembled). Stop it
+ * with `aiCancel(id)`; the reply then comes back with `cancelled: true`.
+ */
+export async function aiStream(
+  args: Parameters<typeof aiChat>[0] & { id?: string },
+  onDelta: (content: string, reasoning: string) => void,
+): Promise<AiReply & { cancelled?: boolean }> {
+  const id = args.id ?? crypto.randomUUID();
+  const unlisten = await listen<{ id: string; content: string; reasoning: string }>('ai://stream', (e) => {
+    if (e.payload.id === id) onDelta(e.payload.content, e.payload.reasoning);
+  });
+  try {
+    return await invoke<AiReply & { cancelled?: boolean }>('deepseek_stream', {
+      feature: args.feature ?? 'other',
+      id,
+      model: args.model,
+      messages: args.messages,
+      thinking: args.thinking ?? null,
+      effort: args.effort ?? null,
+      tools: args.tools ?? null,
+      choice: args.toolChoice ?? null,
+    });
+  } finally {
+    unlisten();
+  }
+}
+
+export const aiCancel = (id: string) => invoke<void>('ai_cancel', { id });
 
 /** Forced tool call — the most reliable way to get structured answers out. */
 export const SUBMIT_TOOL = {

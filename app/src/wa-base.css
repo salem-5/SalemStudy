@@ -82,7 +82,7 @@
   min-width: 2em;
   padding: 1px 8px;
   border: 1px solid var(--line-3);
-  border-bottom: 2px solid var(--neon-dim);
+  border-bottom: 2px solid var(--accent-dim);
   background: var(--bg);
   font-family: var(--mono);
   color: var(--text);
@@ -101,8 +101,8 @@
 }
 .qhtml .static-opt.radio { transform: rotate(45deg) scale(0.8); }
 .qhtml .static-opt.on { background: var(--text-2); border-color: var(--text-2); }
-.qhtml .static-opt.on.grade-correct { background: var(--neon); border-color: var(--neon); box-shadow: 0 0 6px var(--neon-glow); }
+.qhtml .static-opt.on.grade-correct { background: var(--good); border-color: var(--good);  }
 .qhtml .static-opt.on.grade-incorrect { background: var(--bad); border-color: var(--bad); }
 .qhtml .static-chosen { color: var(--text); border-bottom: 1px solid var(--text-2); }
-.qhtml .static-chosen.grade-correct { color: var(--neon); border-bottom-color: var(--neon); }
+.qhtml .static-chosen.grade-correct { color: var(--good); border-bottom-color: var(--good); }
 .qhtml .static-chosen.grade-incorrect { color: var(--bad); border-bottom-color: var(--bad); }

@@ -34,6 +34,9 @@ CODE = JOB.get("code") or ""
 TIMEOUT = float(JOB.get("timeout", 20))
 MEMORY_MB = int(JOB.get("memory_mb", 4096))
 MAX_OUTPUT = int(JOB.get("max_output", 20000))
+MAX_FIGURES = int(JOB.get("max_figures", 8))
+MAX_FIGURE_BYTES = 4 * 1024 * 1024
+IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp")
 # normcase so a Windows path that differs only in case still matches.
 SANDBOX = os.path.normcase(os.path.realpath(os.getcwd()))
 
@@ -172,6 +175,38 @@ def build_namespace():
         ns["Decimal"] = Decimal
     except Exception:
         pass
+    # Heavier optional libraries are only imported when the code mentions them.
+    if any(word in CODE for word in ("plt", "matplotlib", "pyplot")):
+        try:
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+            # Figures are collected after the run, so show() only has to not block.
+            plt.show = lambda *args, **kwargs: None
+            plt.rcParams["figure.dpi"] = 110
+            ns["matplotlib"] = matplotlib
+            ns["plt"] = plt
+            loaded.append("matplotlib")
+        except Exception:
+            failed.append("matplotlib")
+    if "pint" in CODE or "ureg" in CODE or "Q_(" in CODE:
+        try:
+            import pint
+            ureg = pint.UnitRegistry()
+            ns["pint"] = pint
+            ns["ureg"] = ureg
+            ns["Q_"] = ureg.Quantity
+            loaded.append("pint")
+        except Exception:
+            failed.append("pint")
+    if "fitz" in CODE or "pymupdf" in CODE:
+        try:
+            import pymupdf
+            ns["pymupdf"] = pymupdf
+            ns["fitz"] = pymupdf
+            loaded.append("pymupdf")
+        except Exception:
+            failed.append("pymupdf")
     sympy = ns.get("sympy")
     if sympy is not None:
         for name in (
@@ -217,6 +252,29 @@ def describe(value):
     return text
 
 
+def collect_figures(before):
+    """Open matplotlib figures, saved as PNGs, plus any image the code wrote
+    itself. Returns file names inside the sandbox; the parent reads them."""
+    names = []
+    plt = sys.modules.get("matplotlib.pyplot")
+    if plt is not None:
+        for i, num in enumerate(plt.get_fignums()[:MAX_FIGURES], start=1):
+            name = f"_figure-{i}.png"
+            try:
+                plt.figure(num).savefig(name, dpi=150, bbox_inches="tight")
+                names.append(name)
+            except Exception:
+                pass
+    try:
+        for entry in sorted(os.listdir(".")):
+            if entry in before or entry.startswith("_") or not entry.lower().endswith(IMAGE_EXTS):
+                continue
+            names.append(entry)
+    except OSError:
+        pass
+    return [n for n in names if os.path.getsize(n) <= MAX_FIGURE_BYTES][:MAX_FIGURES]
+
+
 FINISHED = threading.Event()
 
 
@@ -256,6 +314,7 @@ def main():
     body = compile(tree, "<answer>", "exec")
     tail_code = compile(tail, "<answer>", "eval") if tail is not None else None
 
+    before = set(os.listdir("."))
     sys.addaudithook(audit)
     threading.Thread(target=watchdog, daemon=True).start()
     real_out, real_err = sys.stdout, sys.stderr
@@ -283,6 +342,13 @@ def main():
         FINISHED.set()
         sys.stdout, sys.stderr = real_out, real_err
 
+    figures = []
+    if not timed_out:
+        try:
+            figures = collect_figures(before)
+        except Exception:
+            figures = []
+
     stdout, cut_out = clip(out.getvalue())
     stderr, cut_err = clip(err.getvalue())
     write_result({
@@ -293,6 +359,7 @@ def main():
         "error": error,
         "timed_out": timed_out,
         "truncated": cut_out or cut_err,
+        "figures": figures,
         "duration_ms": int((time.time() - started) * 1000),
         "loaded": LOADED,
         "missing": FAILED,

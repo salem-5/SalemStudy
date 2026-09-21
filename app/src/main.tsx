@@ -1,9 +1,13 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import App from './App';
+import Shell from './Shell';
+import { installStudyMock } from './study/mockApi';
 import { api, useHttpTransport } from './api';
 import './wa-base.css';
 import './styles.css';
+import { initTheme } from './lib/theme';
+
+initTheme();
 
 async function boot() {
   // No native WebView context menu in the app chrome; the app supplies its own
@@ -24,11 +28,14 @@ async function boot() {
     } else {
       const { installMock } = await import('./mock');
       installMock(api);
+      const { installDevAi } = await import('./devAi');
+      installDevAi();
     }
+    installStudyMock();
   }
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
-      <App />
+      <Shell />
     </StrictMode>,
   );
 }

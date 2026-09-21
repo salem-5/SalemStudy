@@ -19,6 +19,9 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 base64 = "0.22"
 axum = "0.8"
 tokio = { version = "1", features = ["net", "sync", "time", "rt"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+tauri-plugin-notification = "2"
+tauri-plugin-dialog = "2"
 
 [dev-dependencies]
 # `mock_app` gives the export tests an AppHandle without a window.

@@ -973,11 +973,11 @@ export function assignmentToLatex(a: Assignment, meta: ExportMeta = {}): LatexEx
 ${PREAMBLE}
 \\hypersetup{
   pdftitle={${escText(title)}},
-  pdfauthor={WebAssign Desk},
+  pdfauthor={SalemStudy},
   pdfsubject={WebAssign assignment worksheet with mark scheme},
   pdfkeywords={${escText(keywords)}},
-  pdfcreator={WebAssign Desk},
-  pdfproducer={WebAssign Desk / pdfTeX},
+  pdfcreator={SalemStudy},
+  pdfproducer={SalemStudy / pdfTeX},
 }
 \\pagestyle{fancy}
 \\fancyhf{}

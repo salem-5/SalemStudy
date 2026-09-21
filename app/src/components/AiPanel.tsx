@@ -1,13 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
+import { Download, Monitor, Moon, Search, Settings as SettingsIcon, Sun, TriangleAlert, Upload, X } from 'lucide-react';
 import type { Box, Question } from '../types';
 import type { ChatEntry, useSolver } from '../lib/solver';
 import { deepseekBalance, getAiConfig, setAiConfig, type AiConfig, type Balance, type ConfigPatch } from '../lib/ai';
 import { onPythonProgress, pythonSetup, pythonStatus, type PythonStatus } from '../lib/python';
-import { fmtCost, fmtInt, pairCalls, pairCost, pairTotal, type UsageRecord } from '../lib/usage';
+import { fmtCost, fmtInt, type UsageRecord } from '../lib/usage';
 import { refetchesLeft } from '../lib/cache';
 import { MathView } from './MathView';
 import { Modal } from './Dialogs';
-import { BarChart } from './UsageChart';
+import { studyApi, type MemoryState, type UsageSummary } from '../study/api';
+import { setSolverEnabled, useSolverEnabled } from '../lib/features';
+import { exportData, fmtBytes, importData, pickImport, resetData, type ExportInfo } from '../lib/dataFile';
+import { TONES, setPersonal, usePersonal } from '../lib/personal';
+import { ACCENTS, setAccentPref, setThemePref, useAccentPref, useThemePref, type ThemePref } from '../lib/theme';
 
 type Solver = ReturnType<typeof useSolver>;
 
@@ -187,8 +192,8 @@ export function AiPanel({ solver, question, questions, open, onOpenSettings, onC
         >
           {balBusy ? '…' : balance ?? 'balance'}
         </button>
-        <button type="button" className="icon-btn" title="AI settings" onClick={onOpenSettings}>⚙</button>
-        <button type="button" className="icon-btn" title="Close panel" onClick={onClose}>✕</button>
+        <button type="button" className="icon-btn" title="AI settings" onClick={onOpenSettings}><SettingsIcon /></button>
+        <button type="button" className="icon-btn" title="Close panel" onClick={onClose}><X /></button>
       </header>
 
       {!cfg?.hasKey && (
@@ -319,7 +324,8 @@ function BalanceRow({ onChanged }: { onChanged?: () => void }) {
  * The environment is the app's own virtualenv, so nothing on the machine's
  * Python is touched.
  */
-function PythonSection({ cfg, patch, onChanged }: {
+function PythonSection({ cfg, patch, onChanged, solverOn }: {
+  solverOn: boolean;
   cfg: { enabled: boolean; auto: boolean; path: string; timeout: number; maxCalls: number };
   patch: (p: Partial<{ enabled: boolean; auto: boolean; path: string; timeout: number; maxCalls: number }>) => void;
   onChanged: () => void;
@@ -386,12 +392,14 @@ function PythonSection({ cfg, patch, onChanged }: {
       {err && <div className="ai-settings-err">{err}</div>}
       <label className="account-check">
         <input type="checkbox" checked={cfg.enabled} onChange={(e) => patch({ enabled: e.target.checked })} />
-        <span>Let the solver run Python</span>
+        <span>Let the AI run Python (chats, quizzes{solverOn ? ', the solver' : ''})</span>
       </label>
-      <label className="account-check">
-        <input type="checkbox" checked={cfg.auto} onChange={(e) => patch({ auto: e.target.checked })} />
-        <span>Require it for any question that needs calculating (off: only after a wrong answer)</span>
-      </label>
+      {solverOn && (
+        <label className="account-check">
+          <input type="checkbox" checked={cfg.auto} onChange={(e) => patch({ auto: e.target.checked })} />
+          <span>Solver: require it for any question that needs calculating (off: only after a wrong answer)</span>
+        </label>
+      )}
       <div className="ai-settings-row">
         <label>
           <span>Seconds per run</span>
@@ -418,10 +426,10 @@ function PythonSection({ cfg, patch, onChanged }: {
   );
 }
 
-export function AiSettingsDialog({ onClose, onSaved, usageMap, onClearCache, onPythonChanged }: {
+export function AiSettingsDialog({ onClose, onSaved, onClearCache, onPythonChanged }: {
   onClose: () => void;
   onSaved: (c: AiConfig) => void;
-  usageMap: Record<string, UsageRecord>;
+  usageMap?: Record<string, UsageRecord>;
   onClearCache: () => void;
   onPythonChanged: () => void;
 }) {
@@ -435,7 +443,7 @@ export function AiSettingsDialog({ onClose, onSaved, usageMap, onClearCache, onP
   const [py, setPy] = useState({ enabled: true, auto: true, path: '', timeout: 25, maxCalls: 6 });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [sel, setSel] = useState<string | null>(null);
+  const solverOn = useSolverEnabled();
 
   const apply = (c: AiConfig) => {
     setCfg(c);
@@ -492,17 +500,8 @@ export function AiSettingsDialog({ onClose, onSaved, usageMap, onClearCache, onP
     }
   };
 
-  const records = Object.values(usageMap).sort((a, b) => b.updated - a.updated);
-  const active = records.find((r) => String(r.assignmentId) === sel) ?? records[0];
-  const qBars = active
-    ? Object.entries(active.questions)
-      .map(([n, q]) => ({ n: Number(n), label: `Q${n}`, value: pairTotal(q), sub: `${q.attempts} attempt(s) · ~${fmtCost(pairCost(q))}` }))
-      .sort((a, b) => a.n - b.n)
-      .map(({ label, value, sub }) => ({ label, value, sub }))
-    : [];
-
   return (
-    <Modal title="AI / ACCOUNT" onClose={onClose} wide>
+    <Modal title="SETTINGS" onClose={onClose} wide>
       <div className="ai-settings">
         <section>
           <h4>API KEY</h4>
@@ -528,50 +527,35 @@ export function AiSettingsDialog({ onClose, onSaved, usageMap, onClearCache, onP
         </section>
 
         <section>
-          <h4>USAGE</h4>
-          {records.length === 0 ? (
-            <p className="muted">No usage recorded yet. Solve a question and it will show up here.</p>
-          ) : (
-            <>
-              <div className="account-row">
-                <label className="account-pick">
-                  <span>Assignment</span>
-                  <select value={active ? String(active.assignmentId) : ''} onChange={(e) => setSel(e.target.value)}>
-                    {records.map((r) => (
-                      <option key={r.assignmentId} value={String(r.assignmentId)}>
-                        {r.name || `#${r.assignmentId}`} — {fmtInt(pairTotal(r))} tok
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                {active && (
-                  <span className="account-balance">
-                    {fmtInt(pairTotal(active))} tokens · {pairCalls(active)} calls · ~{fmtCost(pairCost(active))}
-                  </span>
-                )}
-              </div>
-              <div className="chart-caption">Tokens per assignment</div>
-              <BarChart
-                data={records.map((r) => ({
-                  label: r.name || `#${r.assignmentId}`,
-                  value: pairTotal(r),
-                  sub: `${pairCalls(r)} calls · ~${fmtCost(pairCost(r))}`,
-                }))}
-                unit="tok"
-              />
-              {active && (
-                <>
-                  <div className="chart-caption">Tokens per question — {active.name || `#${active.assignmentId}`}</div>
-                  <BarChart data={qBars} unit="tok" empty="No questions recorded for this assignment." />
-                </>
-              )}
-            </>
-          )}
+          <h4>APPEARANCE</h4>
+          <ThemePicker />
         </section>
 
-        <PythonSection cfg={py} patch={(p) => setPy((v) => ({ ...v, ...p }))} onChanged={onPythonChanged} />
+        <PersonalSection />
+
+        <MemorySection />
 
         <section>
+          <h4>FEATURES</h4>
+          <label className="feature-row">
+            <span className="feature-text">
+              <b>Assignment Solver</b>
+              <span className="muted">Solve WebAssign assignments with the AI, through the userscript in your browser. Adds a sidebar entry and its own settings here.</span>
+            </span>
+            <span className="switch">
+              <input type="checkbox" checked={solverOn} onChange={(e) => setSolverEnabled(e.target.checked)} />
+              <span className="switch-track"><span className="switch-thumb" /></span>
+            </span>
+          </label>
+        </section>
+
+        <UsageSection />
+
+        <DataSection />
+
+        <PythonSection cfg={py} patch={(p) => setPy((v) => ({ ...v, ...p }))} onChanged={onPythonChanged} solverOn={solverOn} />
+
+        {solverOn && <section>
           <h4>CACHE</h4>
           <div className="account-row">
             <button type="button" className="btn ghost" onClick={onClearCache}>Clear question cache</button>
@@ -579,25 +563,27 @@ export function AiSettingsDialog({ onClose, onSaved, usageMap, onClearCache, onP
               Questions are cached this session. Refetches left: {refetchesLeft()}. Completed assignments are never refetched.
             </span>
           </div>
-        </section>
+        </section>}
 
         <section>
           <h4>MODEL</h4>
           <div className="ai-settings-row">
             <label>
-              <span>First-try model (vision)</span>
+              <span>{solverOn ? 'Main model (vision, used everywhere)' : 'Model'}</span>
               <input value={flash} spellCheck={false} onChange={(e) => setFlash(e.target.value)} />
             </label>
-            <label>
-              <span>Retry model (no vision)</span>
-              <input value={pro} spellCheck={false} onChange={(e) => setPro(e.target.value)} />
-            </label>
+            {solverOn && (
+              <label>
+                <span>Solver retry model (no vision)</span>
+                <input value={pro} spellCheck={false} onChange={(e) => setPro(e.target.value)} />
+              </label>
+            )}
           </div>
           <label>
             <span>API base URL</span>
             <input value={base} spellCheck={false} onChange={(e) => setBase(e.target.value)} />
           </label>
-          <div className="ai-settings-row">
+          {solverOn && <div className="ai-settings-row">
             <label>
               <span>Max attempts per question</span>
               <input type="number" min={1} max={10} value={maxA} onChange={(e) => setMaxA(Number(e.target.value))} />
@@ -606,7 +592,7 @@ export function AiSettingsDialog({ onClose, onSaved, usageMap, onClearCache, onP
               <span>Pause for approval after N misses</span>
               <input type="number" min={0} max={10} value={pause} onChange={(e) => setPause(Number(e.target.value))} />
             </label>
-          </div>
+          </div>}
         </section>
 
         {err && <div className="ai-settings-err">{err}</div>}
@@ -616,5 +602,289 @@ export function AiSettingsDialog({ onClose, onSaved, usageMap, onClearCache, onP
         </div>
       </div>
     </Modal>
+  );
+}
+
+const FEATURE_LABEL: Record<string, string> = {
+  solver: 'Assignment solver', chat: 'Assistant chat', notebook: 'Notebook chat', notes: 'Notes', flashcards: 'Flashcards',
+  quiz: 'Quizzes', sources: 'Reading sources', overview: 'Notebook overviews', other: 'Other',
+};
+
+function ThemePicker() {
+  const pref = useThemePref();
+  const accent = useAccentPref();
+  const preset = ACCENTS.some((a) => a.color === accent);
+  const opts: [ThemePref, string, typeof Moon][] = [['system', 'System', Monitor], ['dark', 'Dark', Moon], ['light', 'Light', Sun]];
+  return (
+    <>
+      <div className="theme-picker" role="radiogroup" aria-label="Theme">
+      {opts.map(([v, label, Icon]) => (
+        <button key={v} type="button" role="radio" aria-checked={pref === v} className={`theme-opt${pref === v ? ' on' : ''}`} onClick={() => setThemePref(v)}>
+          <span className={`theme-swatch ${v}`}><Icon /></span>{label}
+        </button>
+      ))}
+      </div>
+      <div className="accent-row" role="radiogroup" aria-label="Accent colour">
+        <span>Accent</span>
+        {ACCENTS.map((a) => (
+          <button key={a.name} type="button" role="radio" aria-checked={accent === a.color} title={a.name}
+            className={`accent-dot${accent === a.color ? ' on' : ''}`} style={{ '--c': a.color || '#8fb3d1' } as React.CSSProperties}
+            onClick={() => setAccentPref(a.color)} />
+        ))}
+        <label className={`accent-dot accent-custom${preset ? '' : ' on'}`} title="Custom colour">
+          <input type="color" value={accent || '#8fb3d1'} onChange={(e) => setAccentPref(e.target.value)} />
+        </label>
+      </div>
+    </>
+  );
+}
+
+/** Every AI call the app makes, totalled: solver, chats, notes, cards, quizzes, reading sources. */
+function UsageSection() {
+  const [u, setU] = useState<UsageSummary | null>(null);
+  const [confirm, setConfirm] = useState(false);
+  const load = () => studyApi.usage().then(setU).catch(() => setU(null));
+  useEffect(() => { load(); }, []);
+  const maxCost = Math.max(1e-9, ...(u?.byFeature ?? []).map((f) => f.cost));
+  return (
+    <section>
+      <h4>USAGE</h4>
+      {!u || u.total.calls === 0 ? (
+        <p className="muted">No AI calls recorded yet. Everything that uses the AI is counted here.</p>
+      ) : (
+        <>
+          <div className="usage-totals">
+            <div className="usage-total"><span className="usage-num">{fmtCost(u.total.cost)}</span><span className="muted">spent in total</span></div>
+            <div className="usage-total"><span className="usage-num">{fmtInt(u.total.tokens)}</span><span className="muted">tokens · {fmtInt(u.total.calls)} calls</span></div>
+            <div className="usage-total"><span className="usage-num">{fmtCost(u.last30.cost)}</span><span className="muted">last 30 days · {fmtInt(u.last30.tokens)} tok</span></div>
+          </div>
+          <div className="usage-features">
+            {u.byFeature.map((f) => (
+              <div key={f.key} className="usage-feature">
+                <span className="usage-feature-name">{FEATURE_LABEL[f.key] ?? f.key}</span>
+                <span className="usage-bar"><span style={{ width: `${(f.cost / maxCost) * 100}%` }} /></span>
+                <span className="usage-feature-num">{fmtCost(f.cost)}</span>
+                <span className="muted usage-feature-tok">{fmtInt(f.tokens)} tok</span>
+              </div>
+            ))}
+          </div>
+          <div className="account-row">
+            <span className="muted">
+              {u.byModel.map((m) => `${m.key}: ${fmtInt(m.calls)} calls`).join(' · ')}
+              {u.since && ` · since ${new Date(u.since).toLocaleDateString()}`}. Costs are estimates from DeepSeek's list prices, including off-peak rates.
+            </span>
+            {confirm ? (
+              <>
+                <button type="button" className="btn ghost danger" onClick={async () => { await studyApi.resetUsage(); setConfirm(false); load(); }}>Reset totals</button>
+                <button type="button" className="btn ghost" onClick={() => setConfirm(false)}>Keep</button>
+              </>
+            ) : <button type="button" className="btn ghost" onClick={() => setConfirm(true)}>Reset…</button>}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+/** Custom instructions for the chats (not the solver). */
+function PersonalSection() {
+  const p = usePersonal();
+  return (
+    <section>
+      <h4>PERSONALIZATION</h4>
+      <p className="muted">Used by the assistant and notebook chats, like custom instructions. Stays on this computer.</p>
+      <div className="tone-row" role="radiogroup" aria-label="Response style">
+        {TONES.map((t) => (
+          <button key={t.tone} type="button" role="radio" aria-checked={p.tone === t.tone} className={`tone-opt${p.tone === t.tone ? ' on' : ''}`} onClick={() => setPersonal({ tone: t.tone })} title={t.hint}>
+            <b>{t.label}</b><span>{t.hint}</span>
+          </button>
+        ))}
+      </div>
+      <label>
+        <span>What should the AI know about you?</span>
+        <textarea className="textarea" rows={3} value={p.about} onChange={(e) => setPersonal({ about: e.target.value })}
+          placeholder="e.g. Second-year mechanical engineering student. Taking Calculus III and Dynamics. I learn best from worked examples." />
+      </label>
+      <label>
+        <span>How should it respond?</span>
+        <textarea className="textarea" rows={3} value={p.instructions} onChange={(e) => setPersonal({ instructions: e.target.value })}
+          placeholder="e.g. Use SI units. Show every algebra step. Keep answers short unless I ask for more." />
+      </label>
+    </section>
+  );
+}
+
+/** What the chats have learned about the student: see it, fix it, delete it. */
+function MemorySection() {
+  const p = usePersonal();
+  const [state, setState] = useState<MemoryState | null>(null);
+  const [adding, setAdding] = useState('');
+  const [editing, setEditing] = useState<number | null>(null);
+  const [filter, setFilter] = useState('');
+  const [confirm, setConfirm] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const load = () => studyApi.memories().then(setState).catch((e) => setErr(errText(e)));
+  useEffect(() => { void load(); }, []);
+  const act = async (fn: () => Promise<unknown>) => { setErr(null); try { await fn(); } catch (e) { setErr(errText(e)); } await load(); };
+
+  const items = state?.items ?? [];
+  const pct = state ? Math.min(100, Math.round((state.used / state.capacity) * 100)) : 0;
+  const shown = filter.trim() ? items.filter((m) => m.text.toLowerCase().includes(filter.trim().toLowerCase())) : items;
+  return (
+    <section>
+      <h4>MEMORY</h4>
+      <label className="feature-row">
+        <span className="feature-text">
+          <b>Let the AI remember things about you</b>
+          <span className="muted">The assistant and notebook chats save lasting facts (your courses, goals, what you find hard, how you like explanations) and use them in every conversation. Nothing leaves this computer except with the questions you send.</span>
+        </span>
+        <span className="switch">
+          <input type="checkbox" checked={p.memory} onChange={(e) => setPersonal({ memory: e.target.checked })} />
+          <span className="switch-track"><span className="switch-thumb" /></span>
+        </span>
+      </label>
+      <div className="memory-meter" title={`${state?.used ?? 0} of ${state?.capacity ?? 0} characters`}>
+        <span className="memory-bar"><span style={{ width: `${pct}%` }} className={pct >= 90 ? 'full' : ''} /></span>
+        <span className="muted">{items.length} memor{items.length === 1 ? 'y' : 'ies'} · {pct}% full</span>
+      </div>
+      {items.length > 6 && (
+        <div className="thread-search memory-search"><Search /><input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Search memories" /></div>
+      )}
+      <ul className="memory-list">
+        {shown.map((m) => (
+          <li key={m.id} className="memory-item">
+            {editing === m.id ? (
+              <input
+                className="thread-rename"
+                autoFocus
+                defaultValue={m.text}
+                onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { e.currentTarget.value = m.text; e.currentTarget.blur(); } }}
+                onBlur={(e) => { const t = e.currentTarget.value.trim(); setEditing(null); if (t && t !== m.text) void act(() => studyApi.updateMemory(m.id, t)); }}
+              />
+            ) : (
+              <button type="button" className="memory-text" onClick={() => setEditing(m.id)} title="Click to edit">
+                {m.text}
+                <span className="muted memory-meta">{m.source === 'user' ? 'added by you' : 'from a chat'} · {new Date(m.createdAt).toLocaleDateString()}</span>
+              </button>
+            )}
+            <button type="button" className="task-x memory-x" onClick={() => void act(() => studyApi.deleteMemory(m.id))} aria-label="Delete memory"><X /></button>
+          </li>
+        ))}
+        {!items.length && <li className="muted memory-empty">Nothing yet. As you chat, facts about you show up here. You can also add one yourself.</li>}
+      </ul>
+      <form className="account-row" onSubmit={(e) => { e.preventDefault(); if (adding.trim()) void act(async () => { await studyApi.addMemory(adding, 'user'); setAdding(''); }); }}>
+        <input value={adding} onChange={(e) => setAdding(e.target.value)} placeholder="Add a memory, e.g. I'm taking Physics 1 and Calculus 2 this term" />
+        <button type="submit" className="btn ghost" disabled={!adding.trim()}>Add</button>
+        {items.length > 0 && (confirm ? (
+          <>
+            <button type="button" className="btn ghost danger" onClick={() => { setConfirm(false); void act(() => studyApi.clearMemories()); }}>Delete all</button>
+            <button type="button" className="btn ghost" onClick={() => setConfirm(false)}>Keep</button>
+          </>
+        ) : <button type="button" className="btn ghost" onClick={() => setConfirm(true)}>Clear…</button>)}
+      </form>
+      {err && <div className="ai-settings-err">{err}</div>}
+    </section>
+  );
+}
+
+/** Export everything to one file, import one (replacing everything), or start over. */
+function DataSection() {
+  const [withSettings, setWithSettings] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [pending, setPending] = useState<{ path: string; info: ExportInfo } | null>(null);
+  const [resetting, setResetting] = useState(false);
+  const [forgetKey, setForgetKey] = useState(false);
+  const [typed, setTyped] = useState('');
+
+  const run = async (label: string, fn: () => Promise<void>) => {
+    setBusy(label); setErr(null); setDone(null);
+    try { await fn(); } catch (e) { setErr(errText(e)); } finally { setBusy(null); }
+  };
+  const doExport = () => run('Exporting…', async () => {
+    const r = await exportData(withSettings);
+    if (r) setDone(`Exported ${fmtBytes(r.bytes)} to ${r.path}`);
+  });
+  const name = (p: string) => p.split(/[\\/]/).pop();
+  const count = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
+
+  return (
+    <section>
+      <h4>DATA</h4>
+      <div className="data-row">
+        <div className="feature-text">
+          <b>Export</b>
+          <span className="muted">One file with everything: subjects, notebooks, sources and their files, notes, flashcards, quizzes, chats, schedule and memory.</span>
+          <label className="account-check">
+            <input type="checkbox" checked={withSettings} onChange={(e) => setWithSettings(e.target.checked)} />
+            <span>Include settings (appearance, personalization, AI and Python settings). Your API key is never exported.</span>
+          </label>
+        </div>
+        <button type="button" className="btn" disabled={!!busy} onClick={() => void doExport()}><Download />Export…</button>
+      </div>
+
+      <div className="data-row">
+        <div className="feature-text">
+          <b>Import</b>
+          <span className="muted">Replace everything here with an exact copy from an export. Your API key stays.</span>
+        </div>
+        <button type="button" className="btn" disabled={!!busy} onClick={() => void run('Reading the file…', async () => { const p = await pickImport(); if (p) { setPending(p); setResetting(false); } })}><Upload />Import…</button>
+      </div>
+
+      {pending && (
+        <div className="danger-panel">
+          <div className="danger-title"><TriangleAlert />Replace all your data with this export?</div>
+          <p>
+            <b>{name(pending.path)}</b>{pending.info.exportedAt ? `, exported ${new Date(pending.info.exportedAt).toLocaleString()}` : ''} ({fmtBytes(pending.info.bytes)}) contains {count(pending.info.subjects, 'subject')}, {count(pending.info.notebooks, 'notebook')}, {count(pending.info.sources, 'source')}, {count(pending.info.notes, 'note')}, {count(pending.info.chats, 'chat')} and {count(pending.info.events, 'event')}
+            {pending.info.hasSettings ? ', plus settings.' : ' (no settings; yours are kept).'}
+          </p>
+          <p>Everything you have now is <b>replaced</b>: subjects, notebooks, sources, notes, cards, quizzes, chats, schedule and memory{pending.info.hasSettings ? ', and your settings' : ''}. A copy of your current data is kept in the app folder as <code>study.before-import.db</code> until the next import. The app restarts when it is done.</p>
+          <div className="danger-actions">
+            <button type="button" className="btn ghost" onClick={() => setPending(null)}>Cancel</button>
+            <button type="button" className="btn danger-solid" disabled={!!busy} onClick={() => void run('Importing…', () => importData(pending.path))}>Replace my data</button>
+          </div>
+        </div>
+      )}
+
+      <div className="data-row">
+        <div className="feature-text">
+          <b className="danger-text">Reset all data</b>
+          <span className="muted">Delete everything and start over like a new account.</span>
+        </div>
+        <button type="button" className="btn ghost danger" disabled={!!busy} onClick={() => { setResetting(true); setPending(null); setTyped(''); }}>Reset…</button>
+      </div>
+
+      {resetting && (
+        <div className="danger-panel big">
+          <div className="danger-title"><TriangleAlert />This permanently deletes all of your data</div>
+          <ul>
+            <li>every subject and notebook, with all sources and uploaded files</li>
+            <li>all notes, flashcard decks, quizzes, scores and analytics</li>
+            <li>every chat, the schedule, syllabuses and everything the AI remembers about you</li>
+            <li>your preferences (theme, personalization, timer)</li>
+          </ul>
+          <p>It cannot be undone. <b>Export first</b> if you might want any of it back.</p>
+          <label className="account-check">
+            <input type="checkbox" checked={forgetKey} onChange={(e) => setForgetKey(e.target.checked)} />
+            <span>Also remove my DeepSeek API key and AI settings</span>
+          </label>
+          <label className="danger-confirm">
+            <span>Type <b>RESET</b> to confirm</span>
+            <input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="RESET" autoComplete="off" spellCheck={false} />
+          </label>
+          <div className="danger-actions">
+            <button type="button" className="btn ghost" onClick={() => void doExport()} disabled={!!busy}><Download />Export first</button>
+            <span className="spacer" />
+            <button type="button" className="btn ghost" onClick={() => setResetting(false)}>Cancel</button>
+            <button type="button" className="btn danger-solid" disabled={typed.trim() !== 'RESET' || !!busy} onClick={() => void run('Deleting…', () => resetData(forgetKey))}>Delete everything</button>
+          </div>
+        </div>
+      )}
+
+      {busy && <div className="gen-status"><span className="dots"><i /><i /><i /></span>{busy}</div>}
+      {done && <p className="muted data-done">{done}</p>}
+      {err && <div className="ai-settings-err">{err}</div>}
+    </section>
   );
 }

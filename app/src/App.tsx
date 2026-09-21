@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Download, RotateCw } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { TopbarChip } from './components/ViewBar';
 import { api, errorText } from './api';
 import type {
   Assignment, AssignmentList, Box, BridgeInfo, Course, Draft, DryRun, Question, Status, SubmitResult,
@@ -20,7 +23,6 @@ import { ContextMenu, type MenuItem } from './components/ContextMenu';
 import { QuestionSkeleton } from './components/Skeleton';
 import { ExportDialog, type ExportEntry } from './components/ExportDialog';
 import { ConnectPanel, MIN_USERSCRIPT, Sidebar, StatusBar, Toasts, scriptCurrent, type Toast } from './components/Chrome';
-import { Logo } from './components/Logo';
 
 type Busy = 'save' | 'submit' | 'dry' | null;
 
@@ -41,7 +43,9 @@ const store = {
   set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } },
 };
 
-export default function App() {
+/** The Assignment Solver. `active` is false while Study is on screen: the
+ *  solver stays mounted but ignores the keyboard. */
+export default function App({ active = true, settingsSignal = 0 }: { active?: boolean; settingsSignal?: number }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [bridge, setBridge] = useState<BridgeInfo | null>(null);
@@ -417,9 +421,15 @@ export default function App() {
   // ---- keyboard ------------------------------------------------------------
   const keyState = useRef({ save, submit: () => setConfirm(true), reload, gotoQuestion, question, assignment });
   keyState.current = { save, submit: () => setConfirm(true), reload, gotoQuestion, question, assignment };
+  const activeRef = useRef(active);
+  activeRef.current = active;
+
+  // The global sidebar's Settings button.
+  useEffect(() => { if (settingsSignal) setAiSettings(true); }, [settingsSignal]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (!activeRef.current) return;
       if (e.key === 'F1') { e.preventDefault(); setHelp((h) => !h); return; }
       if (document.querySelector('.modal')) return;
       const k = keyState.current;
@@ -460,7 +470,7 @@ export default function App() {
   return (
     <div className={`app${aiOpen ? ' ai-open' : ''}`}>
       <header className="topbar">
-        <div className="logo"><Logo className="logo-mark" /><span>WA DESK</span></div>
+        <div className="logo"><span>Assignment Solver</span></div>
         <div className="crumb">
           {assignment ? (
             <>
@@ -476,7 +486,8 @@ export default function App() {
             <span className="muted">/{summary.total}</span>
           </div>
         )}
-        <button type="button" className="icon-btn" onClick={reload} title="Reload from WebAssign (Ctrl+R)" disabled={!connected}>⟳</button>
+        <TopbarChip />
+        <button type="button" className="icon-btn" onClick={reload} title="Reload from WebAssign (Ctrl+R)" disabled={!connected}><RotateCw /></button>
         <button
           type="button"
           className="icon-btn"
@@ -484,7 +495,7 @@ export default function App() {
           title="Export assignment (LaTeX / PDF)"
           onClick={() => exportAssignment()}
         >
-          ⤓
+          <Download />
         </button>
       </header>
 
@@ -580,7 +591,7 @@ export default function App() {
       )}
       {dry && <DryRunDialog dry={dry} onClose={() => setDry(null)} />}
       {help && <ShortcutsDialog onClose={() => setHelp(false)} />}
-      {aiSettings && (
+      {aiSettings && createPortal(
         <AiSettingsDialog
           usageMap={usage.map}
           onClose={() => setAiSettings(false)}
@@ -591,7 +602,8 @@ export default function App() {
             toast('ok', `AI settings saved (${c.hasKey ? 'key set' : 'no key'}).`);
           }}
           onPythonChanged={() => solver.reloadPython()}
-        />
+        />,
+        document.body,
       )}
       {exportLoading && (
         <div className="export-loading">

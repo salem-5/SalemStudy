@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { X } from 'lucide-react';
 import type { Box, Draft, DryRun, Question } from '../types';
 import { MathView } from './MathView';
 import { Attempts } from './BoxCard';
@@ -8,7 +9,8 @@ import { SNIPPETS } from './MathEditor';
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    ref.current?.focus();
+    // Keep focus on an autoFocus field inside the dialog; otherwise take it for Escape.
+    if (!ref.current?.contains(document.activeElement)) ref.current?.focus();
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
@@ -16,7 +18,7 @@ export function Modal({ title, onClose, children, wide }: { title: string; onClo
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div ref={ref} tabIndex={-1} className={`modal${wide ? ' wide' : ''}`} onMouseDown={(e) => e.stopPropagation()}>
-        <header><span>{title}</span><button type="button" className="icon-btn" onClick={onClose}>✕</button></header>
+        <header><span>{title}</span><button type="button" className="icon-btn" onClick={onClose} aria-label="Close"><X /></button></header>
         <div className="modal-body">{children}</div>
       </div>
     </div>
