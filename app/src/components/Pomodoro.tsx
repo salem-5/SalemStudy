@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { BellRing, Check, Pause, Play, RotateCcw, SkipForward, Volume2, X } from 'lucide-react';
+import { BellRing, Check, Pause, Play, Plus, RotateCcw, SkipForward, Volume2, X } from 'lucide-react';
 import { fmtClock, PHASE_LABEL, pomodoro, remainingOf, usePomodoro, type Phase } from '../lib/pomodoro';
 import { BarChart, StatTile } from './charts';
 import { Modal } from './Dialogs';
@@ -106,8 +106,8 @@ export function FocusPage() {
 
   return (
     <div className="page focus-page">
-      <div className="focus-grid">
-        <section className="focus-timer">
+      <div className="focus-layout">
+        <section className={`focus-timer ${p.phase}${p.status === 'running' ? ' running' : ''}`}>
           <div className="seg">
             {PHASES.map((ph) => (
               <button type="button" key={ph} className={`seg-item${p.phase === ph ? ' on' : ''}`} onClick={() => pomodoro.setPhase(ph)}>
@@ -119,94 +119,104 @@ export function FocusPage() {
           <div className="pomo-dial">
             <Ring fraction={fraction} phase={p.phase} />
             <div className="pomo-dial-center">
+              <div className="pomo-phase">{p.status === 'paused' ? 'paused' : PHASE_LABEL[p.phase].toLowerCase()}</div>
               <div className="pomo-clock">{fmtClock(left)}</div>
-              <div className="pomo-phase muted">{p.status === 'paused' ? 'paused' : PHASE_LABEL[p.phase].toLowerCase()}</div>
+              <div className="pomo-cycle" title="Focus sessions until the long break">
+                {Array.from({ length: p.settings.every }, (_, i) => <i key={i} className={i < p.streak % p.settings.every || (p.streak > 0 && p.streak % p.settings.every === 0 && p.phase === 'long') ? 'on' : ''} />)}
+              </div>
             </div>
           </div>
-          <div className="pomo-cycle" title="Focus sessions until the long break">
-            {Array.from({ length: p.settings.every }, (_, i) => <i key={i} className={i < p.streak % p.settings.every || (p.streak > 0 && p.streak % p.settings.every === 0 && p.phase === 'long') ? 'on' : ''} />)}
+          <div className="pomo-now" title={open[0]?.text}>
+            {p.phase === 'focus'
+              ? open[0] ? <><span className="muted">Now</span>{open[0].text}</> : <span className="muted">Add a task to know what this session is for</span>
+              : <span className="muted">Break — step away from the screen</span>}
           </div>
           <div className="pomo-actions">
-            <button type="button" className="btn ghost" onClick={pomodoro.reset} disabled={p.status === 'idle' && left === total}><RotateCcw />Reset</button>
+            <button type="button" className="icon-btn pomo-side" onClick={pomodoro.reset} disabled={p.status === 'idle' && left === total} title="Reset"><RotateCcw /></button>
             <button type="button" className="btn primary pomo-main" onClick={pomodoro.toggle}>
               {p.status === 'running' ? <><Pause />Pause</> : <><Play />{p.status === 'paused' ? 'Resume' : 'Start'}</>}
             </button>
-            <button type="button" className="btn ghost" onClick={pomodoro.skip} title="End this phase now"><SkipForward />Skip</button>
+            <button type="button" className="icon-btn pomo-side" onClick={pomodoro.skip} title="Skip to the next phase"><SkipForward /></button>
           </div>
-          <p className="muted small pomo-hint">Space starts or pauses while this page is open.</p>
+          <p className="muted small pomo-hint"><kbd>Space</kbd> starts or pauses</p>
         </section>
 
-        <section className="focus-tasks">
-          <h2 className="section-title">Tasks for this session</h2>
+        <section className="focus-tasks card-panel">
+          <div className="panel-title-row">
+            <span className="panel-title">Tasks</span>
+            <span className="muted small">{open.length} to do{done.length ? ` · ${done.length} done` : ''}</span>
+          </div>
           <form className="task-add" onSubmit={(e) => { e.preventDefault(); pomodoro.addTask(draft); setDraft(''); }}>
             <input className="field-input" value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="What will you work on?" />
-            <button type="submit" className="btn" disabled={!draft.trim()}>Add</button>
+            <button type="submit" className="btn" disabled={!draft.trim()}><Plus />Add</button>
           </form>
-          <ul className="tasks stagger">
-            {open.map((t, i) => (
-              <li key={t.id} className="task" style={{ '--i': i } as React.CSSProperties}>
-                <button type="button" className="check" onClick={() => pomodoro.toggleTask(t.id)} aria-label="Mark done" />
-                <span className="task-text">{t.text}</span>
-                <button type="button" className="task-x" onClick={() => pomodoro.removeTask(t.id)} aria-label="Remove"><X /></button>
-              </li>
-            ))}
-            {!open.length && <li className="task empty muted">Nothing planned. Add what you want to finish before the timer ends.</li>}
-          </ul>
-          {!!done.length && (
-            <>
-              <div className="tasks-done-head">
-                <span className="muted small">Done · {done.length}</span>
-                <button type="button" className="link" onClick={pomodoro.clearDone}>clear</button>
-              </div>
-              <ul className="tasks done">
-                {done.map((t) => (
-                  <li key={t.id} className="task done">
-                    <button type="button" className="check on" onClick={() => pomodoro.toggleTask(t.id)} aria-label="Mark not done"><Check /></button>
-                    <span className="task-text">{t.text}</span>
-                    <button type="button" className="task-x" onClick={() => pomodoro.removeTask(t.id)} aria-label="Remove"><X /></button>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
+          <div className="task-scroll">
+            <ul className="tasks stagger">
+              {open.map((t, i) => (
+                <li key={t.id} className={`task${i === 0 && p.phase === 'focus' ? ' current' : ''}`} style={{ '--i': i } as React.CSSProperties}>
+                  <button type="button" className="check" onClick={() => pomodoro.toggleTask(t.id)} aria-label="Mark done" />
+                  <span className="task-text">{t.text}</span>
+                  <button type="button" className="task-x" onClick={() => pomodoro.removeTask(t.id)} aria-label="Remove"><X /></button>
+                </li>
+              ))}
+              {!open.length && <li className="task empty muted">Nothing planned. Add what you want to finish before the timer ends.</li>}
+            </ul>
+            {!!done.length && (
+              <>
+                <div className="tasks-done-head">
+                  <span className="muted small">Done · {done.length}</span>
+                  <button type="button" className="link" onClick={pomodoro.clearDone}>clear</button>
+                </div>
+                <ul className="tasks done">
+                  {done.map((t) => (
+                    <li key={t.id} className="task done">
+                      <button type="button" className="check on" onClick={() => pomodoro.toggleTask(t.id)} aria-label="Mark not done"><Check /></button>
+                      <span className="task-text">{t.text}</span>
+                      <button type="button" className="task-x" onClick={() => pomodoro.removeTask(t.id)} aria-label="Remove"><X /></button>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
         </section>
-      </div>
 
-      <section className="page-section">
-        <h2 className="section-title">History</h2>
-        <div className="stats-row">
+        <div className="focus-stats">
           <StatTile label="Focus today" value={`${stats.todayMinutes}m`} sub={`${stats.todaySessions} session${stats.todaySessions === 1 ? '' : 's'}`} />
           <StatTile label="Tasks done today" value={stats.tasksToday} />
           <StatTile label="Last 7 days" value={`${Math.floor(stats.weekMinutes / 60)}h ${stats.weekMinutes % 60}m`} />
         </div>
-        <div className="card-panel">
-          <div className="panel-title">Focus minutes per day</div>
-          <BarChart label="Focus minutes per day, last 7 days" data={stats.days} series={[{ key: 'focus', name: 'Focus minutes', color: 'var(--series-1)' }]} format={(v) => `${Math.round(v)}m`} />
-        </div>
-      </section>
 
-      <section className="page-section">
-        <h2 className="section-title">Settings</h2>
-        <div className="pomo-settings">
-          {([['focus', 'Focus'], ['short', 'Short break'], ['long', 'Long break']] as const).map(([k, label]) => (
-            <label key={k} className="field">
-              <span>{label} <i className="muted">min</i></span>
-              <input type="number" min={1} max={180} value={p.settings[k]} onChange={(e) => pomodoro.updateSettings({ [k]: Math.max(1, Math.min(180, Number(e.target.value) || 1)) })} />
+        <section className="card-panel focus-chart">
+          <div className="panel-title">Focus minutes, last 7 days</div>
+          <BarChart label="Focus minutes per day, last 7 days" data={stats.days} series={[{ key: 'focus', name: 'Focus minutes', color: 'var(--series-1)' }]} format={(v) => `${Math.round(v)}m`} />
+        </section>
+
+        <section className="card-panel focus-settings">
+          <div className="panel-title">Timer</div>
+          <div className="pomo-settings">
+            {([['focus', 'Focus'], ['short', 'Short break'], ['long', 'Long break']] as const).map(([k, label]) => (
+              <label key={k} className="field">
+                <span>{label} <i className="muted">min</i></span>
+                <input type="number" min={1} max={180} value={p.settings[k]} onChange={(e) => pomodoro.updateSettings({ [k]: Math.max(1, Math.min(180, Number(e.target.value) || 1)) })} />
+              </label>
+            ))}
+            <label className="field">
+              <span>Long break every</span>
+              <input type="number" min={2} max={12} value={p.settings.every} onChange={(e) => pomodoro.updateSettings({ every: Math.max(2, Math.min(12, Number(e.target.value) || 4)) })} />
             </label>
-          ))}
-          <label className="field">
-            <span>Long break every</span>
-            <input type="number" min={2} max={12} value={p.settings.every} onChange={(e) => pomodoro.updateSettings({ every: Math.max(2, Math.min(12, Number(e.target.value) || 4)) })} />
-          </label>
+          </div>
           <label className="toggle"><input type="checkbox" checked={p.settings.autoStart} onChange={(e) => pomodoro.updateSettings({ autoStart: e.target.checked })} /> Start the next phase automatically</label>
           <label className="toggle"><input type="checkbox" checked={p.settings.sound} onChange={(e) => pomodoro.updateSettings({ sound: e.target.checked })} /> Chime when a phase ends</label>
-          <label className="field range">
-            <span>Volume</span>
-            <input type="range" min={0} max={1} step={0.05} value={p.settings.volume} onChange={(e) => pomodoro.updateSettings({ volume: Number(e.target.value) })} />
-          </label>
-          <button type="button" className="btn ghost" onClick={pomodoro.testSound}><Volume2 />Test chime</button>
-        </div>
-      </section>
+          <div className="pomo-volume">
+            <label className="field range">
+              <span>Volume</span>
+              <input type="range" min={0} max={1} step={0.05} value={p.settings.volume} onChange={(e) => pomodoro.updateSettings({ volume: Number(e.target.value) })} />
+            </label>
+            <button type="button" className="btn ghost" onClick={pomodoro.testSound}><Volume2 />Test</button>
+          </div>
+        </section>
+      </div>
     </div>
   );
 }

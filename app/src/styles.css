@@ -1427,25 +1427,6 @@ code { color: var(--accent); font-size: 0.92em; }
 
 /* ----------------------------------------------------------- focus page */
 
-.focus-page { max-width: 1080px; }
-.focus-grid { display: grid; grid-template-columns: minmax(300px, 420px) minmax(0, 1fr); gap: 32px; align-items: start; }
-@media (max-width: 1100px) { .focus-grid { grid-template-columns: minmax(0, 520px); } }
-.focus-timer { display: flex; flex-direction: column; align-items: center; gap: 18px; padding: 22px; background: var(--panel); border: 1px solid var(--line-2); }
-.pomo-dial { position: relative; width: 240px; height: 240px; }
-.pomo-ring { width: 100%; height: 100%; transform: rotate(-90deg); }
-.pomo-ring circle { fill: none; stroke-width: 4; }
-.pomo-ring-track { stroke: var(--line-2); }
-.pomo-ring-fill { stroke: var(--accent); stroke-linecap: round; transition: stroke-dashoffset 400ms linear, stroke var(--dur-3) var(--ease); }
-.pomo-ring.short .pomo-ring-fill, .pomo-ring.long .pomo-ring-fill { stroke: var(--good); }
-.pomo-dial-center { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
-.pomo-clock { font: 500 52px/1 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; color: var(--text); }
-.pomo-phase { margin-top: 8px; font: 12px var(--mono); }
-.pomo-cycle { display: flex; gap: 6px; }
-.pomo-cycle i { width: 8px; height: 8px; border: 1px solid var(--line-3); transition: background-color var(--dur-3) var(--ease), border-color var(--dur-3) var(--ease); }
-.pomo-cycle i.on { background: var(--accent); border-color: var(--accent); }
-.pomo-actions { display: flex; gap: 8px; }
-.pomo-main { min-width: 110px; justify-content: center; }
-.pomo-hint { margin: 0; }
 .focus-tasks .section-title { margin-top: 4px; }
 .task-add { display: flex; gap: 8px; margin-bottom: 12px; }
 .field-input {
@@ -2779,3 +2760,62 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .memory-list { max-height: 218px; }
 .ai-settings .danger-confirm { flex-direction: row; align-items: center; justify-content: flex-start; }
 .ai-settings .danger-confirm > span { margin: 0; }
+
+/* ── focus page ─────────────────────────────────────────── */
+.focus-page { max-width: 1120px; }
+.focus-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  grid-template-areas: 'timer tasks' 'stats stats' 'chart settings';
+  gap: 16px;
+  align-items: stretch;
+}
+@media (max-width: 900px) {
+  .focus-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'timer' 'tasks' 'stats' 'chart' 'settings'; }
+}
+.focus-layout .card-panel { margin: 0; min-width: 0; }
+.focus-timer {
+  grid-area: timer; position: relative;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+  padding: 20px 20px 16px; background: var(--panel); border: 1px solid var(--line-2);
+  border-top: 2px solid var(--accent);
+  transition: border-color var(--dur-3) var(--ease);
+}
+.focus-timer.short, .focus-timer.long { border-top-color: var(--good); }
+.focus-timer .seg { width: min(100%, 340px); }
+/* The dial grows with the window but always leaves room for the rest. */
+.pomo-dial { position: relative; width: clamp(190px, 34vh, 300px); aspect-ratio: 1; height: auto; }
+.pomo-dial-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; text-align: center; }
+.pomo-clock { font: 500 clamp(40px, 7vh, 60px)/1 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; color: var(--text-strong); }
+.pomo-phase { margin: 0; font: 11px var(--mono); text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
+.focus-timer.running .pomo-phase { color: var(--accent); }
+.focus-timer.running.short .pomo-phase, .focus-timer.running.long .pomo-phase { color: var(--good); }
+.pomo-cycle { display: flex; gap: 5px; margin-top: 4px; }
+.pomo-cycle i { width: 7px; height: 7px; border-radius: 50%; border: 1px solid var(--line-3); transition: background-color var(--dur-3) var(--ease), border-color var(--dur-3) var(--ease); }
+.pomo-cycle i.on { background: var(--accent); border-color: var(--accent); }
+.pomo-now { display: flex; gap: 8px; align-items: baseline; max-width: 100%; font-size: 13.5px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pomo-now > .muted:first-child:not(:only-child) { font: 10.5px var(--mono); text-transform: uppercase; letter-spacing: 0.1em; flex: none; }
+.pomo-actions { display: flex; align-items: center; gap: 12px; }
+.pomo-main { min-width: 132px; height: 38px; justify-content: center; font-size: 14px; }
+.pomo-side { width: 38px; height: 38px; border: 1px solid var(--line-2); }
+.pomo-side .lucide { width: 16px; height: 16px; }
+.pomo-hint { margin: 0; font-size: 11px; }
+.pomo-hint kbd { font: 10.5px var(--mono); padding: 1px 5px; border: 1px solid var(--line-3); border-bottom-width: 2px; }
+
+.focus-tasks { grid-area: tasks; display: flex; flex-direction: column; min-height: 0; }
+.focus-tasks .task-add { margin-bottom: 10px; }
+/* Tasks scroll inside the panel, so the panel stays the timer's height. */
+.task-scroll { flex: 1; min-height: 120px; max-height: calc(34vh + 150px); overflow-y: auto; overscroll-behavior: contain; padding-right: 2px; }
+.task.current { border-color: var(--accent-dim); background: var(--accent-wash); }
+.focus-stats { grid-area: stats; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.focus-stats > * { margin: 0; }
+.focus-chart { grid-area: chart; }
+.focus-settings { grid-area: settings; display: flex; flex-direction: column; gap: 10px; }
+.focus-settings .pomo-settings { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; }
+.pomo-volume { display: flex; align-items: flex-end; gap: 10px; }
+.pomo-volume .field { flex: 1; margin: 0; }
+.pomo-ring { width: 100%; height: 100%; transform: rotate(-90deg); }
+.pomo-ring circle { fill: none; stroke-width: 3.5; }
+.pomo-ring-track { stroke: var(--line-2); }
+.pomo-ring-fill { stroke: var(--accent); stroke-linecap: round; transition: stroke-dashoffset 400ms linear, stroke var(--dur-3) var(--ease); }
+.pomo-ring.short .pomo-ring-fill, .pomo-ring.long .pomo-ring-fill { stroke: var(--good); }
