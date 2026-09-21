@@ -25,7 +25,7 @@ import type { Citation } from '../../lib/retrieval';
 import { chatSetup, extractText, runTurn, type AppTools, type ChatSetup } from '../../lib/chatEngine';
 import { aiCancel } from '../../lib/ai';
 import { markFresh } from '../../lib/chatThreads';
-import { memoryPrompt, nowPrompt, personalPrompt, setPersonal, usePersonal } from '../../lib/personal';
+import { focusPrompt, memoryPrompt, nowPrompt, personalPrompt, spacePrompt, setPersonal, usePersonal } from '../../lib/personal';
 import { studyApi, type AppAction, type AttachmentInfo, type ChatMessage, type ChatThread, type PythonRun } from '../../study/api';
 
 /**
@@ -429,7 +429,9 @@ export function ChatView({ threadId, notebookId, system, retrieve, onCite, appTo
       let prompt = system(setup.python);
       const mine = personalPrompt();
       if (mine) prompt += `\n\n${mine}`;
-      prompt += `\n\n${nowPrompt()}`;
+      prompt += `\n\n${nowPrompt()}\n\n${focusPrompt()}`;
+      const tree = await studyApi.tree().catch(() => null);
+      if (tree) prompt += `\n\n${spacePrompt(tree)}`;
       if (memoryOn) {
         const saved = await studyApi.memories().catch(() => null);
         const block = memoryPrompt(saved?.items ?? [], true);

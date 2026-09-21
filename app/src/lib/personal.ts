@@ -1,4 +1,6 @@
 import { useSyncExternalStore } from 'react';
+import { fmtClock, pomodoroState, remainingOf } from './pomodoro';
+import type { SubjectNode } from '../study/api';
 
 /**
  * Personalisation for the chats, like custom instructions: who the student is,
@@ -84,4 +86,25 @@ export function nowPrompt(d = new Date()): string {
   const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   const os = /Mac/i.test(navigator.userAgent) ? 'macOS' : /Win/i.test(navigator.userAgent) ? 'Windows' : 'Linux';
   return `## Current context\nToday is ${date} (${d.toLocaleDateString('en-CA')}); the local time is ${time} (${tz}). The student's language setting is ${navigator.language}; they use SalemStudy on ${os}. Use this for anything about dates, deadlines, "today", "tomorrow" or how long until something.`;
+}
+
+/** The focus timer and its tasks, so the chat can fit its answers around them. */
+export function focusPrompt(): string {
+  const p = pomodoroState();
+  const open = p.tasks.filter((t) => !t.done).map((t) => t.text);
+  const done = p.tasks.filter((t) => t.done).length;
+  const phase = p.phase === 'focus' ? 'a focus session' : p.phase === 'short' ? 'a short break' : 'a long break';
+  const timer = p.status === 'running' ? `running: ${phase}, ${fmtClock(remainingOf(p))} left`
+    : p.status === 'paused' ? `paused in ${phase}, ${fmtClock(remainingOf(p))} left` : 'not running';
+  return `## Focus timer
+The Pomodoro timer is ${timer}. Tasks: ${open.length ? open.map((t, i) => `${i === 0 ? '(current) ' : ''}${t}`).join('; ') : 'none planned'}${done ? ` (${done} done)` : ''}.${p.status === 'running' && p.phase === 'focus' ? ' They are mid-session: keep answers focused on the task and brief unless asked for more.' : ''}`;
+}
+
+/** Their subjects and notebooks, with what each holds. */
+export function spacePrompt(tree: SubjectNode[]): string {
+  if (!tree.length) return '## Study space\nNo subjects yet.';
+  const lines = tree.map((s) => `- ${s.name}${s.syllabusName ? ' (syllabus added)' : ''}: ${s.notebooks.length ? s.notebooks.map((n) => `${n.name} [${n.sourceCount} sources, ${n.deckCount} decks, ${n.quizCount} quizzes, ${n.noteCount} notes]`).join('; ') : 'no notebooks'}`);
+  return `## Study space
+The student's courses (subjects) and their notebooks in SalemStudy:
+${lines.join('\n')}`;
 }

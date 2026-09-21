@@ -119,6 +119,9 @@ function finish(completed: boolean) {
 
 // --------------------------------------------------------------- actions
 
+/** The timer as it is right now (for the chat's context). */
+export const pomodoroState = () => state;
+
 export const pomodoro = {
   start() {
     if (state.status === 'running') return;
