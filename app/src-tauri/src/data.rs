@@ -1,15 +1,19 @@
 //! Moving all of the user's data: export to one file, import an exact copy,
 //! or reset to a fresh start.
 //!
-//! An export is a SQLite file: a consistent copy of `study.db` (made with
+//! An export is a gzipped SQLite file: a consistent copy of `study.db` (made with
 //! `VACUUM INTO`, so every source, note, chat and file is inside) plus a small
 //! `salemstudy_export` table holding, optionally, the settings — the AI config
 //! without the API key, and the app's local preferences. Importing replaces
 //! `study.db` with it (the previous one is kept as `study.before-import.db`)
-//! and restores the settings but never the API key.
+//! and restores the settings but never the API key. Plain (not gzipped)
+//! exports from before compression still import.
 
 use std::fs;
+use std::io::{self, BufReader, BufWriter, Read};
 use std::path::{Path, PathBuf};
+
+use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::Serialize;
@@ -42,6 +46,31 @@ fn remove_db_files(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn gzip(src: &Path, dest: &Path) -> Result<(), String> {
+    let mut input = BufReader::new(fs::File::open(src).map_err(|e| e.to_string())?);
+    let out = BufWriter::new(fs::File::create(dest).map_err(|e| format!("cannot write the export: {e}"))?);
+    let mut enc = GzEncoder::new(out, Compression::default());
+    io::copy(&mut input, &mut enc).map_err(|e| format!("cannot compress the export: {e}"))?;
+    enc.finish().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn is_gzip(path: &Path) -> bool {
+    let mut magic = [0u8; 2];
+    fs::File::open(path).and_then(|mut f| f.read_exact(&mut magic)).is_ok() && magic == [0x1f, 0x8b]
+}
+
+/// The export as a plain SQLite file: gzipped ones are unpacked to `scratch`.
+fn plain(path: &Path, scratch: &Path) -> Result<PathBuf, String> {
+    if !is_gzip(path) {
+        return Ok(path.to_path_buf());
+    }
+    let mut dec = GzDecoder::new(BufReader::new(fs::File::open(path).map_err(|e| e.to_string())?));
+    let mut out = BufWriter::new(fs::File::create(scratch).map_err(|e| e.to_string())?);
+    io::copy(&mut dec, &mut out).map_err(|_| "This file is not a SalemStudy export.".to_string())?;
+    Ok(scratch.to_path_buf())
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportResult {
@@ -70,14 +99,21 @@ pub fn stamp(conn: &Connection, config: Option<&Config>, local: Option<&str>) ->
 #[tauri::command]
 pub fn data_export(app: AppHandle, db: State<'_, StudyDb>, path: String, include_settings: bool, local: Option<String>) -> Result<ExportResult, String> {
     let target = PathBuf::from(&path);
-    if target.exists() {
-        fs::remove_file(&target).map_err(|e| format!("cannot replace {path}: {e}"))?;
-    }
-    with_db(&app, &db, |c| c.execute("VACUUM INTO ?1", [&path]).map(|_| ()))?;
-    let out = Connection::open(&target).map_err(|e| e.to_string())?;
-    let cfg = include_settings.then(|| read_config(&app));
-    stamp(&out, cfg.as_ref(), if include_settings { local.as_deref() } else { None }).map_err(|e| e.to_string())?;
-    drop(out);
+    // Copy and stamp next to the live data, then compress into the chosen file.
+    let dir = data_dir(&app)?;
+    let staging = dir.join("study.exporting.db");
+    if staging.exists() { let _ = fs::remove_file(&staging); }
+    let staged = staging.to_string_lossy().to_string();
+    let result = (|| {
+        with_db(&app, &db, |c| c.execute("VACUUM INTO ?1", [&staged]).map(|_| ()))?;
+        let out = Connection::open(&staging).map_err(|e| e.to_string())?;
+        let cfg = include_settings.then(|| read_config(&app));
+        stamp(&out, cfg.as_ref(), if include_settings { local.as_deref() } else { None }).map_err(|e| e.to_string())?;
+        drop(out);
+        gzip(&staging, &target)
+    })();
+    let _ = fs::remove_file(&staging);
+    result?;
     let bytes = fs::metadata(&target).map(|m| m.len()).unwrap_or(0);
     Ok(ExportResult { path, bytes })
 }
@@ -129,8 +165,14 @@ pub fn inspect(path: &Path) -> Result<ExportInfo, String> {
 }
 
 #[tauri::command]
-pub fn data_inspect(path: String) -> Result<ExportInfo, String> {
-    inspect(Path::new(&path))
+pub fn data_inspect(app: AppHandle, path: String) -> Result<ExportInfo, String> {
+    let dir = data_dir(&app)?;
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let scratch = dir.join("study.inspecting.db");
+    let result = plain(Path::new(&path), &scratch).and_then(|p| inspect(&p));
+    let _ = fs::remove_file(&scratch);
+    // Report the size of the file the user picked, not the unpacked copy.
+    result.map(|info| ExportInfo { bytes: fs::metadata(&path).map(|m| m.len()).unwrap_or(info.bytes), ..info })
 }
 
 #[derive(Serialize)]
@@ -168,7 +210,10 @@ pub fn data_import(app: AppHandle, db: State<'_, StudyDb>, path: String) -> Resu
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let staging = dir.join("study.importing.db");
     if staging.exists() { let _ = fs::remove_file(&staging); }
-    let (config, local) = unpack(Path::new(&path), &staging)?;
+    let scratch = dir.join("study.unzipped.db");
+    let unpacked = plain(Path::new(&path), &scratch).and_then(|p| unpack(&p, &staging));
+    let _ = fs::remove_file(&scratch);
+    let (config, local) = unpacked?;
 
     close(&db)?;
     let live = dir.join("study.db");
@@ -238,6 +283,33 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM sqlite_master WHERE name = ?1", [EXPORT_TABLE], |r| r.get(0))
             .unwrap();
         assert_eq!(leftover, 0);
+    }
+
+    #[test]
+    fn gzipped_exports_unpack_to_the_same_database() {
+        let d = tmp("gzip");
+        let live = study::open(&d.join("study.db")).unwrap();
+        let s = study::create_subject(&live, "Calculus 2").unwrap();
+        // Something compressible, like real notes and sources.
+        for i in 0..200 { study::create_notebook(&live, s, &format!("Week {i} notes"), &"integration by parts ".repeat(20)).unwrap(); }
+        let raw = d.join("raw.db");
+        live.execute("VACUUM INTO ?1", [raw.to_str().unwrap()]).unwrap();
+        stamp(&Connection::open(&raw).unwrap(), None, None).unwrap();
+        let packed = d.join("x.salemstudy");
+        gzip(&raw, &packed).unwrap();
+        assert!(is_gzip(&packed) && !is_gzip(&raw));
+        assert!(fs::metadata(&packed).unwrap().len() < fs::metadata(&raw).unwrap().len() / 2);
+
+        let back = plain(&packed, &d.join("scratch.db")).unwrap();
+        assert_eq!(inspect(&back).unwrap().notebooks, 200);
+        // Plain files are used as they are.
+        assert_eq!(plain(&raw, &d.join("unused.db")).unwrap(), raw);
+        // A gzip of something else is still refused.
+        let junk = d.join("junk.txt");
+        fs::write(&junk, "hello").unwrap();
+        let junk_gz = d.join("junk.salemstudy");
+        gzip(&junk, &junk_gz).unwrap();
+        assert!(plain(&junk_gz, &d.join("j.db")).and_then(|p| inspect(&p)).is_err());
     }
 
     #[test]
