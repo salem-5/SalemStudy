@@ -76,3 +76,12 @@ Rules:
 - If a saved fact is now wrong, call save_memory with replaces set to its id. If they ask you to forget something, use forget_memory.
 - Save quietly alongside your answer; don't ask permission. When they explicitly say "remember…", save it and confirm in a few words.`;
 }
+
+/** What any assistant knows about "now": date, time, time zone, language, device. */
+export function nowPrompt(d = new Date()): string {
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const date = d.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  const os = /Mac/i.test(navigator.userAgent) ? 'macOS' : /Win/i.test(navigator.userAgent) ? 'Windows' : 'Linux';
+  return `## Current context\nToday is ${date} (${d.toLocaleDateString('en-CA')}); the local time is ${time} (${tz}). The student's language setting is ${navigator.language}; they use SalemStudy on ${os}. Use this for anything about dates, deadlines, "today", "tomorrow" or how long until something.`;
+}
