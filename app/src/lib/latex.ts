@@ -1,7 +1,6 @@
-import type { Assignment, Box, BoxKind, Choice, Question } from '../types';
+import type { Box, BoxKind, Choice, Question } from '../types';
 import { questionStatus } from './format';
 import { sanitizeQuestionHtml } from './sanitize';
-import { mathValueText } from './render';
 import { asMath, blank, escMath, escText, mathmlToLatex, texUnicode } from './tex';
 
 export { mathmlToLatex };
@@ -32,22 +31,22 @@ const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 const letter = (i: number): string =>
   (i < 26 ? '' : LETTERS[Math.floor(i / 26) - 1]) + LETTERS[i % 26];
 
-const boxLabel = (index: number, sub: number | null = null) =>
+export const boxLabel = (index: number, sub: number | null = null) =>
   letter(index - 1) + (sub === null ? '' : String(sub + 1));
 
 /** WebAssign figures, as opposed to watex glyphs and grading icons. */
-const isFigure = (url: string) =>
+export const isFigure = (url: string) =>
   /^https?:/i.test(url) && !/\/watex\/img\//i.test(url)
   && !/mathtype|overlay|mcorrect|mincorrect|mpartial/i.test(url);
 
 // Only whitespace that HTML collapses; U+00A0 is spacing the question meant.
-const collapse = (s: string) => s.replace(/[ \t\r\n\f]+/g, ' ');
+export const collapse = (s: string) => s.replace(/[ \t\r\n\f]+/g, ' ');
 
 // ---------------------------------------------------------------------------
 // Answer parts
 // ---------------------------------------------------------------------------
 
-type Part = {
+export type Part = {
   label: string;
   kind: BoxKind | 'static';
   /** One answer box per sub-slot (a multiselect renders several dropdowns). */
@@ -61,18 +60,13 @@ type Part = {
   answer: string | null;
 };
 
-/** How tall the box to write in should be, by what is being asked for. */
-const BOX_HEIGHT: Record<string, string> = {
-  math: '2.6em', text: '2.1em', unsupported: '2.1em', choice: '1.9em',
-  checkboxes: '1.9em', multiselect: '1.9em', static: '2.4em', essay: '0em',
-};
 
 // ---------------------------------------------------------------------------
 // Question markup -> LaTeX
 // ---------------------------------------------------------------------------
 
 /** Per-question bookkeeping shared by the pre-pass and the renderer. */
-type Plan = {
+export type Plan = {
   /** Display number of each option marker, restarting per choice group. */
   optNo: Map<Element, number>;
   /** Label for the n-th `.wa-static` in document order. */
@@ -87,7 +81,7 @@ type Plan = {
   groupLabel: Map<Element, string>;
 };
 
-type Ctx = {
+export type Ctx = {
   plan: Plan;
   boxes: Box[];
   imgRef: (url: string, alt: string) => string | null;
@@ -109,7 +103,7 @@ const groupOf = (el: Element): Element =>
  * which box each static answer belongs to, and invent parts for closed
  * questions that come back without any boxes.
  */
-function planQuestion(root: Element, q: Question): Plan {
+export function planQuestion(root: Element, q: Question): Plan {
   const optNo = new Map<Element, number>();
   const counters = new Map<unknown, number>();
   const groups: Element[] = [];
@@ -173,7 +167,7 @@ function planQuestion(root: Element, q: Question): Plan {
 }
 
 /** The rendered answers inside `.wa-static` spans, in document order. */
-function staticAnswerTexts(statics: Element[]): (string | null)[] {
+export function staticAnswerTexts(statics: Element[]): (string | null)[] {
   return statics.map((el) => {
     const math = el.querySelector('math');
     if (math) {
@@ -309,7 +303,7 @@ function node(n: Node, ctx: Ctx): string {
  */
 const PX_TO_PT = 0.85;
 
-function cssSize(el: Element): { w?: number; h?: number } {
+export function cssSize(el: Element): { w?: number; h?: number } {
   const style = el.getAttribute('style') ?? '';
   const read = (prop: string): number | undefined => {
     const m = new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([\\d.]+)\\s*(px|pt|em|%)`, 'i').exec(style);
@@ -539,7 +533,7 @@ function cleanBody(s: string): string {
 }
 
 /** The plain-text question, used when no markup came through. */
-function textBody(q: Question): string {
+export function textBody(q: Question): string {
   return q.text
     .replace(/Press Space or Enter to edit this math answer\.?/gi, '')
     .split(/(\[\d+\]|\[image: [^\]]+\])/g)
@@ -560,7 +554,7 @@ function textBody(q: Question): string {
 const choiceLabel = (b: Box, v: string) => b.choices?.find((c) => c.value === v)?.label ?? v;
 
 /** An option label, with its own markup when it carries math or a figure. */
-function optionText(c: Choice, ctx: Ctx): string {
+export function optionText(c: Choice, ctx: Ctx): string {
   if (c.html && /<(img|math|table|span|sub|sup)/i.test(c.html)) {
     const body = cleanBody(kids(parse(sanitizeQuestionHtml(c.html)), ctx));
     if (!blank(body)) return body.replace(/\n+/g, ' ');
@@ -568,7 +562,7 @@ function optionText(c: Choice, ctx: Ctx): string {
   return escText(c.label);
 }
 
-function boxAnswer(b: Box): string | null {
+export function boxAnswer(b: Box): string | null {
   switch (b.kind) {
     case 'math': {
       const tex = mathmlToLatex(b.value);
@@ -586,23 +580,14 @@ function boxAnswer(b: Box): string | null {
   }
 }
 
-function plainAnswer(b: Box): string {
-  switch (b.kind) {
-    case 'math': return mathValueText(b.value) || b.text || '';
-    case 'choice': return b.value ? choiceLabel(b, b.value) : '';
-    case 'checkboxes': case 'multiselect':
-      return b.value ? b.value.split(',').filter(Boolean).map((v) => choiceLabel(b, v)).join(', ') : '';
-    default: return b.value;
-  }
-}
 
 /** Past assignments arrive without boxes, so fall back to the score. */
-function isCorrect(q: Question): boolean {
+export function isCorrect(q: Question): boolean {
   if (q.boxes.length) return questionStatus(q) === 'correct';
   return q.score != null && q.total != null && q.total > 0 && q.score >= q.total;
 }
 
-function partsOf(q: Question, plan: Plan, ctx: Ctx): Part[] {
+export function partsOf(q: Question, plan: Plan, ctx: Ctx): Part[] {
   if (!q.boxes.length) {
     const parts = plan.synthetic.map((p, _i, all) => ({
       ...p,
@@ -628,383 +613,4 @@ function partsOf(q: Question, plan: Plan, ctx: Ctx): Part[] {
       answer: b.status === 'correct' ? boxAnswer(b) : null,
     };
   });
-}
-
-/** A rough height in cm for a rendered question body — figures dominate it. */
-function bodyHeight(tex: string): number {
-  let cm = 0;
-  for (const m of tex.matchAll(/\\wafig(w|h)?\{([0-9.]+)pt\}/g)) {
-    // Height is known outright; a width only bounds it, so guess a square-ish
-    // figure. A figure with neither prints at its own size, around 5cm.
-    cm += m[1] === 'h' ? Number(m[2]) / 28.45 + 0.8 : 4.5;
-  }
-  cm += (tex.match(/\\wafig\{/g)?.length ?? 0) * 5;
-  const words = tex.replace(/\\[a-zA-Z]+\*?|[{}$&\\]/g, ' ').replace(/\s+/g, ' ').trim();
-  return cm + Math.ceil(words.length / 90) * 0.55;
-}
-
-/**
- * Roughly how tall everything below a question's first line is, in cm: the
- * working box, then one entry per answer. A question that does not fit in what
- * is left of the page starts on the next one instead of being split.
- * Capped, so a genuinely long question can still break somewhere.
- */
-function needSpace(parts: Part[], workings: boolean, body: string): string {
-  let cm = 1.5 + bodyHeight(body); // heading and rule, then the question itself
-  if (workings) cm += Number.parseFloat(workingHeight(parts)) + 1.1;
-  for (const p of parts) {
-    if (p.inline) cm += 0.7;
-    else if (p.options?.length) cm += p.subs * (0.6 + 0.75 * Math.ceil(p.options.length / 3));
-    else if (p.kind === 'essay') cm += 4.2;
-    else cm += p.subs * 1.3;
-  }
-  return `${Math.min(cm, 11).toFixed(1)}cm`;
-}
-
-/** Room to work in, sized by how much the question asks for. */
-const WORK_CM: Record<string, number> = {
-  essay: 3, math: 1.5, static: 1.5, text: 1.2, unsupported: 1.2,
-  choice: 0.4, checkboxes: 0.4, multiselect: 0.4,
-};
-
-const workingHeight = (parts: Part[]) => {
-  const need = parts.reduce((n, p) => n + (WORK_CM[p.kind] ?? 1.2) * p.subs, 2);
-  return `${Math.max(3, Math.min(9, need)).toFixed(1)}cm`;
-};
-
-/** The answer area: one labelled box per part, IGCSE style. */
-function answerArea(parts: Part[]): string {
-  // Nothing to write down: every part is ticked in the question itself.
-  if (parts.every((p) => p.inline)) return '';
-  const out = ['\\waanshead'];
-  for (const p of parts) {
-    const marks = p.marks != null ? `[${p.marks}]` : '';
-    if (p.inline) {
-      out.push(`\\waansnote{${p.label}}{ticked in the question above}{${marks}}`);
-      continue;
-    }
-    // A part chosen from a list is answered by ticking one of the choices,
-    // not by copying the wording into a box.
-    if (p.options?.length) {
-      const mark = optMark(p.kind === 'checkboxes');
-      const grid = optionGrid(p.options.map((o, i) => `${mark}{${i + 1}}${o}`));
-      for (let i = 0; i < p.subs; i++) {
-        const label = p.subs > 1 ? `${p.label}${i + 1}` : p.label;
-        out.push(`\\waoptset{${label}}{${i === 0 ? marks : ''}}{${grid}}`);
-      }
-      continue;
-    }
-    if (p.kind === 'essay') {
-      out.push(`\\waansrule{${p.label}}{${marks}}`);
-      out.push(Array(5).fill('\\waansline').join('\n'));
-      continue;
-    }
-    const height = BOX_HEIGHT[p.kind] ?? '2.1em';
-    for (let i = 0; i < p.subs; i++) {
-      const label = p.subs > 1 ? `${p.label}${i + 1}` : p.label;
-      out.push(`\\waansbox{${label}}{${height}}{${i === 0 ? marks : ''}}`);
-    }
-  }
-  return out.join('\n');
-}
-
-// ---------------------------------------------------------------------------
-// Mark scheme
-// ---------------------------------------------------------------------------
-
-function markScheme(rows: { q: number; parts: Part[] }[]): string {
-  const any = rows.some((r) => r.parts.some((p) => p.answer));
-  const width = '\\dimexpr\\linewidth-0.9cm-1.1cm-1.3cm-6\\tabcolsep\\relax';
-  const body = rows.map(({ q, parts }, i) => parts.map((p, j) => {
-    const answer = p.answer ?? '\\textcolor{wamuted}{--}';
-    const marks = p.marks != null ? String(p.marks) : '';
-    return `${j === 0 ? `\\textbf{${q}}` : ''} & \\textcolor{waaccent}{\\textbf{${p.label}}} & ${answer} & ${marks} \\\\${j === parts.length - 1 && i < rows.length - 1 ? '\n\\wasep' : ''}`;
-  }).join('\n')).join('\n');
-
-  // `\color` in a `>{}` column spec drops that column's first baseline, so
-  // every cell carries its own formatting instead.
-  return `\\section*{\\color{waaccent}Mark scheme}
-{\\small\\setlength{\\tabcolsep}{4pt}\\renewcommand{\\arraystretch}{1.3}
-\\begin{longtable}{@{}p{0.9cm}p{1.1cm}p{${width}}>{\\raggedleft\\arraybackslash}p{1.3cm}@{}}
-\\hline
-\\rule{0pt}{2.6ex}\\textbf{Q} & \\textbf{Part} & \\textbf{Answer} & \\textbf{Marks} \\\\[1pt]
-\\hline
-\\endhead
-${body}
-\\hline
-\\end{longtable}}
-
-{\\footnotesize\\color{wamuted}${any
-    ? 'Only answers WebAssign graded correct are listed; a dash means the part was not answered correctly yet.'
-    : 'No graded answers yet, so every part is blank.'}\\par}`;
-}
-
-// ---------------------------------------------------------------------------
-// Machine-readable transcript
-// ---------------------------------------------------------------------------
-
-const NOISE = /Press Space or Enter to edit this math answer\.?/gi;
-
-/** What a box is asking for, in words. */
-const KIND_WORD: Record<string, string> = {
-  math: 'a mathematical expression', text: 'a short typed answer', essay: 'a written answer',
-  choice: 'one option', checkboxes: 'any number of options', multiselect: 'one option per dropdown',
-  unsupported: 'a typed answer', static: 'an answer',
-};
-
-/**
- * A plain-text copy of the question, printed invisibly and taking no space, so
- * that reading software (and anything that extracts the PDF's text) gets the
- * words, the maths and a description of every figure rather than page images.
- */
-function transcript(q: Question, figures: ExportImage[]): string {
-  const lines: string[] = [
-    `Question ${q.number}${q.code ? ` (${q.code})` : ''}${q.total != null ? `, ${q.total} mark${q.total === 1 ? '' : 's'}` : ''}.`,
-    q.text.replace(NOISE, '').replace(/\[(\d+)\]/g, (_m, n: string) => `[answer ${boxLabel(Number(n))}]`).trim(),
-  ];
-  figures.forEach((f, i) => {
-    lines.push(`Figure ${i + 1} (${f.file}): ${f.alt || 'a figure from this question; no description was provided.'}`);
-  });
-  for (const b of q.boxes) {
-    const what = KIND_WORD[b.kind] ?? 'an answer';
-    const options = b.choices?.length ? ` Options: ${b.choices.map((c, i) => `${i + 1}. ${c.label}`).join('; ')}.` : '';
-    const value = plainAnswer(b).trim();
-    const answer = b.status === 'correct' && value ? ` Correct answer: ${value}.` : '';
-    lines.push(`Answer ${boxLabel(b.index)} expects ${what}.${options}${answer}`);
-  }
-  return `\\watext{${lines.filter(Boolean).map((l) => escText(collapse(l).trim())).join('\\par ')}}`;
-}
-
-// ---------------------------------------------------------------------------
-// Document
-// ---------------------------------------------------------------------------
-
-const PREAMBLE = String.raw`\usepackage[margin=1.9cm,headheight=15pt,headsep=11pt,footskip=22pt]{geometry}
-\usepackage{amsmath,amssymb}
-\usepackage{lmodern}
-\usepackage[T1]{fontenc}
-\usepackage{microtype}
-\usepackage{enumitem}
-\usepackage{array}
-\usepackage{longtable}
-\usepackage{graphicx}
-\usepackage{xcolor}
-\usepackage{parskip}
-\usepackage{fancyhdr}
-\usepackage[hidelinks]{hyperref}
-
-\definecolor{waaccent}{HTML}{1B4F9C}
-\definecolor{wamuted}{HTML}{6E7787}
-\definecolor{waline}{HTML}{C3CDDC}
-\definecolor{watint}{HTML}{EDF2FA}
-\definecolor{wamark}{HTML}{7C8AA0}
-
-\setlength{\parindent}{0pt}
-\setlength{\emergencystretch}{3em}
-\raggedbottom
-\renewcommand{\arraystretch}{1.15}
-
-% Figures: natural size scaled to the app's, never wider than the column.
-\newsavebox{\wabox}
-\newcommand{\waclamp}[1]{\sbox{\wabox}{#1}%
-  \ifdim\wd\wabox>\linewidth\resizebox{\linewidth}{!}{\usebox{\wabox}}\else\usebox{\wabox}\fi}
-\newcommand{\wafig}[1]{\waclamp{\includegraphics[scale=0.85]{#1}}}
-\newcommand{\wafigw}[2]{\waclamp{\includegraphics[width=#1]{#2}}}
-\newcommand{\wafigh}[2]{\waclamp{\includegraphics[height=#1]{#2}}}
-\newcommand{\wafigblock}[1]{\par\vspace{0.55em}{\centering#1\par}\vspace{0.55em}}
-
-% An answer placeholder inside the question, named like the box below it.
-\newcommand{\wavar}[1]{\,\fcolorbox{waline}{watint}{\rule[-0.3em]{0pt}{1.15em}\small\bfseries\color{waaccent}#1}\,}
-% Options to mark: a circle when the question takes one answer, a square when
-% it takes any number of them. The two glyphs are drawn at different sizes by
-% the fonts, so the square is scaled up to match the circle.
-\newcommand{\waoptmark}[2]{\raisebox{-0.16em}{\textcolor{wamark}{\large$#1$}}%
-  \kern0.45em\textbf{\color{waaccent}#2.}\kern0.35em}
-\newcommand{\waoptc}[1]{\waoptmark{\bigcirc}{#1}}
-\newcommand{\waopts}[1]{\waoptmark{\scalebox{1.35}{$\square$}}{#1}}
-
-% Keep a heading with what follows it.
-\newcommand{\waneed}[1]{\par\penalty-150\vspace{0pt plus #1}\penalty-150\vspace{0pt plus -#1}}
-
-% #4 is how much room the whole question wants, so it is not started near the
-% bottom of a page and then broken before its working box.
-\newcommand{\waqhead}[4]{%
-  \waneed{#4}%
-  \par\vspace{1.1em}%
-  \noindent\textcolor{waaccent}{\rule{\linewidth}{1pt}}\par\vspace{0.35em}%
-  \noindent{\large\bfseries\color{waaccent}#1}\hfill{\small\color{wamuted}#2}\hspace{0.7em}{\small\bfseries#3}%
-  \par\nobreak\vspace{0.4em}}
-
-\newenvironment{wapart}[1]{%
-  \par\vspace{0.2em}%
-  \begin{list}{}{%
-    \setlength{\leftmargin}{2.3em}\setlength{\labelwidth}{1.9em}\setlength{\labelsep}{0.4em}%
-    \setlength{\itemindent}{0pt}\setlength{\listparindent}{0pt}%
-    \setlength{\topsep}{0.15em}\setlength{\parsep}{0.35em}\setlength{\itemsep}{0pt}}%
-  \item[\textbf{#1}]}{\end{list}}
-
-\newenvironment{waindent}{%
-  \par\begin{list}{}{%
-    \setlength{\leftmargin}{2.5em}\setlength{\rightmargin}{0pt}%
-    \setlength{\topsep}{0.2em}\setlength{\parsep}{0.3em}\setlength{\itemsep}{0pt}}%
-  \item[]}{\end{list}}
-
-\newcommand{\waanshead}{\par\vspace{0.8em}\nobreak\noindent
-  {\footnotesize\bfseries\color{waaccent}ANSWER}\hspace{0.6em}{\color{waline}\hrulefill}\par\nobreak\vspace{0.25em}}
-\newcommand{\waanshint}[1]{\par\nobreak\vspace{0.1em}\noindent\hspace*{1.7em}%
-  \parbox{\dimexpr\linewidth-1.7em\relax}{\footnotesize\color{wamuted}#1}\par\nobreak\vspace{0.15em}}
-\newcommand{\waansbox}[3]{\par\nobreak\vspace{0.3em}\noindent
-  \makebox[2.2em][l]{\bfseries\color{waaccent}#1}%
-  \fcolorbox{waline}{white}{\parbox[c][#2][c]{\dimexpr\linewidth-2.2em-3.2em-2\fboxsep-2\fboxrule\relax}{\strut}}%
-  \makebox[3.2em][r]{\small\color{wamuted}#3}\par\nobreak}
-\newcommand{\waansrule}[2]{\par\nobreak\vspace{0.3em}\noindent
-  \makebox[2.2em][l]{\bfseries\color{waaccent}#1}\hfill\makebox[3.2em][r]{\small\color{wamuted}#2}\par\nobreak}
-% A part answered by ticking a box in the question: no room to write, just the
-% letter, where the answer lives, and what it is worth.
-\newcommand{\waansnote}[3]{\par\nobreak\vspace{0.3em}\noindent
-  \makebox[2.2em][l]{\bfseries\color{waaccent}#1}%
-  \parbox[t]{\dimexpr\linewidth-2.2em-3.2em\relax}{\small\color{wamuted}#2}%
-  \makebox[3.2em][r]{\small\color{wamuted}#3}\par\nobreak}
-% A group of tick boxes to circle, with the part's letter and its marks.
-\newcommand{\waoptset}[3]{\par\vspace{0.35em}\noindent
-  \makebox[2.2em][l]{\raisebox{-0.35em}{\wavar{#1}}}%
-  \parbox[t]{\dimexpr\linewidth-2.2em-3.2em\relax}{#3}%
-  \makebox[3.2em][r]{\small\color{wamuted}#2}\par\vspace{0.35em}}
-% Room to work the answer out in, before the answer boxes.
-\newcommand{\wawork}[1]{\par\penalty400\vspace{0.8em}\nobreak\noindent
-  {\footnotesize\bfseries\color{wamuted}WORKING}\hspace{0.6em}{\color{waline}\hrulefill}\par\nobreak\vspace{0.3em}
-  \noindent\fcolorbox{waline}{white}{\parbox[c][#1][c]{\dimexpr\linewidth-2\fboxsep-2\fboxrule\relax}{\strut}}\par}
-\newcommand{\waansline}{\par\nobreak\vspace{1.3em}\noindent\hspace*{1.7em}%
-  {\color{waline}\rule{\dimexpr\linewidth-1.7em\relax}{0.5pt}}\par\nobreak}
-
-\newcommand{\wasep}{\noalign{\vskip2pt}\noalign{{\color{waline}\hrule height0.4pt}}\noalign{\vskip2pt}}
-
-\newcommand{\watitle}[4]{%
-  \noindent\textcolor{waaccent}{\rule{\linewidth}{2.2pt}}\par\vspace{0.6em}%
-  \noindent\begin{minipage}[t]{0.7\linewidth}\raggedright
-    {\LARGE\bfseries #1}\par\vspace{0.3em}{\color{wamuted}#2}
-  \end{minipage}\hfill
-  \begin{minipage}[t]{0.28\linewidth}\raggedleft
-    {\small\color{wamuted}#3}\par\vspace{0.45em}
-    \fcolorbox{waline}{watint}{\small\bfseries #4}
-  \end{minipage}\par\vspace{0.7em}%
-  \noindent\textcolor{waline}{\rule{\linewidth}{0.6pt}}\par\vspace{0.5em}}
-
-\newcommand{\wadots}[1]{\makebox[#1]{\dotfill}}
-
-% A plain-text copy of a question for readers and machines: typeset in
-% invisible ink (PDF text rendering mode 3) inside a box of no height, so it
-% extracts with the page's text without showing or shifting anything.
-% pdfTeX takes a \pdfliteral; XeTeX (what Tectonic runs) takes the dvipdfmx
-% special that ends up as the same PDF operator.
-\makeatletter
-\ifdefined\pdfliteral
-  \newcommand{\wa@ink}[1]{\pdfliteral direct{#1}}
-\else
-  \newcommand{\wa@ink}[1]{\special{pdf:literal direct #1}}
-\fi
-% The ink switch lives *inside* the box: a page break between the switch and
-% the text would otherwise ship the text on its own page in visible ink, on
-% top of whatever is printed there.
-\newcommand{\watext}[1]{\par\penalty10000\begingroup
-  \vbox to 0pt{\hsize=\linewidth\footnotesize\raggedright
-    \wa@ink{3 Tr}\noindent #1\par\wa@ink{0 Tr}\vss}%
-  \endgroup\par}
-\makeatother`;
-
-export function assignmentToLatex(a: Assignment, meta: ExportMeta = {}): LatexExport {
-  const title = meta.title?.trim() || a.name || 'Assignment';
-  const subParts = [meta.course, meta.section && `Section ${meta.section}`, meta.term].filter(Boolean) as string[];
-  const sub = subParts.join(' \\textperiodcentered{} ');
-  const date = (meta.date ?? new Date()).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
-
-  const images: ExportImage[] = [];
-  const byUrl = new Map<string, ExportImage>();
-  const imgRef = (url: string, alt: string): string | null => {
-    if (!isFigure(url)) return null;
-    let f = byUrl.get(url);
-    if (!f) {
-      f = { file: `figure-${byUrl.size + 1}.png`, url, alt };
-      byUrl.set(url, f);
-      images.push(f);
-    }
-    if (!f.alt && alt) f.alt = alt;
-    return f.file;
-  };
-
-  const scheme: { q: number; parts: Part[] }[] = [];
-  const blocks = a.questions.map((q) => {
-    const root = q.html ? parse(sanitizeQuestionHtml(q.html)) : null;
-    const plan: Plan = root
-      ? planQuestion(root, q)
-      : { optNo: new Map(), staticLabels: [], synthetic: [], subs: new Map(), inlineOpts: new Set(), groupLabel: new Map() };
-    const figures: ExportImage[] = [];
-    const ctx: Ctx = {
-      plan,
-      boxes: q.boxes,
-      seen: { statics: 0 },
-      inline: 0,
-      imgRef: (url, alt) => {
-        const file = imgRef(url, alt);
-        const fig = file && byUrl.get(url);
-        if (fig && !figures.includes(fig)) figures.push(fig);
-        return file;
-      },
-    };
-    const body = root ? cleanBody(kids(root, ctx)) : '';
-    const parts = partsOf(q, plan, ctx);
-    scheme.push({ q: q.number, parts });
-
-    const marks = q.total != null ? `[${q.total} mark${q.total === 1 ? '' : 's'}]` : '';
-    const printed = body || cleanBody(textBody(q));
-    return [
-      `\\waqhead{Question ${q.number}}{${q.code ? escText(q.code) : ''}}{${marks}}{${needSpace(parts, !!meta.workings, printed)}}`,
-      printed,
-      meta.workings ? `\\wawork{${workingHeight(parts)}}` : '',
-      answerArea(parts),
-      meta.transcript === false ? '' : transcript(q, figures),
-    ].filter(Boolean).join('\n');
-  });
-
-  const totalMarks = a.questions.reduce((n, q) => n + (q.total ?? 0), 0);
-  const keywords = a.questions.map((q) => q.code).filter(Boolean).join(', ');
-
-  const tex = `\\documentclass[11pt]{article}
-${PREAMBLE}
-\\hypersetup{
-  pdftitle={${escText(title)}},
-  pdfauthor={SalemStudy},
-  pdfsubject={WebAssign assignment worksheet with mark scheme},
-  pdfkeywords={${escText(keywords)}},
-  pdfcreator={SalemStudy},
-  pdfproducer={SalemStudy / pdfTeX},
-}
-\\pagestyle{fancy}
-\\fancyhf{}
-\\lhead{\\footnotesize\\color{wamuted}${escText(title)}}
-\\rhead{\\footnotesize\\color{wamuted}${sub || 'WebAssign'}}
-\\cfoot{\\footnotesize\\color{wamuted}\\thepage}
-\\renewcommand{\\headrule}{{\\color{waline}\\hrule height0.4pt}}
-
-\\begin{document}
-\\watitle{${escText(title)}}{${sub || 'WebAssign'}}{${escText(date)}}{${totalMarks ? `Total: ${totalMarks} marks` : 'Worksheet'}}
-${meta.nameFields === false ? '' : `
-\\noindent{\\small Name:~\\wadots{5.6cm}\\quad Class:~\\wadots{3cm}\\quad Date:~\\wadots{2.6cm}}\\par
-\\vspace{0.5em}`}
-\\noindent\\fcolorbox{waline}{watint}{\\parbox{\\dimexpr\\linewidth-2\\fboxsep-2\\fboxrule\\relax}{%
-  \\small Answer \\textbf{all} questions. Each answer carries the same letter as its placeholder in the
-  question: write in the box with that letter, or tick one of the choices beside it. Marks for each
-  part are shown in brackets.}}
-\\vspace{0.3em}
-${meta.transcript === false ? '' : `\\watext{${escText(`Document: ${title}. ${subParts.length ? `${subParts.join(', ')}. ` : ''}A worksheet of ${a.questions.length} questions${totalMarks ? ` worth ${totalMarks} marks` : ''}. Each question is followed by a plain-text transcript for screen readers and machine reading; the answers WebAssign has marked correct are in the mark scheme at the end.`)}}`}
-
-${blocks.join('\n\n')}
-
-\\newpage
-${markScheme(scheme)}
-
-\\end{document}
-`;
-
-  return { tex, images };
 }

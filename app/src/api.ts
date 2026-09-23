@@ -49,8 +49,11 @@ export const api = {
   },
   dryRun: (dep: number, n: number, answers: Answers) => call<DryRun>('POST', `${q(dep, n)}/submit?dryRun=1`, { answers }),
   /** `job` labels this document's progress lines when a batch compiles in parallel. */
-  exportLatex: (name: string, tex: string, compile: boolean, images: { file: string; data: string }[], job?: string) =>
-    invoke<{ tex: string | null; pdf: string | null }>('export_latex', { name, tex, compile, images, job: job ?? null }),
+  /** Render a document to PDF with the app's own Python. */
+  exportPdf: (name: string, html: string, images: { file: string; data: string }[], subtitle?: string, job?: string) =>
+    invoke<{ tex: string | null; pdf: string | null }>('export_pdf', {
+      name, html, subtitle: subtitle ?? null, images, job: job ?? null,
+    }),
   exportPause: (paused: boolean) => invoke<void>('export_pause', { paused }),
   exportCancel: () => invoke<void>('export_cancel'),
   revealPath: (path: string) => invoke<void>('reveal_path', { path }),

@@ -1,20 +1,26 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Salem">
+  <!-- The same mark as the app's own Logo component: an open book with a
+       prompt on the right page. The tile keeps the dark, flat treatment the
+       rest of the interface uses. -->
   <defs>
-    <linearGradient id="g" x1="0" y1="1" x2="1" y2="0">
-      <stop offset="0" stop-color="#2f8bff"/>
-      <stop offset="0.55" stop-color="#3ad7ff"/>
-      <stop offset="1" stop-color="#6cf5e4"/>
-    </linearGradient>
-    <radialGradient id="bg" cx="0.5" cy="0.32" r="0.95">
-      <stop offset="0" stop-color="#0c141a"/>
-      <stop offset="1" stop-color="#000000"/>
+    <radialGradient id="tile" cx="0.5" cy="0.3" r="0.95">
+      <stop offset="0" stop-color="#15181b"/>
+      <stop offset="1" stop-color="#0b0d0f"/>
     </radialGradient>
   </defs>
-  <rect width="512" height="512" rx="108" fill="url(#bg)"/>
-  <rect x="4" y="4" width="504" height="504" rx="104" fill="none" stroke="url(#g)" stroke-opacity="0.22" stroke-width="4"/>
-  <g fill="none" stroke="url(#g)" stroke-width="34" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M96 288 H150 L196 382 L292 142 H432"/>
-    <path d="M320 226 L400 326"/>
-    <path d="M400 226 L320 326"/>
+  <rect width="512" height="512" rx="108" fill="url(#tile)"/>
+  <rect x="4" y="4" width="504" height="504" rx="104" fill="none" stroke="#8fb3d1" stroke-opacity="0.2" stroke-width="4"/>
+  <g transform="translate(256 256) scale(0.66) translate(-512 -512)">
+    <g fill="none" stroke="#d7dce0" stroke-width="40" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M512 372 C450 330 350 318 252 338 V690 C350 670 450 682 512 724 C574 682 674 670 772 690 V338 C674 318 574 330 512 372 Z"/>
+      <path d="M512 372 V724"/>
+      <path d="M580 446 L632 492 L580 538" stroke="#d7a266" stroke-width="32"/>
+    </g>
+    <g stroke="#d7dce0" stroke-opacity="0.5" stroke-width="26" stroke-linecap="round" fill="none">
+      <path d="M318 440 C360 432 400 434 446 446"/>
+      <path d="M318 512 C360 504 400 506 446 518"/>
+      <path d="M318 584 C350 578 376 579 404 584"/>
+    </g>
+    <rect x="656" y="516" width="60" height="26" rx="4" fill="#d7a266"/>
   </g>
 </svg>

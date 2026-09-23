@@ -30,11 +30,19 @@ pub const CORE_PACKAGES: [&str; 3] = ["sympy", "numpy", "mpmath"];
 /// Optional: each is installed on its own, so one without a wheel for this
 /// Python does not block the others.
 pub const EXTRA_PACKAGES: [&str; 6] = ["scipy", "matplotlib", "pint", "pymupdf", "python-pptx", "yt-dlp"];
+/// What the Salem AI runtime needs. Pinned, because the agent classes and the
+/// executor protocol we build on are API surface (see `salem_ai/__init__.py`).
+pub const AI_PACKAGES: [&str; 1] = ["smolagents>=1.26,<2"];
+/// The import name of each of the above, for the probe.
+pub const AI_MODULES: [&str; 1] = ["smolagents"];
+/// smolagents needs 3.10. macOS still ships 3.9, so an environment built
+/// before Salem's AI layer existed has to be rebuilt on a newer interpreter.
+pub const MIN_AI_PYTHON: (u32, u32) = (3, 10);
 
 const PROBE: &str = r#"
 import json, sys
 mods = {}
-for m in ("sympy", "numpy", "mpmath", "scipy", "matplotlib", "pint", "pymupdf", "pptx", "yt_dlp"):
+for m in ("sympy", "numpy", "mpmath", "scipy", "matplotlib", "pint", "pymupdf", "pptx", "yt_dlp", "smolagents"):
     try:
         mods[m] = getattr(__import__(m), "__version__", "?")
     except Exception:
@@ -47,7 +55,7 @@ print(json.dumps({"version": sys.version.split()[0], "exe": sys.executable, "pac
 // ---------------------------------------------------------------------------
 
 /// Keep a spawned console program from flashing a terminal window.
-fn hide_window(cmd: &mut Command) {
+pub(crate) fn hide_window(cmd: &mut Command) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -286,6 +294,10 @@ fn extra_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+/// Interpreter names to try, newest first.
+const NEWEST_FIRST: [&str; 8] =
+    ["python3.14", "python3.13", "python3.12", "python3.11", "python3.10", "python3", "python", "python3.9"];
+
 /// A Python that can create the virtualenv. Never the venv's own interpreter.
 fn find_system_python(configured: &str) -> Vec<PathBuf> {
     let mut found: Vec<PathBuf> = Vec::new();
@@ -300,13 +312,15 @@ fn find_system_python(configured: &str) -> Vec<PathBuf> {
     if !configured.trim().is_empty() {
         push(PathBuf::from(configured.trim()));
     }
-    for stem in ["python3", "python"] {
+    // Newest first: the environment is built with the first one that works,
+    // and smolagents rules out the 3.9 that macOS still ships as `python3`.
+    for stem in NEWEST_FIRST {
         if let Some(p) = on_path(stem) {
             push(p);
         }
     }
     for dir in extra_dirs() {
-        for stem in ["python3", "python"] {
+        for stem in NEWEST_FIRST {
             if let Some(p) = exe(&dir, stem) {
                 push(p);
             }
@@ -350,12 +364,32 @@ fn probe(python: &Path) -> Result<Probe, String> {
     let version = value.get("version").and_then(Value::as_str).unwrap_or("?").to_string();
     let mut packages = Vec::new();
     if let Some(map) = value.get("packages").and_then(Value::as_object) {
-        for name in CORE_PACKAGES.iter().chain(EXTRA_PACKAGES.iter()) {
+        for name in CORE_PACKAGES.iter().chain(EXTRA_PACKAGES.iter()).chain(AI_MODULES.iter()) {
             let v = map.get(*name).and_then(Value::as_str).map(|s| s.to_string());
             packages.push((name.to_string(), v));
         }
     }
     Ok(Probe { version, packages })
+}
+
+/// "3.12.4" -> (3, 12). Anything unparseable counts as too old, which is the
+/// safe way round: it makes the app offer to rebuild rather than fail later.
+pub fn version_pair(version: &str) -> (u32, u32) {
+    let mut parts = version.trim().split(['.', '-', '+']);
+    let major = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+    let minor = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+    (major, minor)
+}
+
+pub fn new_enough_for_ai(version: &str) -> bool {
+    version_pair(version) >= MIN_AI_PYTHON
+}
+
+fn ai_help() -> String {
+    format!(
+        "Salem's AI runtime needs Python {}.{} or newer. Press Repair to rebuild the environment on a newer interpreter, or point WA_PYTHON at one.",
+        MIN_AI_PYTHON.0, MIN_AI_PYTHON.1
+    )
 }
 
 fn install_help() -> &'static str {
@@ -372,21 +406,29 @@ fn install_help() -> &'static str {
 // Status
 // ---------------------------------------------------------------------------
 
-fn status_value(app: &AppHandle, configured: &str) -> Value {
-    // An explicit override wins; otherwise the managed venv, which is what
-    // `python_setup` builds.
+/// The interpreter the app runs Python with: an explicit override if there is
+/// one, otherwise the managed virtualenv that `python_setup` builds.
+pub(crate) fn interpreter(app: &AppHandle, configured: &str) -> Option<PathBuf> {
+    interpreter_with_source(app, configured).0
+}
+
+fn interpreter_with_source(app: &AppHandle, configured: &str) -> (Option<PathBuf>, &'static str) {
     let override_path = std::env::var("WA_PYTHON")
         .ok()
         .map(PathBuf::from)
         .filter(|p| usable(p))
         .or_else(|| Some(PathBuf::from(configured.trim())).filter(|p| !configured.trim().is_empty() && usable(p)));
-    let (interpreter, source) = match override_path {
+    match override_path {
         Some(p) => (Some(p), "custom"),
         None => match venv_python(app).filter(|p| usable(p)) {
             Some(p) => (Some(p), "venv"),
             None => (None, "none"),
         },
-    };
+    }
+}
+
+fn status_value(app: &AppHandle, configured: &str) -> Value {
+    let (interpreter, source) = interpreter_with_source(app, configured);
     let Some(interpreter) = interpreter else {
         return json!({
             "ready": false,
@@ -398,15 +440,26 @@ fn status_value(app: &AppHandle, configured: &str) -> Value {
             "error": Value::Null,
             "help": install_help(),
             "canInstall": !find_system_python(configured).is_empty(),
+            "aiReady": false,
+            "aiMissing": AI_MODULES,
+            "aiError": "Python is not set up yet.",
+            "needsRebuild": false,
         });
     };
     match probe(&interpreter) {
         Ok(p) => {
-            let missing: Vec<&str> = CORE_PACKAGES
-                .iter()
-                .filter(|name| !p.packages.iter().any(|(n, v)| n == *name && v.is_some()))
-                .copied()
-                .collect();
+            let has = |name: &str| p.packages.iter().any(|(n, v)| n == name && v.is_some());
+            let missing: Vec<&str> = CORE_PACKAGES.iter().filter(|n| !has(n)).copied().collect();
+            // The AI runtime needs both a new enough interpreter and smolagents.
+            let old_python = !new_enough_for_ai(&p.version);
+            let ai_missing: Vec<&str> = AI_MODULES.iter().filter(|n| !has(n)).copied().collect();
+            let ai_error = if old_python {
+                Some(format!("this environment is Python {} — {}", p.version, ai_help()))
+            } else if !ai_missing.is_empty() {
+                Some("smolagents is not installed yet. Press Install.".to_string())
+            } else {
+                None
+            };
             if missing.is_empty() {
                 remember_ready(&interpreter);
             } else {
@@ -422,6 +475,10 @@ fn status_value(app: &AppHandle, configured: &str) -> Value {
                 "error": Value::Null,
                 "help": install_help(),
                 "canInstall": true,
+                "aiReady": ai_error.is_none(),
+                "aiMissing": ai_missing,
+                "aiError": ai_error,
+                "needsRebuild": old_python,
             })
         }
         Err(e) => json!({
@@ -431,9 +488,13 @@ fn status_value(app: &AppHandle, configured: &str) -> Value {
             "version": Value::Null,
             "packages": [],
             "missing": CORE_PACKAGES,
-            "error": e,
+            "error": e.clone(),
             "help": install_help(),
             "canInstall": !find_system_python(configured).is_empty(),
+            "aiReady": false,
+            "aiMissing": AI_MODULES,
+            "aiError": e,
+            "needsRebuild": false,
         }),
     }
 }
@@ -462,6 +523,34 @@ fn setup_blocking(app: &AppHandle, configured: &str, repair: bool) -> Result<Val
     }
 
     let mut python = venv_python(app).filter(|p| usable(p));
+    // An environment built before the AI layer existed can be on a Python that
+    // smolagents will not install into. Rebuild it rather than leaving the
+    // student with an app whose AI silently cannot start — but only when there
+    // is actually a newer interpreter to rebuild it with.
+    if let Some(existing) = python.clone() {
+        if let Ok(p) = probe(&existing) {
+            if !new_enough_for_ai(&p.version) {
+                let upgrade = find_system_python(configured)
+                    .into_iter()
+                    .find(|base| probe(base).map(|b| new_enough_for_ai(&b.version)).unwrap_or(false));
+                match upgrade {
+                    Some(base) => {
+                        emit("stage", &format!(
+                            "This environment is Python {} and Salem's AI needs {}.{}. Rebuilding it with {}…",
+                            p.version, MIN_AI_PYTHON.0, MIN_AI_PYTHON.1, base.display()
+                        ));
+                        std::fs::remove_dir_all(&root)
+                            .map_err(|e| format!("could not remove the old environment at {}: {e}", root.display()))?;
+                        python = None;
+                    }
+                    None => emit("log", &format!(
+                        "This machine only has Python {}. The maths tools will work; Salem's AI needs {}.{} or newer.",
+                        p.version, MIN_AI_PYTHON.0, MIN_AI_PYTHON.1
+                    )),
+                }
+            }
+        }
+    }
     if python.is_none() {
         let bases = find_system_python(configured);
         if bases.is_empty() {
@@ -537,8 +626,26 @@ fn setup_blocking(app: &AppHandle, configured: &str, repair: bool) -> Result<Val
         }
     }
 
+    // smolagents last: it is what the AI runtime imports, and on an
+    // interpreter that is too old it cannot be installed at all. Failing here
+    // is reported plainly rather than left to surface as a broken chat.
+    let version = probe(&python).map(|p| p.version).unwrap_or_default();
+    if new_enough_for_ai(&version) {
+        if let Err(e) = install(&AI_PACKAGES, "smolagents (Salem's AI runtime)") {
+            emit("log", &format!("Salem's AI runtime could not be installed — {e}"));
+        }
+    } else {
+        emit("log", &format!("Skipped smolagents: {}", ai_help()));
+    }
+
     emit("stage", "Checking the environment…");
     let status = status_value(app, configured);
+    // The AI runtime is a long-lived process holding the *old* interpreter.
+    // Whatever was just installed only reaches it after a restart, so it is
+    // stopped here and starts again on the next request.
+    if let Some(salem) = app.try_state::<crate::salem::Salem>() {
+        salem.shut_down("the Python environment changed");
+    }
     emit("done", "Python is ready.");
     Ok(status)
 }
@@ -915,6 +1022,40 @@ pub fn sweep_sandboxes(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
+    use super::{new_enough_for_ai, version_pair, AI_MODULES, AI_PACKAGES, MIN_AI_PYTHON, NEWEST_FIRST};
+
+    #[test]
+    fn python_versions_are_compared_by_major_and_minor() {
+        assert_eq!(version_pair("3.12.4"), (3, 12));
+        assert_eq!(version_pair("3.9.6"), (3, 9));
+        assert_eq!(version_pair("3.10.0rc1"), (3, 10));
+        // Unreadable versions count as too old, so the app offers a rebuild
+        // rather than failing later inside the runtime.
+        assert_eq!(version_pair("weird"), (0, 0));
+    }
+
+    #[test]
+    fn only_a_new_enough_python_can_run_the_ai_runtime() {
+        assert!(!new_enough_for_ai("3.9.6"), "macOS's system Python is too old for smolagents");
+        assert!(new_enough_for_ai("3.10.0"));
+        assert!(new_enough_for_ai("3.14.1"));
+        assert_eq!(MIN_AI_PYTHON, (3, 10));
+    }
+
+    #[test]
+    fn the_interpreter_search_prefers_newer_pythons() {
+        let at = |name: &str| NEWEST_FIRST.iter().position(|s| *s == name).unwrap();
+        assert!(at("python3.12") < at("python3"), "a versioned 3.12 must beat a bare python3");
+        assert!(at("python3") < at("python3.9"), "3.9 is the last resort");
+    }
+
+    #[test]
+    fn the_ai_requirement_is_pinned_and_matches_its_import_name() {
+        assert_eq!(AI_MODULES, ["smolagents"]);
+        assert!(AI_PACKAGES[0].starts_with("smolagents>="), "the version must be pinned");
+        assert!(AI_PACKAGES[0].contains('<'), "and capped, so a major bump is deliberate");
+    }
+
     use super::*;
 
     /// Drives the real runner the way `run_blocking` does, against the

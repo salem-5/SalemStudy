@@ -157,17 +157,60 @@ function python(a: Args) {
 export function installDevAi() {
   const handlers: Record<string, (a: Args) => unknown> = {
     get_config: () => ({
-      hasKey: true, keyHint: 'mock', flashModel: 'mock-flash', proModel: 'mock-pro', baseUrl: 'mock', maxAttempts: 4, pauseAfter: 2,
+      hasKey: true, keyHint: 'mock', flashModel: 'mock-flash', proModel: 'mock-pro', baseUrl: 'mock', maxAttempts: 4, pauseAfter: 2, effort: 'low',
       pythonEnabled: true, pythonAuto: true, pythonPath: '', pythonTimeout: 25, pythonMemoryMb: 4096, pythonMaxCalls: 6,
     }),
     set_config: () => handlers.get_config({}),
     python_status: () => ({
-      ready: true, source: 'venv', interpreter: '/mock/python', version: '3.13', missing: [], error: null, help: '', canInstall: true,
+      ready: !localStorage.getItem('wa.preview.noPython'), source: 'venv', interpreter: '/mock/python', version: '3.13', missing: [], error: null, help: '', canInstall: true,
       packages: ['sympy', 'numpy', 'mpmath', 'scipy', 'matplotlib', 'pint', 'pymupdf'].map((name) => ({ name, version: 'mock' })),
     }),
     deepseek_balance: () => ({ is_available: true, balance_infos: [{ currency: 'USD', total_balance: '9.99', granted_balance: '0', topped_up_balance: '9.99' }] }),
     deepseek_chat: chat,
     run_python: async (a) => { await wait(400); return python(a); },
+    python_setup: () => handlers.python_status({}),
+    salem_status: () => ({
+      ready: !localStorage.getItem('wa.preview.noPython'),
+      error: null,
+      hello: { ok: true, version: 'mock', smolagents: 'mock', python: '3.13', executable: '/mock/python' },
+      nativeTools: ['web_search', 'web_fetch', 'run_python'],
+    }),
+    salem_restart: () => null,
+    salem_telemetry: () => ({
+      total: {
+        runs: 34, completed: 31, failed: 2, cancelled: 1, avgDurationMs: 4200,
+        toolCalls: 58, toolFailures: 3, pythonCalls: 19, pythonFailures: 1,
+        retrievalFailures: 0, retries: 4, subagents: 6, tokens: 412_000,
+      },
+      byFeature: [
+        { feature: 'chat', runs: 18, failed: 1, avgDurationMs: 2600 },
+        { feature: 'notebook', runs: 9, failed: 0, avgDurationMs: 5200 },
+        { feature: 'quiz', runs: 5, failed: 1, avgDurationMs: 11_800 },
+        { feature: 'solver', runs: 2, failed: 0, avgDurationMs: 7400 },
+      ],
+      since: 0,
+    }),
+    salem_task_clear: () => null,
+    tex_status: () => ({ ready: false, engine: null, path: null, help: 'Install Tectonic.', installer: 'Homebrew', command: 'brew install tectonic' }),
+    tex_install: () => ({ ready: true, engine: 'tectonic', path: '/opt/homebrew/bin/tectonic', help: '', installer: 'Homebrew', command: 'brew install tectonic' }),
+    tab_mode_status: () => tabMode,
+    tab_mode_start: () => {
+      Object.assign(tabMode, { running: true, port: 8790, url: 'http://127.0.0.1:8790/?t=preview-token', origin: 'http://127.0.0.1:8790' });
+      return tabMode;
+    },
+    tab_mode_stop: () => {
+      Object.assign(tabMode, { running: false, port: null, url: null, origin: null });
+      return tabMode;
+    },
+    tab_mode_reply: () => null,
+    open_url: (a) => { window.open(String(a.url), '_blank'); return null; },
+    salem_run: (a) => salemRun(a),
+    salem_cancel: (a) => { cancelled.add(String(a.run)); return null; },
+    salem_tool_result: (a) => {
+      const waiting = toolWaiters.get(Number(a.call));
+      if (waiting) { toolWaiters.delete(Number(a.call)); waiting(a); }
+      return null;
+    },
   };
   // Minimal event plumbing so `listen('ai://stream')` works, and a streamed
   // reply that arrives word by word.
@@ -178,6 +221,148 @@ export function installDevAi() {
     for (const cb of listeners.get(event) ?? []) callbacks.get(cb)?.({ event, id: 0, payload });
   };
   const cancelled = new Set<string>();
+  const tabMode = { running: false, port: null as number | null, url: null as string | null, origin: null as string | null };
+
+  // ------------------------------------------------------------ Salem mock
+  //
+  // Enough of the runtime to exercise the real plumbing in the browser: the
+  // execution states the UI renders, streamed text, and a tool call that
+  // actually goes out to the webview and waits for its answer.
+
+  let nextToolCall = 1;
+  const toolWaiters = new Map<number, (a: Args) => void>();
+
+  const callTool = (run: string, name: string, args: Args) =>
+    new Promise<Args>((resolve) => {
+      const call = nextToolCall++;
+      toolWaiters.set(call, resolve);
+      emit('salem://tool', { call, run, name, args });
+      window.setTimeout(() => {
+        if (toolWaiters.delete(call)) resolve({ ok: false, error: 'the mock tool timed out' });
+      }, 20_000);
+    });
+
+  const MOCK_QUIZ = {
+    title: 'Convergence tests (preview)',
+    questions: [
+      {
+        type: 'mcq', prompt: 'Which test is best for $\\sum n!/n^n$?',
+        choices: ['Ratio test', 'Integral test', 'Alternating series test', 'Direct comparison'],
+        answer: '0', hint: 'Factorials cancel neatly when you divide consecutive terms.',
+        explanation: 'The ratio test: $a_{n+1}/a_n$ collapses the factorial.', topic: 'Ratio test', difficulty: 'medium',
+      },
+      {
+        type: 'blank', prompt: 'A $p$-series $\\sum 1/n^p$ converges when $p$ is greater than ______.',
+        answer: '1', accept: ['one'], hint: 'The harmonic series is the boundary case.',
+        explanation: 'It converges for $p > 1$ and diverges for $p \\le 1$.', topic: 'p-series', difficulty: 'easy',
+      },
+      {
+        type: 'tf', prompt: 'Every absolutely convergent series converges.',
+        answer: 'true', hint: 'Think about what the partial sums of $|a_n|$ bound.',
+        explanation: 'Absolute convergence implies convergence.', topic: 'Absolute convergence', difficulty: 'medium',
+      },
+    ],
+  };
+
+  const MOCK_CARDS = {
+    title: 'Convergence tests (preview)',
+    cards: [
+      { front: 'State the **ratio test**.', back: 'Converges absolutely when $L<1$, diverges when $L>1$.', topic: 'Ratio test' },
+      { front: 'When is the ratio test inconclusive?', back: 'When $L = 1$.', topic: 'Ratio test' },
+    ],
+  };
+
+  const MOCK_ANSWER = `The **ratio test** looks at $L = \\lim_{n\\to\\infty}\\left|\\frac{a_{n+1}}{a_n}\\right|$.\n\n` +
+    `- $L < 1$ — the series converges absolutely.\n- $L > 1$ — it diverges.\n- $L = 1$ — inconclusive; try another test.\n\n` +
+    `This is the browser preview, so the answer is canned — the states, streaming and tool calls above are real.`;
+
+  async function salemRun(a: Args): Promise<unknown> {
+    const run = String(a.run);
+    const input = (a.input ?? {}) as Args;
+    const started = Date.now();
+    const state = (s: string, detail = '') => emit('salem://event', { run, event: { kind: 'state', state: s, detail } });
+    const stop = () => cancelled.delete(run) || cancelled.has(run);
+
+    state('planning', 'Working out how to do this');
+    await wait(300);
+
+    // A request that mentions the study space gets a real tool round trip, so
+    // the tool layer is exercised rather than faked.
+    const asked = String(input.objective ?? '').toLowerCase();
+    if (/notebook|calendar|schedule|deck|quiz|note/.test(asked)) {
+      const name = /calendar|schedule|due|exam/.test(asked) ? 'list_events' : 'list_study';
+      const args: Args = name === 'list_events'
+        ? { from: new Date().toISOString().slice(0, 10), to: new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10) }
+        : {};
+      const id = `${name}-1`;
+      state('waiting_tool', name === 'list_events' ? 'Checking the calendar' : 'Looking through your study space');
+      emit('salem://event', { run, event: { kind: 'tool', id, name, status: 'running', label: name === 'list_events' ? 'Checking the calendar' : 'Looking through your study space' } });
+      const answer = await callTool(run, name, args);
+      emit('salem://event', {
+        run,
+        event: {
+          kind: 'tool', id, name,
+          status: answer.ok === false ? 'error' : 'ok',
+          label: name === 'list_events' ? 'Checked the calendar' : 'Looked through your study space',
+          detail: answer.ok === false ? String(answer.error ?? '') : '',
+        },
+      });
+    }
+
+    // A request that asked for structured data gets structured data back, so
+    // quiz and flashcard generation can be exercised in the preview too.
+    const schema = input.schema as { properties?: Record<string, unknown> } | null;
+    if (schema) {
+      state('validating', 'Checking the result against the schema');
+      await wait(400);
+      const props = Object.keys(schema.properties ?? {});
+      const structured = props.includes('questions') ? MOCK_QUIZ
+        : props.includes('cards') ? MOCK_CARDS
+        : props.includes('correct') ? { correct: true, feedback: 'That is the idea — well put.' }
+        : props.includes('title') ? { title: 'Mock title' }
+        : props.includes('summary') ? { summary: '### Course\nA preview stand-in.', events: [] }
+        : {};
+      state('completed', 'Done');
+      const done = {
+        text: '', structured, state: 'completed', path: 'agentic',
+        telemetry: {
+          run, feature: String(input.feature ?? 'other'), durationMs: Date.now() - started, state: 'completed',
+          steps: 2, tool_calls: 0, tool_failures: 0, python_calls: 0, python_failures: 0,
+          retrieval_failures: 0, subagents: 0, retries: 0, input_tokens: 2400, output_tokens: 900,
+        },
+      };
+      emit('salem://done', { run, ok: true, result: done, error: '' });
+      return done;
+    }
+
+    state('executing', 'Answering');
+    let sent = '';
+    for (const word of MOCK_ANSWER.split(/(?<=\s)/)) {
+      if (cancelled.has(run)) {
+        cancelled.delete(run);
+        state('cancelled', 'Stopped');
+        throw 'stopped';
+      }
+      emit('salem://event', { run, event: { kind: 'text', text: word } });
+      sent += word;
+      await wait(12);
+    }
+    void stop;
+    state('completed', 'Done');
+    const result = {
+      text: sent,
+      state: 'completed',
+      path: 'direct',
+      memory: { objective: String(input.objective ?? '') },
+      telemetry: {
+        run, feature: String(input.feature ?? 'chat'), durationMs: Date.now() - started, state: 'completed',
+        steps: 1, tool_calls: 0, tool_failures: 0, python_calls: 0, python_failures: 0,
+        retrieval_failures: 0, subagents: 0, retries: 0, input_tokens: 1200, output_tokens: 300,
+      },
+    };
+    emit('salem://done', { run, ok: true, result, error: '' });
+    return result;
+  }
   handlers['plugin:event|listen'] = (a) => {
     const set = listeners.get(String(a.event)) ?? new Set();
     set.add(Number(a.handler));

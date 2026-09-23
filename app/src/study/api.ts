@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { Reference } from '../lib/reference';
 
 /** Study data lives in SQLite on the Rust side (src-tauri/src/study*.rs). */
 
@@ -66,6 +67,15 @@ export type Found = {
 export type Memory = { id: number; text: string; source: 'chat' | 'user'; createdAt: number; updatedAt: number };
 export type MemoryState = { items: Memory[]; used: number; capacity: number };
 
+/** One study action, for the activity view's day breakdown. */
+export type ActivityEntry = {
+  at: number;
+  kind: 'card' | 'quiz' | 'chat' | 'note' | 'source' | 'focus';
+  notebookId: number | null;
+  notebook: string | null;
+  subject: string | null;
+};
+
 export type UsageBucket = { key: string; calls: number; tokens: number; cost: number };
 export type UsageSummary = { total: UsageBucket; last30: UsageBucket; byFeature: UsageBucket[]; byModel: UsageBucket[]; byDay: UsageBucket[]; since: number | null };
 
@@ -108,6 +118,10 @@ export type Step = { type: 'text'; text: string } | { type: 'run'; id: string } 
 
 export type MessageMeta = {
   attachments?: AttachmentInfo[];
+  /** What was pointed at when this message was sent — a selection in a note,
+   *  a quiz question, a card. Carried with the message the way a file is,
+   *  because that is when it was meant. */
+  references?: Reference[];
   runs?: PythonRun[];
   steps?: Step[];
   actions?: AppAction[];
@@ -118,6 +132,8 @@ export type MessageMeta = {
   /** Thinking mode: what the model reasoned before answering, and for how long. */
   reasoning?: string;
   thoughtMs?: number;
+  /** What writing this reply cost, in USD. */
+  cost?: number;
 } | null;
 
 export type ChatMessage = {
@@ -176,6 +192,23 @@ export type Note = {
 
 export type SourceKind = 'pdf' | 'slides' | 'image' | 'text' | 'youtube' | 'file';
 
+/** How reading a source went. Null until it has been read. */
+export type ExtractionReport = {
+  pages: number;
+  characters: number;
+  /** 1-based page numbers that came back with nothing on them. */
+  empty: number[];
+  /** Pages identical to an earlier one — an extractor repeating itself. */
+  duplicated: number[];
+  /** Scanned pages that had to be transcribed by the vision model. */
+  transcribed?: number;
+  /** Pages whose figures were described. */
+  described?: number;
+  /** Pages with figures that were past the limit and not looked at. */
+  skipped?: number;
+  at: number;
+};
+
 export type Source = {
   id: number;
   notebookId: number;
@@ -190,6 +223,7 @@ export type Source = {
   unitCount: number;
   charCount: number;
   createdAt: number;
+  report?: ExtractionReport | null;
 };
 
 export type SourceUnit = { ord: number; label: string; text: string };
@@ -214,19 +248,35 @@ export type YoutubeTranscript = {
   segments: { start: number; text: string }[];
 };
 
-export type QuestionType = 'mcq' | 'tf' | 'numeric' | 'short';
+export type QuestionType = 'mcq' | 'multi' | 'tf' | 'numeric' | 'short' | 'blank';
+
+export type Difficulty = 'easy' | 'medium' | 'hard';
+
+/** Where a question came from, so a claim can be traced back to its source. */
+export type QuestionSource = { sourceId: number; title: string; label: string; unit: number };
 
 export type QuizQuestion = {
   type: QuestionType;
   prompt: string;
-  /** mcq only. */
+  /** mcq and multi. */
   choices?: string[];
-  /** mcq: index of the right choice; tf: "true"/"false"; numeric: the number; short: reference answer. */
+  /** mcq: index of the right choice; tf: "true"/"false"; numeric: the number;
+   *  short: reference answer; blank: the word or phrase that fills the gap. */
   answer: string | number;
+  /** multi only: the indexes of every correct choice. */
+  answers?: number[];
+  /** blank only: other spellings or forms that should also be accepted. */
+  accept?: string[];
   tolerance?: number;
   unit?: string;
   explanation: string;
+  /** A nudge that helps the student reason or recall without giving the
+   *  answer away. Shown only when asked for. */
+  hint?: string;
   topic: string;
+  difficulty?: Difficulty;
+  /** The source passages this question came from, when it is source-backed. */
+  sources?: QuestionSource[];
   /** Attachment id of a matplotlib figure shown with the question. */
   figure?: number | null;
   /** True when a Python check reproduced the answer. */
@@ -246,7 +296,15 @@ export type QuizSummary = {
 
 export type Quiz = { id: number; notebookId: number; title: string; questions: QuizQuestion[]; createdAt: number };
 
-export type AttemptAnswer = { index: number; given: string; correct: boolean; topic: string; ms: number };
+export type AttemptAnswer = {
+  index: number;
+  given: string;
+  correct: boolean;
+  topic: string;
+  ms: number;
+  /** Whether the student opened the hint before answering. */
+  hinted?: boolean;
+};
 
 export type Attempt = {
   id: number;
@@ -271,6 +329,13 @@ export const studyApi = {
   setOverview: (id: number, overview: string) => invoke<void>('notebook_set_overview', { id, overview }),
   /** Timestamps of study actions since `since`. */
   activity: (since: number) => invoke<number[]>('activity', { since }),
+  /** What was studied between two moments, with where each action happened. */
+  activityDetail: (from: number, to: number) => invoke<ActivityEntry[]>('activity_detail', { from, to }),
+  /** Log a focus session the student finished (breaks are not study). */
+  addFocusSession: (phase: string, startedAt: number, finishedAt: number, tasksDone: number) =>
+    invoke<void>('focus_session_add', { phase, startedAt, finishedAt, tasksDone }),
+  /** Finished focus sessions since `since`, as [finishedAt, minutes] pairs. */
+  focusMinutes: (since: number) => invoke<[number, number][]>('focus_minutes', { since }),
   usage: () => invoke<UsageSummary>('usage_summary'),
   memories: () => invoke<MemoryState>('memory_list'),
   addMemory: (text: string, source: 'chat' | 'user' = 'chat') => invoke<Memory>('memory_add', { text, source }),
@@ -350,6 +415,8 @@ export const studyApi = {
     invoke<Source>('source_add', { notebookId: s.notebookId, kind: s.kind, title: s.title, filename: s.filename ?? null, mime: s.mime ?? null, data: s.data ?? null, url: s.url ?? null }),
   setSourceContent: (id: number, units: { label: string; text: string }[]) => invoke<Source>('source_set_content', { id, units }),
   setSourceStatus: (id: number, status: Source['status'], error: string | null = null) => invoke<void>('source_set_status', { id, status, error }),
+  /** Record how reading a source went — empty pages, transcriptions, repeats. */
+  setSourceReport: (id: number, report: ExtractionReport) => invoke<void>('source_set_report', { id, report }),
   renameSource: (id: number, title: string) => invoke<void>('source_rename', { id, title }),
   deleteSource: (id: number) => invoke<void>('source_delete', { id }),
   sourceUnits: (id: number) => invoke<SourceUnit[]>('source_units', { id }),
@@ -363,6 +430,9 @@ export const studyApi = {
   quiz: (id: number) => invoke<Quiz>('quiz_get', { id }),
   createQuiz: (notebookId: number, title: string, questions: QuizQuestion[]) =>
     invoke<number>('quiz_create', { notebookId, title, questions }),
+  /** Replace a quiz's questions (editing one, or rewriting one in place). */
+  updateQuiz: (id: number, questions: QuizQuestion[]) => invoke<void>('quiz_update', { id, questions }),
+  renameQuiz: (id: number, title: string) => invoke<void>('quiz_rename', { id, title }),
   deleteQuiz: (id: number) => invoke<void>('quiz_delete', { id }),
   addAttempt: (quizId: number, startedAt: number, score: number, total: number, answers: AttemptAnswer[]) =>
     invoke<number>('quiz_attempt_add', { quizId, startedAt, score, total, answers }),

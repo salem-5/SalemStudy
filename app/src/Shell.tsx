@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, CalendarDays, ChevronRight, Search, ClipboardCheck, MessageSquare, PanelLeftClose, PanelLeftOpen, Plus, Settings as SettingsIcon, Timer } from 'lucide-react';
+import { BookOpen, CalendarDays, ChevronRight, Search, ClipboardCheck, Globe, MessageSquare, PanelLeftClose, PanelLeftOpen, Plus, Settings as SettingsIcon, Timer } from 'lucide-react';
 import App from './App';
 import { AiSettingsDialog } from './components/AiPanel';
+import { TabModeDialog } from './components/TabMode';
+import { useChatRunCount } from './lib/chatRuns';
+import { useTasks } from './lib/salem/tasks';
+import { needsOnboarding, Onboarding } from './components/Onboarding';
+import { inTabMode } from './lib/tabClient';
 import { solverEnabled, useSolverEnabled } from './lib/features';
 import { Logo } from './components/Logo';
 import { ContextMenu, type MenuItem } from './components/ContextMenu';
@@ -59,11 +64,27 @@ export default function Shell() {
     try { return JSON.parse(store.get('wa.nav.folded') || '[]'); } catch { return []; }
   });
   const [navSmall, setNavSmall] = useState(() => store.get('wa.nav.small') === '1');
+  // Work the student cannot see from where they are standing. The sidebar is
+  // the one thing always on screen, so it is where "something is happening"
+  // belongs.
+  const chatsRunning = useChatRunCount();
+  const studyRunning = useTasks().filter((t) => !['completed', 'failed', 'cancelled'].includes(t.state)).length;
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [settingsSignal, setSettingsSignal] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Tab mode is the window serving the app to a browser, so it is offered
+  // only in the window — a tab cannot hand out its own address.
+  const [tabModeOpen, setTabModeOpen] = useState(false);
+  /** Shown once on startup when something Salem needs is not installed. */
+  const [onboarding, setOnboarding] = useState(false);
+  useEffect(() => {
+    // A moment's grace so it does not race the window opening.
+    const t = window.setTimeout(() => { void needsOnboarding().then(setOnboarding).catch(() => {}); }, 1200);
+    return () => window.clearTimeout(t);
+  }, []);
+  const canServe = !inTabMode();
   const [searching, setSearching] = useState(false);
   // ⌘K / Ctrl+K opens search from anywhere.
   useEffect(() => {
@@ -81,8 +102,11 @@ export default function Shell() {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === 'err' ? 8000 : 3500);
   }, []);
 
+  /** Bumped on every reload of the study space, for views that cache from it. */
+  const [treeVersion, setTreeVersion] = useState(0);
   const refresh = useCallback(async () => {
     try { setTree(await studyApi.tree()); } catch (e) { toast('err', `Study: ${String(e)}`); setTree([]); }
+    setTreeVersion((n) => n + 1);
   }, [toast]);
 
   useEffect(() => { refresh(); }, [refresh]);
@@ -159,7 +183,7 @@ export default function Shell() {
   let page: React.ReactNode = null;
   if (route.kind === 'study') page = tree && <StudyHome tree={tree} actions={actions} />;
   if (route.kind === 'chat') page = <ChatPage threadId={route.id ?? null} tree={tree ?? []} open={open} refreshTree={refreshTree} />;
-  if (route.kind === 'schedule') page = <SchedulePage tree={tree ?? []} open={open} refreshTree={() => void refresh()} />;
+  if (route.kind === 'schedule') page = <SchedulePage tree={tree ?? []} open={open} refreshTree={() => void refresh()} reload={treeVersion} />;
   if (route.kind === 'focus') page = <div className="view"><ViewBar><span className="viewbar-name">Focus</span></ViewBar><FocusPage /></div>;
   if (route.kind === 'subject') {
     const s = subjectOf(route.id);
@@ -186,15 +210,17 @@ export default function Shell() {
           <Search className="nav-glyph" />{!navSmall && <><span>Search</span><kbd>⌘K</kbd></>}
         </button>
         <div className="nav-scroll">
-          <button type="button" className={`nav-item${route.kind === 'chat' ? ' on' : ''}`} onClick={() => open({ kind: 'chat', id: route.kind === 'chat' ? route.id : lastChat })} title="Chat">
+          <button type="button" className={`nav-item${route.kind === 'chat' ? ' on' : ''}`} onClick={() => open({ kind: 'chat', id: route.kind === 'chat' ? route.id : lastChat })} title={chatsRunning ? `${chatsRunning} answer${chatsRunning === 1 ? '' : 's'} being written` : 'Chat'}>
             <MessageSquare className="nav-glyph" />{!navSmall && <span>Chat</span>}
+            {chatsRunning > 0 && <Busy what={`${chatsRunning} answer${chatsRunning === 1 ? '' : 's'} being written`} />}
           </button>
           <FocusNavItem on={route.kind === 'focus'} small={navSmall} onClick={() => open({ kind: 'focus' })} />
           <button type="button" className={`nav-item${route.kind === 'schedule' ? ' on' : ''}`} onClick={() => open({ kind: 'schedule' })} title="Schedule">
             <CalendarDays className="nav-glyph" />{!navSmall && <span>Schedule</span>}
           </button>
-          <button type="button" className={`nav-item${route.kind === 'study' ? ' on' : ''}`} onClick={() => open({ kind: 'study' })} title="Study">
+          <button type="button" className={`nav-item${route.kind === 'study' ? ' on' : ''}`} onClick={() => open({ kind: 'study' })} title={studyRunning ? `${studyRunning} thing${studyRunning === 1 ? '' : 's'} being made` : 'Study'}>
             <BookOpen className="nav-glyph" />{!navSmall && <span>Study</span>}
+            {studyRunning > 0 && <Busy what={`${studyRunning} thing${studyRunning === 1 ? '' : 's'} being made`} />}
           </button>
 
           {!navSmall && (
@@ -250,6 +276,11 @@ export default function Shell() {
               <ClipboardCheck className="nav-glyph" />{!navSmall && <span>Assignment Solver</span>}
             </button>
           )}
+          {canServe && (
+            <button type="button" className="nav-item" onClick={() => setTabModeOpen(true)} title="Open Salem in a browser tab">
+              <Globe className="nav-glyph" />{!navSmall && <span>Open in a tab</span>}
+            </button>
+          )}
           <button type="button" className="nav-item" onClick={() => (solverOn ? setSettingsSignal((n) => n + 1) : setSettingsOpen(true))} title="Settings">
             <SettingsIcon className="nav-glyph" />{!navSmall && <span>Settings</span>}
           </button>
@@ -267,6 +298,8 @@ export default function Shell() {
         )}
         {inStudy && <div className="shell-pane study" key={viewKey}>{page}</div>}
       </OpenFocus.Provider>
+      {tabModeOpen && <TabModeDialog onClose={() => setTabModeOpen(false)} />}
+      {onboarding && <Onboarding onClose={() => setOnboarding(false)} />}
       <PomodoroAlarm />
       {searching && <SearchPalette tree={tree ?? []} open={open} onClose={() => setSearching(false)} />}
 
@@ -309,7 +342,8 @@ export default function Shell() {
           onConfirm={async () => { await studyApi.deleteSubject(dialog.subject.id); await refresh(); }}
         >
           Delete <b>{dialog.subject.name}</b> and its {dialog.subject.notebooks.length} notebook(s), including every
-          source, chat, flashcard and quiz in them? This cannot be undone.
+          source, chat, flashcard and quiz in them, and everything it has in your schedule?
+          This cannot be undone.
         </ConfirmDialog>
       )}
       {dialog?.kind === 'delete-notebook' && (
@@ -326,6 +360,11 @@ export default function Shell() {
 }
 
 /** Sidebar entry for the timer; shows the countdown while it runs. */
+/** "Something is happening over here." A dot, not a number. */
+function Busy({ what }: { what: string }) {
+  return <span className="nav-busy" role="status" aria-label={what} title={what} />;
+}
+
 function FocusNavItem({ on, small, onClick }: { on: boolean; small: boolean; onClick: () => void }) {
   const p = usePomodoro();
   const live = p.status !== 'idle';

@@ -1,4 +1,4 @@
-import { aiChat, extractJsonObject, getAiConfig } from './ai';
+import { generate } from './salem/generate';
 import { transcribe } from './ingest';
 import { pythonStatus, runPython, sandboxName } from './python';
 import { studyApi, type EventKind, type SubjectNode } from '../study/api';
@@ -120,22 +120,43 @@ events: every dated item the student would put in a calendar: exams and quizzes 
 - title: short, e.g. "Midterm 1", "Lab 3 report due". notes: what it covers or where, one line, or "".
 - If the syllabus has no dates, return an empty events list.`;
 
+/** The shape the runtime validates the reading against before it is used. */
+const SYLLABUS_SCHEMA = {
+  type: 'object',
+  required: ['summary', 'events'],
+  properties: {
+    summary: { type: 'string' },
+    events: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['title', 'kind', 'date'],
+        properties: {
+          title: { type: 'string' },
+          kind: { type: 'string', enum: ['exam', 'deadline', 'class', 'study', 'other'] },
+          date: { type: 'string' },
+          start: { type: 'string' },
+          end: { type: 'string' },
+          notes: { type: 'string' },
+        },
+      },
+    },
+  },
+};
+
 export async function analyzeSyllabus(subject: string, text: string, instructions = ''): Promise<{ summary: string; events: SyllabusEvent[] }> {
-  const cfg = await getAiConfig();
-  if (!cfg.hasKey) throw new Error('Reading a syllabus needs a DeepSeek API key (Settings).');
   const today = new Date().toLocaleDateString('en-CA');
   const clipped = text.length > 80_000 ? `${text.slice(0, 80_000)}\n[… truncated]` : text;
-  const r = await aiChat({
+  // A syllabus is a structured-data job: dates have to parse, and a date the
+  // agent is unsure of must be reported rather than invented. The runtime
+  // gives it Python for the date arithmetic and checks the shape before this
+  // ever touches the student's schedule.
+  const obj = await generate<Record<string, unknown>>({
     feature: 'sources',
-    model: cfg.flashModel,
-    thinking: false,
-    json: true,
-    messages: [
-      { role: 'system', content: SYLLABUS_SYSTEM },
-      { role: 'user', content: `Course in the app: ${subject}\nToday: ${today}${instructions.trim() ? `\n\nThe student's instructions for reading it (follow them; they override the defaults above):\n${instructions.trim()}` : ''}\n\n<syllabus>\n${clipped}\n</syllabus>` },
-    ],
+    system: SYLLABUS_SYSTEM,
+    instruction: `Course in the app: ${subject}\nToday: ${today}${instructions.trim() ? `\n\nThe student's instructions for reading it (follow them; they override the defaults above):\n${instructions.trim()}` : ''}\n\n<syllabus>\n${clipped}\n</syllabus>`,
+    schema: SYLLABUS_SCHEMA,
   });
-  const obj = extractJsonObject(r.content) ?? {};
   const kinds: EventKind[] = ['exam', 'deadline', 'class', 'study', 'other'];
   const time = (v: unknown) => (typeof v === 'string' && /^\d{1,2}:\d{2}$/.test(v) ? v.padStart(5, '0') : null);
   const events = (Array.isArray(obj.events) ? obj.events : [])

@@ -1,83 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ArrowLeft, Check, Layers, MoreHorizontal, Pencil, Play, Plus, RotateCcw, Shuffle, Sparkles, Trash, X,
-} from 'lucide-react';
+import { Select } from '../components/Select';
+import { ArrowLeft, Check, Zap, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, FileText, MessageCircleQuestion, Play, Plus, RotateCcw, Shuffle, Sparkles, Trash, X } from 'lucide-react';
 import { Modal } from '../components/Dialogs';
-import { ContextMenu, type MenuItem } from '../components/ContextMenu';
 import { Markdown } from '../lib/markdown';
-import { generateCards, type GenSource, type StudyContext } from '../lib/studyGen';
-import { studyApi, type Card, type CardResult, type ChatThread, type Deck, type Source } from './api';
-import { ConfirmDialog, NameDialog } from './dialogs';
+import { type CardOptions, type CardSize, type GenSource, type QuizOptions } from '../lib/studyGen';
+import { AskableArea, AskAboutCard, ChatButton, deckBriefing } from './StudyChat';
+import { clearDeckSession, deckSessionFits, loadDeckSession, pruneDeckSession, saveDeckSession } from '../lib/studySession';
+import {studyApi, type Card, type CardResult, type ChatThread, type Deck, type Source, type Difficulty, type QuestionType, type Note } from './api';
+import { wholeSources } from '../lib/material';
+import { applyOrder, CEILING } from '../lib/deckPlan';
+import { SetItem, SetPage } from './StudySets';
 import { KindIcon } from './Sources';
 import { NOTE_PRESETS } from '../lib/prompts';
-
-const pct = (v: number | null) => (v === null ? '–' : `${Math.round(v * 100)}%`);
-
-// ----------------------------------------------------------------- pane
-
-/** The notebook's decks: each a named set you replay for a score. */
-export function DecksPane({ decks, onOpen, onPlay, onGenerate, onNew, onChanged }: {
-  decks: Deck[];
-  onOpen: (d: Deck) => void;
-  onPlay: (d: Deck) => void;
-  onGenerate: () => void;
-  onNew: () => void;
-  onChanged: () => void;
-}) {
-  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
-  const [renaming, setRenaming] = useState<Deck | null>(null);
-  const [removing, setRemoving] = useState<Deck | null>(null);
-  const menuFor = (d: Deck): MenuItem[] => [
-    { kind: 'item', label: 'Play', onClick: () => onPlay(d), disabled: !d.cardCount },
-    { kind: 'item', label: 'Open', onClick: () => onOpen(d) },
-    { kind: 'item', label: 'Rename…', onClick: () => setRenaming(d) },
-    { kind: 'sep' },
-    { kind: 'item', label: 'Delete deck', danger: true, onClick: () => setRemoving(d) },
-  ];
-
-  return (
-    <div className="pane-body">
-      <div className="pane-actions">
-        <button type="button" className="btn primary" onClick={onGenerate}><Sparkles />Generate deck</button>
-        <button type="button" className="btn ghost" onClick={onNew} title="Empty deck you fill yourself"><Plus />New</button>
-      </div>
-      {!decks.length && <p className="muted small pane-note">No decks yet. Generate one from your sources, a topic or a chat; it is saved here to replay as often as you like.</p>}
-      <ul className="deck-list stagger">
-        {decks.map((d, i) => (
-          <li key={d.id} style={{ '--i': i } as React.CSSProperties} className="deck-item"
-            onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, items: menuFor(d) }); }}>
-            <button type="button" className="deck-main" onClick={() => onOpen(d)}>
-              <span className="deck-icon"><Layers /></span>
-              <span className="deck-text">
-                <span className="deck-title">{d.title}</span>
-                <span className="deck-meta">{d.cardCount} card{d.cardCount === 1 ? '' : 's'} · {d.runs ? `best ${pct(d.best)} · last ${pct(d.last)}` : 'not played yet'}</span>
-              </span>
-            </button>
-            <button type="button" className="icon-btn deck-play" onClick={() => onPlay(d)} disabled={!d.cardCount} title="Play"><Play /></button>
-            <button type="button" className="icon-btn ghost-icon" onClick={(e) => setMenu({ x: e.clientX, y: e.clientY, items: menuFor(d) })} title="More"><MoreHorizontal /></button>
-          </li>
-        ))}
-      </ul>
-      {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
-      {renaming && (
-        <NameDialog title="Rename deck" label="Name" initial={renaming.title} submitLabel="Save" onClose={() => setRenaming(null)}
-          onSubmit={async (name) => { await studyApi.renameDeck(renaming.id, name); onChanged(); }} />
-      )}
-      {removing && (
-        <ConfirmDialog title="Delete deck" confirmLabel="Delete deck" onClose={() => setRemoving(null)}
-          onConfirm={async () => { await studyApi.deleteDeck(removing.id); onChanged(); }}>
-          Delete <b>{removing.title}</b> with its {removing.cardCount} cards and {removing.runs} saved scores?
-        </ConfirmDialog>
-      )}
-    </div>
-  );
-}
 
 // ------------------------------------------------------------ deck view
 
 /** One deck: play it, see its scores, and edit its cards. */
-export function DeckView({ deck, onBack, onPlay, onChanged }: {
+export function DeckView({ deck, notebookId, onBack, onPlay, onChanged }: {
   deck: Deck;
+  notebookId: number;
   onBack: () => void;
   /** `practice` runs (missed cards only) are not saved as scores. */
   onPlay: (cards: Card[], title: string, practice: boolean) => void;
@@ -85,9 +26,10 @@ export function DeckView({ deck, onBack, onPlay, onChanged }: {
 }) {
   const [cards, setCards] = useState<Card[] | null>(null);
   const [editing, setEditing] = useState<Card | 'new' | null>(null);
-  const [renaming, setRenaming] = useState(false);
-  const [removing, setRemoving] = useState(false);
-  const [shuffle, setShuffle] = useState(true);
+  // Whether to shuffle is a habit, not a property of one deck: it is
+  // remembered once and applies everywhere.
+  const [shuffle, setShuffle] = useState(() => loadPrefs<boolean>(SHUFFLE_KEY, true));
+  useEffect(() => { savePrefs(SHUFFLE_KEY, shuffle); }, [shuffle]);
 
   const load = useCallback(() => { studyApi.deckCards(deck.id).then(setCards).catch(() => setCards([])); }, [deck.id]);
   useEffect(load, [load]);
@@ -97,60 +39,37 @@ export function DeckView({ deck, onBack, onPlay, onChanged }: {
   const hard = (cards ?? []).filter((c) => c.lastCorrect === false);
 
   return (
-    <div className="stage deck-view">
-      <div className="stage-head">
-        <button type="button" className="link" onClick={onBack}><ArrowLeft />back</button>
-        <span className="stage-title">{deck.title}</span>
-        <button type="button" className="icon-btn ghost-icon" onClick={() => setRenaming(true)} title="Rename"><Pencil /></button>
-        <span className="spacer" />
-        <button type="button" className="icon-btn ghost-icon danger" onClick={() => setRemoving(true)} title="Delete deck"><Trash /></button>
-      </div>
-      <div className="deck-body">
-        <div className="deck-hero">
-          <div className="deck-scores">
-            <div><span className="deck-num">{deck.cardCount}</span><span className="muted">cards</span></div>
-            <div><span className="deck-num">{pct(deck.best)}</span><span className="muted">best</span></div>
-            <div><span className="deck-num">{pct(deck.last)}</span><span className="muted">last · {deck.runs} play{deck.runs === 1 ? '' : 's'}</span></div>
+    <SetPage
+      kind="cards"
+      id={deck.id}
+      title={deck.title}
+      count={deck.cardCount}
+      best={deck.best}
+      last={deck.last}
+      runs={deck.runs}
+      chat={<ChatButton notebookId={notebookId} where={deck.title} tag={deck.title} briefing={deckBriefing(deck.title, undefined)} />}
+      actions={<>
+        <label className="toggle small"><input type="checkbox" checked={shuffle} onChange={(e) => setShuffle(e.target.checked)} /><Shuffle />Shuffle</label>
+        {!!hard.length && <button type="button" className="btn" onClick={() => play(hard, true)}>Practise {hard.length} missed</button>}
+        <button type="button" className="btn primary" disabled={!cards?.length} onClick={() => cards && play(cards)}><Play />Play deck</button>
+      </>}
+      listAside={<button type="button" className="btn ghost" onClick={() => setEditing('new')}><Plus />Add card</button>}
+      onBack={onBack}
+      onRename={async (name) => { await studyApi.renameDeck(deck.id, name); onChanged(); }}
+      onDelete={async () => { clearDeckSession(deck.id); await studyApi.deleteDeck(deck.id); onChanged(); onBack(); }}
+      deleteText={<>Delete <b>{deck.title}</b> with its {deck.cardCount} cards and saved scores?</>}
+      empty={cards && !cards.length ? <p className="muted pane-note">This deck is empty. Add cards by hand, or generate a new deck.</p> : undefined}
+      dialogs={editing && <CardEditor card={editing === 'new' ? null : editing} deckId={deck.id} onClose={() => setEditing(null)} onSaved={changed} />}
+    >
+      {(cards ?? []).map((c, i) => (
+        <SetItem key={c.id} n={i + 1} index={i} result={c.lastCorrect} onOpen={() => setEditing(c)}>
+          <div className="set-card">
+            <div className="set-card-front"><Markdown text={c.front} /></div>
+            <div className="set-card-back"><Markdown text={c.back} /></div>
           </div>
-          <div className="deck-actions">
-            <label className="toggle small"><input type="checkbox" checked={shuffle} onChange={(e) => setShuffle(e.target.checked)} /><Shuffle />Shuffle</label>
-            {!!hard.length && <button type="button" className="btn" onClick={() => play(hard, true)}>Practise {hard.length} missed</button>}
-            <button type="button" className="btn primary" disabled={!cards?.length} onClick={() => cards && play(cards)}><Play />Play deck</button>
-          </div>
-        </div>
-        <div className="deck-cards-head">
-          <span className="panel-title">Cards</span>
-          <span className="spacer" />
-          <button type="button" className="btn ghost" onClick={() => setEditing('new')}><Plus />Add card</button>
-        </div>
-        <ul className="deck-cards stagger">
-          {(cards ?? []).map((c, i) => (
-            <li key={c.id} className="deck-card" style={{ '--i': i } as React.CSSProperties}>
-              <div role="button" tabIndex={0} className="deck-card-main" onClick={() => setEditing(c)}
-                onKeyDown={(e) => { if (e.key === 'Enter') setEditing(c); }} title="Edit card">
-                <div className="deck-card-front"><Markdown text={c.front} /></div>
-                <div className="deck-card-back"><Markdown text={c.back} /></div>
-              </div>
-              <span className={`deck-card-stat${c.lastCorrect === false ? ' bad' : c.lastCorrect ? ' good' : ''}`} title={`${c.reviews} answered, ${c.misses} missed`}>
-                {c.lastCorrect === null ? '' : c.lastCorrect ? <Check /> : <X />}
-              </span>
-            </li>
-          ))}
-        </ul>
-        {cards && !cards.length && <p className="muted pane-note">This deck is empty. Add cards by hand, or generate a new deck.</p>}
-      </div>
-      {editing && <CardEditor card={editing === 'new' ? null : editing} deckId={deck.id} onClose={() => setEditing(null)} onSaved={changed} />}
-      {renaming && (
-        <NameDialog title="Rename deck" label="Name" initial={deck.title} submitLabel="Save" onClose={() => setRenaming(false)}
-          onSubmit={async (name) => { await studyApi.renameDeck(deck.id, name); onChanged(); }} />
-      )}
-      {removing && (
-        <ConfirmDialog title="Delete deck" confirmLabel="Delete deck" onClose={() => setRemoving(false)}
-          onConfirm={async () => { await studyApi.deleteDeck(deck.id); onChanged(); onBack(); }}>
-          Delete <b>{deck.title}</b> with its cards and saved scores?
-        </ConfirmDialog>
-      )}
-    </div>
+        </SetItem>
+      ))}
+    </SetPage>
   );
 }
 
@@ -205,27 +124,98 @@ type GenMode = 'sources' | 'topic' | 'chat';
 
 /** What the dialog remembers per notebook and kind. Sources are stored as the
  *  ones switched off, so every source (including new ones) starts ticked. */
-type GenPrefs = { mode: GenMode; off: number[]; focus: string; count: number; instructions: string };
+type GenPrefs = {
+  mode: GenMode;
+  off: number[];
+  focus: string;
+  /** No longer asked for: kept so older saved choices still load. */
+  count?: number;
+  instructions: string;
+  /** Decks and quizzes: how much of the material to cover. */
+  size?: CardSize;
+  /** The order the student put the sources in, by id. */
+  order?: number[];
+  /** Quizzes only; remembered per notebook like everything else here. */
+  difficulty?: Difficulty | 'mixed';
+  types?: QuestionType[];
+  /** Notes the student unticked as material. */
+  notesOff?: number[];
+  /** Decks and quizzes: fast mode (on unless turned off). */
+  fast?: boolean;
+};
+
+const QUIZ_TYPES: { type: QuestionType; label: string }[] = [
+  { type: 'mcq', label: 'Multiple choice' },
+  { type: 'multi', label: 'Select all' },
+  { type: 'tf', label: 'True/false' },
+  { type: 'blank', label: 'Fill the gap' },
+  { type: 'numeric', label: 'Numeric' },
+  { type: 'short', label: 'Written' },
+];
+
+const DIFFICULTIES = [
+  { value: 'mixed', label: 'Mixed' },
+  { value: 'easy', label: 'Easy' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'hard', label: 'Hard' },
+];
+
+/** How the student likes to play decks — the same everywhere, every time. */
+const SHUFFLE_KEY = 'wa.decks.shuffle';
+
+/** The order a deck is played in: shuffled, unless the student turned that off. */
+export const playOrder = <T,>(cards: T[]): T[] =>
+  (loadPrefs<boolean>(SHUFFLE_KEY, true) ? [...cards].sort(() => Math.random() - 0.5) : cards);
 
 export function loadPrefs<T>(key: string, fallback: T): T {
-  try { return { ...fallback, ...(JSON.parse(localStorage.getItem(key) || 'null') ?? {}) }; } catch { return fallback; }
+  try {
+    const saved = JSON.parse(localStorage.getItem(key) || 'null');
+    if (saved === null || saved === undefined) return fallback;
+    // A plain value (shuffle on or off) is the value; spread into an object
+    // it came back as {}, which is truthy, so shuffle could never stay off.
+    if (typeof fallback !== 'object' || fallback === null) return typeof saved === typeof fallback ? saved : fallback;
+    return { ...fallback, ...saved };
+  } catch { return fallback; }
 }
 export function savePrefs(key: string, value: unknown) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* ignore */ }
 }
 
-/** Shared by decks, quizzes and notes: pick what to build from, and how many items (or, for notes, how). */
+/** What each setting does, in the student's terms. */
+const sizeNote = (size: CardSize, one: 'card' | 'question') => (
+  size === 'fewer'
+    ? `Page by page, but only what you have to know — the definitions, the key numbers, the classic features. Always fewer than Standard, at most ${CEILING.fewer}.`
+    : size === 'standard'
+      ? `A ${one} for every point worth knowing, page by page in the order of your material — as many as it takes, at most ${CEILING.standard}.`
+      : `Everything Standard covers, plus ${one}s that compare, connect and apply, still in page order. Always more than Standard, at most ${CEILING.more}.`
+);
+
+/** Shared by decks, quizzes and notes: pick what to build from, and how thoroughly (or, for notes, how). */
 export function GenerateDialog({ kind, notebookId, sources, onClose, run, initialThread }: {
   kind: 'cards' | 'quiz' | 'notes';
   notebookId: number;
   sources: Source[];
   onClose: () => void;
-  run: (src: GenSource, count: number, progress: (t: string) => void, instructions: string) => Promise<string>;
+  run: (src: GenSource, progress: (t: string) => void, instructions: string, options: QuizOptions & CardOptions) => Promise<unknown>;
   initialThread?: number | null;
 }) {
-  const ready = sources.filter((s) => s.status === 'ready');
   const key = `wa.nb.${notebookId}.gen.${kind}`;
-  const [prefs] = useState(() => loadPrefs<GenPrefs>(key, { mode: 'sources', off: [], focus: '', count: kind === 'cards' ? 15 : 8, instructions: NOTE_PRESETS[0].text }));
+  const [prefs] = useState(() => loadPrefs<GenPrefs>(key, { mode: 'sources', off: [], focus: '', instructions: NOTE_PRESETS[0].text }));
+  /**
+   * The sources in the order they will be read: the numbers in their titles,
+   * or the order the student put them in here. A deck follows the lecture, so
+   * the lectures have to be in the right order first.
+   */
+  const [order, setOrder] = useState<number[] | undefined>(prefs.order);
+  const ready = useMemo(() => applyOrder(sources.filter((s) => s.status === 'ready'), order), [sources, order]);
+  const move = (id: number, by: -1 | 1) => {
+    const ids = ready.map((s) => s.id);
+    const at = ids.indexOf(id);
+    const to = at + by;
+    if (at < 0 || to < 0 || to >= ids.length) return;
+    [ids[at], ids[to]] = [ids[to], ids[at]];
+    setOrder(ids);
+  };
   const [instructions, setInstructions] = useState(prefs.instructions);
   const [mode, setMode] = useState<GenMode>(() => {
     if (initialThread) return 'chat';
@@ -236,20 +226,40 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
   const [prompt, setPrompt] = useState(prefs.mode === 'sources' ? prefs.focus : '');
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [thread, setThread] = useState<number | null>(initialThread ?? null);
-  const [count, setCount] = useState(prefs.count);
+  const [difficulty, setDifficulty] = useState<Difficulty | 'mixed'>(prefs.difficulty ?? 'mixed');
+  // Every type, unless the student narrowed it — an empty list saved by an
+  // older version meant "whatever suits", which is what all of them means now.
+  const [types, setTypes] = useState<QuestionType[]>(prefs.types?.length ? prefs.types : QUIZ_TYPES.map((t) => t.type));
+  const [fast, setFast] = useState(prefs.fast ?? true);
+  const [size, setSize] = useState<CardSize>(prefs.size ?? 'standard');
+  /** The student's own notes count as material too, alongside the sources. */
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [pickedNotes, setPickedNotes] = useState<Set<number>>(new Set());
 
   // Remember the choices for next time (not the chat mode opened from a chat).
   useEffect(() => {
     if (initialThread) return;
-    savePrefs(key, { mode, off: ready.filter((s) => !picked.has(s.id)).map((s) => s.id), focus: mode === 'sources' ? prompt : prefs.focus, count, instructions });
-  }, [key, mode, picked, prompt, count, instructions]); // eslint-disable-line react-hooks/exhaustive-deps
+    savePrefs(key, {
+      mode, off: ready.filter((s) => !picked.has(s.id)).map((s) => s.id),
+      focus: mode === 'sources' ? prompt : prefs.focus, instructions, difficulty, types, size, order, fast,
+      notesOff: notes.filter((n) => !pickedNotes.has(n.id)).map((n) => n.id),
+    });
+  }, [key, mode, picked, prompt, instructions, difficulty, types, size, order, fast, notes, pickedNotes]); // eslint-disable-line react-hooks/exhaustive-deps
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     studyApi.chatList(notebookId).then((t) => { setThreads(t); setThread((cur) => cur ?? t[0]?.id ?? null); }).catch(() => {});
-  }, [notebookId]);
+    studyApi.notes(notebookId)
+      .then((list) => {
+        setNotes(list);
+        // Ticked by default, like the sources: this notebook's material is
+        // what the student meant by "from my material".
+        setPickedNotes(new Set(list.filter((n) => !(prefs.notesOff ?? []).includes(n.id)).map((n) => n.id)));
+      })
+      .catch(() => {});
+  }, [notebookId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const go = async () => {
     setBusy(true);
@@ -257,19 +267,37 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
     try {
       let src: GenSource;
       if (mode === 'sources') {
-        setStatus('Reading your sources…');
-        const hits = prompt.trim()
-          ? await studyApi.searchSources([...picked], prompt, 24).then(async (h) => (h.length ? h : studyApi.sampleSources([...picked], 50_000)))
-          : await studyApi.sampleSources([...picked], 50_000);
-        if (!hits.length) throw new Error('Those sources have no readable text yet.');
-        src = { kind: 'sources', hits, focus: prompt };
+        setStatus('Reading your material…');
+        const chosen = ready.filter((x) => picked.has(x.id));
+        // Decks and quizzes walk every page, in the order above; a focus only
+        // narrows what each pass writes about. Notes are written in one go,
+        // from the passages that bear on what was asked.
+        const hits = !picked.size
+          ? []
+          : kind !== 'notes'
+            ? await wholeSources(chosen)
+            : prompt.trim()
+              ? await studyApi.searchSources([...picked], prompt, 24).then(async (h) => (h.length ? h : studyApi.sampleSources([...picked], 50_000)))
+              : await studyApi.sampleSources([...picked], 50_000);
+        const chosenNotes = await Promise.all(
+          notes.filter((n) => pickedNotes.has(n.id)).map((n) => studyApi.note(n.id).catch(() => null)),
+        );
+        const material = chosenNotes
+          .filter((n): n is Note => !!n && !!n.content.trim())
+          .map((n) => ({ id: n.id, title: n.title, content: n.content }));
+        if (!hits.length && !material.length) {
+          throw new Error('Nothing to build from: those sources have no readable text yet, and no notes are ticked.');
+        }
+        src = { kind: 'sources', hits, notes: material, focus: prompt };
       } else if (mode === 'topic') src = { kind: 'topic', prompt };
       else {
         if (!thread) throw new Error('Pick a chat.');
         src = { kind: 'chat', messages: await studyApi.chatMessages(thread) };
       }
-      setStatus(await run(src, count, setStatus, instructions));
-      setTimeout(onClose, 700);
+      // It carries on in the background, shown in the list it will land in,
+      // so the dialog gets out of the way at once.
+      await run(src, setStatus, instructions, { difficulty, types, size, fast });
+      onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setStatus(null);
@@ -278,7 +306,7 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
   };
 
   const modes: GenMode[] = ['sources', 'topic', 'chat'];
-  const can = mode === 'sources' ? picked.size > 0 : mode === 'topic' ? !!prompt.trim() : !!thread;
+  const can = mode === 'sources' ? picked.size + pickedNotes.size > 0 : mode === 'topic' ? !!prompt.trim() : !!thread;
   return (
     <Modal title={kind === 'cards' ? 'Generate a flashcard deck' : kind === 'quiz' ? 'Generate a quiz' : 'Write notes'} onClose={busy ? () => {} : onClose}>
       <div className="form">
@@ -299,15 +327,45 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
                 onChange={(e) => setPicked(e.target.checked ? new Set(ready.map((s) => s.id)) : new Set())} />
               <span>All sources ({ready.length})</span>
             </label>
-            <div className="pick-list">
-              {ready.map((s) => (
-                <label key={s.id} className="pick">
-                  <input type="checkbox" checked={picked.has(s.id)} disabled={busy}
-                    onChange={() => setPicked((p) => { const n = new Set(p); if (n.has(s.id)) n.delete(s.id); else n.add(s.id); return n; })} />
-                  <KindIcon kind={s.kind} /><span>{s.title}</span>
-                </label>
+            <div className="pick-list ordered">
+              {ready.map((s, i) => (
+                <div key={s.id} className="pick-row">
+                  <label className="pick">
+                    <input type="checkbox" checked={picked.has(s.id)} disabled={busy}
+                      onChange={() => setPicked((p) => { const n = new Set(p); if (n.has(s.id)) n.delete(s.id); else n.add(s.id); return n; })} />
+                    {kind !== 'notes' && <span className="pick-ord mono">{i + 1}</span>}
+                    <KindIcon kind={s.kind} /><span>{s.title}</span>
+                  </label>
+                  {kind !== 'notes' && ready.length > 1 && (
+                    <span className="pick-move">
+                      <button type="button" className="icon-btn ghost-icon" disabled={busy || i === 0} onClick={() => move(s.id, -1)} title="Read this earlier" aria-label={`Move ${s.title} up`}><ChevronUp /></button>
+                      <button type="button" className="icon-btn ghost-icon" disabled={busy || i === ready.length - 1} onClick={() => move(s.id, 1)} title="Read this later" aria-label={`Move ${s.title} down`}><ChevronDown /></button>
+                    </span>
+                  )}
+                </div>
               ))}
             </div>
+            {kind !== 'notes' && ready.length > 1 && (
+              <span className="muted small">Read in this order — by the numbers in the titles, unless you move them.</span>
+            )}
+            {!!notes.length && (
+              <>
+                <label className="pick all">
+                  <input type="checkbox" checked={pickedNotes.size === notes.length} disabled={busy}
+                    onChange={(e) => setPickedNotes(e.target.checked ? new Set(notes.map((n) => n.id)) : new Set())} />
+                  <span>Your notes ({notes.length})</span>
+                </label>
+                <div className="pick-list">
+                  {notes.map((n) => (
+                    <label key={n.id} className="pick">
+                      <input type="checkbox" checked={pickedNotes.has(n.id)} disabled={busy}
+                        onChange={() => setPickedNotes((p) => { const next = new Set(p); if (next.has(n.id)) next.delete(n.id); else next.add(n.id); return next; })} />
+                      <FileText /><span>{n.title}</span>
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
             <label className="field">
               <span>Focus on <i className="muted">optional</i></span>
               <input value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="e.g. vector and symmetric equations of lines" disabled={busy} />
@@ -324,9 +382,8 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
         {mode === 'chat' && (
           <label className="field">
             <span>Chat</span>
-            <select className="select" value={thread ?? ''} onChange={(e) => setThread(Number(e.target.value))} disabled={busy}>
-              {threads.map((t) => <option key={t.id} value={t.id}>{t.title || 'Untitled chat'} · {t.messageCount} messages</option>)}
-            </select>
+            <Select className="field-input" value={String(thread ?? '')} onChange={(v) => setThread(Number(v))} disabled={busy}
+              options={threads.map((t) => ({ value: String(t.id), label: t.title || 'Untitled chat', text: t.title || 'Untitled chat', hint: `${t.messageCount} messages` }))} />
           </label>
         )}
         {kind === 'notes' ? (
@@ -341,12 +398,72 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
               placeholder="e.g. one page, focus on when to use each test, include a comparison table" />
           </label>
         ) : (
-          <label className="field narrow">
-            <span>How many {kind === 'cards' ? 'cards' : 'questions'}</span>
-            <input type="number" min={1} max={40} value={count} onChange={(e) => setCount(Math.max(1, Math.min(40, Number(e.target.value) || 1)))} disabled={busy} />
+          <div className="field">
+            <span className="field-label">How much to cover</span>
+            <div className="seg" style={{ '--n': 3 } as React.CSSProperties}>
+              {(['fewer', 'standard', 'more'] as CardSize[]).map((v) => (
+                <button type="button" key={v} className={`seg-item${size === v ? ' on' : ''}`} onClick={() => setSize(v)} disabled={busy}>
+                  {v === 'fewer' ? 'Fewer' : v === 'standard' ? 'Standard' : 'More'}
+                </button>
+              ))}
+              <span className="seg-glider" style={{ transform: `translateX(${['fewer', 'standard', 'more'].indexOf(size) * 100}%)` }} />
+            </div>
+            <span className="muted small">
+              {sizeNote(size, kind === 'cards' ? 'card' : 'question')}
+            </span>
+          </div>
+        )}
+        {kind !== 'notes' && (
+          <label className="toggle gen-fast">
+            <input type="checkbox" checked={fast} disabled={busy} onChange={(e) => setFast(e.target.checked)} />
+            <Zap />
+            <span>
+              Fast mode
+              <span className="muted small">
+                {fast
+                  ? ' — bigger passes run side by side, each reading its own pages and an outline of the rest. Quicker, and a fraction of the tokens.'
+                  : ' — every pass reads all of your material. Slower and several times the tokens; best when distant pages depend on each other.'}
+              </span>
+            </span>
           </label>
         )}
-        {kind === 'quiz' && <p className="muted small">Calculation questions are re-solved in Python; any whose check disagrees is thrown away and rewritten.</p>}
+        {kind === 'cards' && (
+          <label className="field narrow">
+            <span>Difficulty</span>
+            <Select className="field-input" value={difficulty} disabled={busy}
+              onChange={(v) => setDifficulty(v as Difficulty | 'mixed')}
+              options={DIFFICULTIES} />
+          </label>
+        )}
+        {kind === 'quiz' && (
+          <>
+            <label className="field narrow">
+              <span>Difficulty</span>
+              <Select className="field-input" value={difficulty} disabled={busy}
+                onChange={(v) => setDifficulty(v as Difficulty | 'mixed')}
+                options={DIFFICULTIES} />
+            </label>
+            <div className="field">
+              <span className="field-label">Question types</span>
+              <div className="chips">
+                {QUIZ_TYPES.map((t) => (
+                  <button
+                    type="button"
+                    key={t.type}
+                    className={`chip-btn${types.includes(t.type) ? ' on' : ''}`}
+                    disabled={busy}
+                    // The last one cannot be switched off: a quiz of no kind of question.
+                    onClick={() => setTypes((cur) => (cur.includes(t.type) ? (cur.length > 1 ? cur.filter((x) => x !== t.type) : cur) : [...cur, t.type]))}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+              <span className="muted small">{types.length === QUIZ_TYPES.length ? 'All of them, whichever suits each point.' : 'Only these types.'}</span>
+            </div>
+            <p className="muted small">Calculation questions are re-solved in Python; any whose check disagrees is thrown away and rewritten.</p>
+          </>
+        )}
         {status && <div className="gen-status">{busy && <span className="dots"><i /><i /><i /></span>}{status}</div>}
         {error && <div className="form-err">{error}</div>}
       </div>
@@ -358,44 +475,74 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
   );
 }
 
-/** Generate a deck (the model also names it) and save it. Returns the new deck's id. */
-export async function generateDeck(ctx: StudyContext, notebookId: number, src: GenSource, count: number, progress: (t: string) => void): Promise<{ id: number; message: string }> {
-  progress(`Writing ${count} cards…`);
-  const { title, cards } = await generateCards(ctx, src, count, []);
-  const refs = src.kind === 'sources' ? [...new Map(src.hits.map((h) => [h.sourceId, { sourceId: h.sourceId, title: h.sourceTitle }])).values()] : null;
-  const id = await studyApi.createDeck(notebookId, title, cards.map((c) => ({ ...c, sourceRefs: refs })));
-  return { id, message: `Saved “${title}” with ${cards.length} card${cards.length === 1 ? '' : 's'}.` };
-}
-
 // ---------------------------------------------------------------- player
 
 /**
  * Play a deck: one card at a time, click or Space flips it, then ✗ / ✓
  * (1 / 2, ← / →). At the end: the score, what was missed, play again.
  */
-export function DeckPlayer({ deckId, cards, title, practice: startPractice = false, onClose, onFinished }: {
+export function DeckPlayer({ deckId, cards, title, notebookId, practice: startPractice = false, onClose, onFinished }: {
   deckId: number;
   cards: Card[];
   title: string;
+  notebookId: number;
   practice?: boolean;
   onClose: () => void;
   onFinished: () => void;
 }) {
-  const [round, setRound] = useState<Card[]>(cards);
+  /**
+   * A session that was left half-finished is picked up where it stopped.
+   *
+   * Only real (non-practice) runs are saved, and only against the deck as it
+   * is now: a card deleted meanwhile is dropped from the order, and a deck
+   * that has lost most of its cards starts fresh rather than replaying a
+   * session that no longer means anything.
+   */
+  const resumed = useMemo(() => {
+    if (startPractice) return null;
+    const saved = loadDeckSession(deckId);
+    const ids = cards.map((c) => c.id);
+    if (!deckSessionFits(saved, ids)) return null;
+    const pruned = pruneDeckSession(saved, ids);
+    const byId = new Map(cards.map((c) => [c.id, c]));
+    const order = pruned.order.map((id) => byId.get(id)).filter((c): c is Card => !!c);
+    return order.length ? { ...pruned, cards: order } : null;
+  }, [deckId, cards, startPractice]);
+
+  const [round, setRound] = useState<Card[]>(resumed?.cards ?? cards);
   const [practice, setPractice] = useState(startPractice);
-  const [pos, setPos] = useState(0);
+  const [pos, setPos] = useState(resumed?.pos ?? 0);
   const [flipped, setFlipped] = useState(false);
   const [leaving, setLeaving] = useState<'left' | 'right' | null>(null);
-  const [results, setResults] = useState<CardResult[]>([]);
-  const started = useRef(Date.now());
+  const [results, setResults] = useState<CardResult[]>(
+    resumed ? Object.entries(resumed.results).map(([id, r]) => ({ cardId: Number(id), correct: r.correct, elapsedMs: r.elapsedMs })) : [],
+  );
+  const [wasResumed, setWasResumed] = useState(!!resumed && (resumed.pos > 0));
+  /** The card the student has opened a chat about. */
+  const [asking, setAsking] = useState<Card | null>(null);
+  const started = useRef(resumed?.startedAt ?? Date.now());
   const shownAt = useRef(Date.now());
   const saved = useRef(false);
   const card = round[pos];
   const done = !card;
 
+  // Keep the live session on disk, so quitting mid-deck costs nothing.
+  useEffect(() => {
+    if (practice || done) return;
+    saveDeckSession({
+      deckId,
+      startedAt: started.current,
+      pos,
+      order: round.map((c) => c.id),
+      results: Object.fromEntries(results.map((r) => [r.cardId, { correct: r.correct, elapsedMs: r.elapsedMs }])),
+    });
+  }, [deckId, practice, done, pos, round, results]);
+
   useEffect(() => {
     if (!done || saved.current || practice || !results.length) return;
     saved.current = true;
+    // The run is over: the session has nothing left to resume.
+    clearDeckSession(deckId);
     void studyApi.addDeckRun(deckId, started.current, results).then(onFinished).catch(() => {});
   }, [done, practice, results, deckId, onFinished]);
 
@@ -411,15 +558,30 @@ export function DeckPlayer({ deckId, cards, title, practice: startPractice = fal
     }, 240);
   }, [card, flipped, leaving]);
 
+  /**
+   * Move without marking.
+   *
+   * Going back to re-read a card should not count as getting it right or
+   * wrong, so this only moves; only the grade buttons record anything.
+   */
+  const goTo = useCallback((next: number) => {
+    setPos(Math.max(0, Math.min(round.length, next)));
+    setFlipped(false);
+    setLeaving(null);
+    shownAt.current = Date.now();
+  }, [round.length]);
+
   const restart = (list: Card[], isPractice: boolean) => {
     saved.current = false;
     started.current = Date.now();
     shownAt.current = Date.now();
+    clearDeckSession(deckId);
     setPractice(isPractice);
     setRound([...list].sort(() => Math.random() - 0.5));
     setResults([]);
     setPos(0);
     setFlipped(false);
+    setWasResumed(false);
   };
 
   useEffect(() => {
@@ -428,12 +590,15 @@ export function DeckPlayer({ deckId, cards, title, practice: startPractice = fal
       if (e.key === 'Escape') { e.preventDefault(); onClose(); return; }
       if (done) return;
       if (e.code === 'Space' || e.key === 'Enter') { e.preventDefault(); setFlipped((f) => !f); return; }
+      // Shift + arrow moves without marking; a bare arrow still grades.
+      if (e.shiftKey && e.key === 'ArrowLeft') { e.preventDefault(); goTo(pos - 1); return; }
+      if (e.shiftKey && e.key === 'ArrowRight') { e.preventDefault(); goTo(pos + 1); return; }
       if (e.key === '1' || e.key === 'ArrowLeft') grade(false);
       if (e.key === '2' || e.key === 'ArrowRight') grade(true);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [done, grade, onClose]);
+  }, [done, grade, goTo, pos, onClose]);
 
   const right = results.filter((r) => r.correct).length;
   const missed = useMemo(() => round.filter((c) => results.some((r) => r.cardId === c.id && !r.correct)), [round, results]);
@@ -445,10 +610,32 @@ export function DeckPlayer({ deckId, cards, title, practice: startPractice = fal
         <span className="stage-title">{title}{practice ? ' · practising missed' : ''}</span>
         <span className="spacer" />
         {!done && <span className="stage-count mono">{pos + 1} / {round.length} · {right} right</span>}
+        {wasResumed && !done && (
+          <button type="button" className="btn ghost small" onClick={() => restart(cards, false)} title="Start the deck from the first card">
+            <RotateCcw />Start again
+          </button>
+        )}
+        <ChatButton notebookId={notebookId} where={title} tag={title} briefing={deckBriefing(title, card)} />
       </div>
       <div className="progress"><i style={{ width: `${(Math.min(pos, round.length) / Math.max(1, round.length)) * 100}%` }} /></div>
+      {asking && (
+        <AskAboutCard card={asking} deckTitle={title} notebookId={notebookId} onClose={() => setAsking(null)} />
+      )}
 
       {!done ? (
+        <AskableArea
+          className="review-askable"
+          notebookId={notebookId}
+          title="This card"
+          briefing={deckBriefing(title, card)}
+          starters={['Explain this', 'Why is that the answer?', 'Give me an example', 'How do I remember this?']}
+          target={{
+            kind: 'card',
+            label: title,
+            detail: card.topic || 'flashcard',
+            locator: { notebookId, deckId, cardId: card.id },
+          }}
+        >
         <div className="review">
           {card.topic && <div className="card-topic muted">{card.topic}</div>}
           <div
@@ -472,8 +659,25 @@ export function DeckPlayer({ deckId, cards, title, practice: startPractice = fal
               <span className="grade-icon"><Check /></span><span>Got it</span>
             </button>
           </div>
-          <p className="muted small review-keys"><kbd>space</kbd> flip · <kbd>1</kbd> missed · <kbd>2</kbd> got it · <kbd>esc</kbd> stop</p>
+          <div className="card-actions">
+            <button type="button" className="btn ghost" onClick={() => setAsking(card)}>
+              <MessageCircleQuestion />Ask AI about this card
+            </button>
+          </div>
+          <p className="muted small review-keys">
+            <kbd>space</kbd> flip · <kbd>1</kbd> missed · <kbd>2</kbd> got it · <kbd>shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd> move without marking · <kbd>esc</kbd> stop
+          </p>
+          <div className="quiz-footer">
+            <button type="button" className="btn ghost nav-prev" onClick={() => goTo(pos - 1)} disabled={pos === 0}>
+              <ChevronLeft />Previous
+            </button>
+            <span className="spacer" />
+            <button type="button" className="btn ghost nav-next" onClick={() => goTo(pos + 1)} disabled={pos + 1 > round.length}>
+              {pos + 1 >= round.length ? 'Skip to results' : 'Next'}<ChevronRight />
+            </button>
+          </div>
         </div>
+        </AskableArea>
       ) : (
         <div className="summary">
           <div className="summary-score">

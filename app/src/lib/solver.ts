@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Question, SubmitResult } from '../types';
 import {
-  aiChat, answersFromReply, applyDeduction, extractJsonObject, FORCE_PYTHON, FORCE_SUBMIT, getAiConfig,
-  gradeFeedback, learnFromResults, loadImages, needsPython, normalizeAnswers, PYTHON_TOOL, questionImages,
+  applyDeduction, extractJsonObject, getAiConfig,
+  gradeFeedback, learnFromResults, loadImages, needsPython, normalizeAnswers, questionImages,
   questionPrompt, SUBMIT_TOOL, systemPrompt, TRANSCRIBE_PROMPT, validateAnswers,
-  type AiConfig, type AiReply, type ApiContent, type ApiMessage, type ToolCall,
+  type AiConfig, type ApiContent, type ApiMessage,
 } from './ai';
-import { formatResult, pythonStatus, runPython, summarize, type PythonStatus } from './python';
+import { generate, generateText, generateVision } from './salem/generate';
+import { cancelRun } from './salem/runtime';
+import type { SalemEvent } from './salem/types';
+import { pythonStatus, type PythonStatus } from './python';
 import { fixAnswers } from './answer-fix';
 import { addUsage, bucketOf, emptyPair, fmtCost, fmtInt, pairCalls, pairCost, pairTotal, type Agg } from './usage';
 
@@ -35,6 +38,37 @@ export type SolverDeps = {
   recordUsage: (qnum: number, model: string, usage: unknown) => void;
   onQueueDone: (usage: { flash: Agg; pro: Agg }) => void;
 };
+
+/**
+ * The question and everything this thread has already said, as one task.
+ *
+ * The solver's thread is not a chat: it is one question worked at across
+ * several attempts, with corrections and grader feedback appended. Folding it
+ * into a single instruction keeps that order and keeps the question itself at
+ * the top, which is what the model needs to read first.
+ */
+function threadText(question: ApiContent, thread: ApiMessage[]): unknown[] {
+  const head = typeof question === 'string'
+    ? question
+    : question.filter((p) => p.type === 'text').map((p) => (p as { text: string }).text).join('\n');
+  const images = typeof question === 'string' ? [] : question.filter((p) => p.type === 'image_url');
+  const history = thread
+    .map((m) => {
+      const body = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+      return `${m.role === 'user' ? 'Feedback' : 'You said'}: ${body}`;
+    })
+    .join('\n\n');
+  return [
+    { type: 'text', text: history ? `${head}\n\n## What has happened so far\n${history}` : head },
+    ...images,
+  ];
+}
+
+/** One line about a Python run, for the solver's log. */
+function summarizeOutput(output: string): string {
+  const line = output.split('\n').map((l) => l.trim()).filter(Boolean).find((l) => !l.startsWith('stdout:')) ?? '';
+  return line ? line.slice(0, 160) : 'Ran Python';
+}
 
 let seq = 1;
 const entry = (e: Omit<ChatEntry, 'id'>): ChatEntry => ({ ...e, id: seq++ });
@@ -91,6 +125,9 @@ export function useSolver(deps: SolverDeps) {
   const transcriptRef = useRef<string | null>(null);
   const imagesRef = useRef<string[]>([]);
   const stopRef = useRef(false);
+  /** The runtime run in flight, so Stop reaches it and not only the loop. */
+  const runRef = useRef<string | null>(null);
+  const stopRun = () => { if (runRef.current) void cancelRun(runRef.current); };
   const approveRef = useRef(true);
   const pendingAdvanceRef = useRef(false);
   const runningRef = useRef(false);
@@ -113,10 +150,6 @@ export function useSolver(deps: SolverDeps) {
     const it = entry(e);
     setEntries((prev) => [...prev, it]);
     return it.id;
-  }, []);
-  /** Fill in an entry that was logged before its result existed (a Python run). */
-  const amend = useCallback((id: number, patch: Partial<ChatEntry>) => {
-    setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, ...patch } : e)));
   }, []);
 
   const reloadConfig = useCallback(async () => {
@@ -187,13 +220,11 @@ export function useSolver(deps: SolverDeps) {
     if (!cfg) return null;
     push({ role: 'system', kind: 'vision', tone: 'muted', text: 'Reading the figures with the Flash vision model…' });
     try {
-      const content: ApiContent = [
-        { type: 'text', text: `${questionPrompt(q, { images: false, transcript: null })}\n\n${TRANSCRIBE_PROMPT}` },
-        ...images.map((url) => ({ type: 'image_url' as const, image_url: { url } })),
-      ];
-      const r = await aiChat({ feature: 'solver', model: cfg.flashModel, messages: [{ role: 'user', content }], thinking: false });
-      trackUsage(cfg.flashModel, r.usage);
-      const t = r.content.trim();
+      const prompt = `${questionPrompt(q, { images: false, transcript: null })}\n\n${TRANSCRIBE_PROMPT}`;
+      const described = await Promise.all(
+        images.map((url) => generateVision({ feature: 'solver', prompt, image: url }).catch(() => '')),
+      );
+      const t = described.filter(Boolean).join('\n\n').trim();
       if (!t) return null;
       push({ role: 'system', kind: 'vision', tone: 'muted', text: `Figures read:\n${t}` });
       return t;
@@ -201,58 +232,6 @@ export function useSolver(deps: SolverDeps) {
       push({ role: 'system', kind: 'error', tone: 'bad', text: `Could not read the figures: ${errText(e)}` });
       return null;
     }
-  }
-
-  /** Run one snippet for the model, log it, and return what the model sees. */
-  async function callPython(code: string): Promise<string> {
-    const id = push({ role: 'assistant', kind: 'python', text: 'Running Python…', code, running: true });
-    try {
-      const r = await runPython(code, configRef.current?.pythonTimeout);
-      pyUsedRef.current = true;
-      amend(id, {
-        running: false,
-        text: summarize(r),
-        output: formatResult(r),
-        tone: r.ok ? 'ok' : 'bad',
-      });
-      return formatResult(r);
-    } catch (e) {
-      const msg = errText(e);
-      amend(id, { running: false, text: `Python could not run: ${msg}`, output: msg, tone: 'bad' });
-      // Tell the model instead of failing the attempt: it can still answer by
-      // hand, and a broken sandbox should not cost a WebAssign submission.
-      return `The sandbox could not run that code: ${msg}\nAnswer without Python.`;
-    }
-  }
-
-  /**
-   * Answer every tool call in one assistant turn, appending the assistant
-   * message and one reply per call — the API rejects the next request if a
-   * call is left unanswered. Returns how many snippets were actually run.
-   */
-  async function answerToolCalls(thread: ApiMessage[], calls: ToolCall[], content: string, budget: number): Promise<number> {
-    thread.push({ role: 'assistant', content: content ?? '', tool_calls: calls });
-    let used = 0;
-    for (const c of calls) {
-      const reply = (text: string) => thread.push({ role: 'tool', tool_call_id: c.id, name: c.function?.name, content: text });
-      if (c.function?.name !== 'run_python') {
-        reply(`There is no tool called "${c.function?.name}". Use run_python or submit_answers.`);
-        continue;
-      }
-      if (used >= budget) {
-        reply('The Python budget for this attempt is used up. Finish with what you have and call submit_answers now.');
-        continue;
-      }
-      const args = extractJsonObject(c.function.arguments ?? '');
-      const code = typeof args?.code === 'string' ? args.code : '';
-      if (!code.trim()) {
-        reply('No code was given. Send the snippet in the "code" argument.');
-        continue;
-      }
-      used += 1;
-      reply(await callPython(code));
-    }
-    return used;
   }
 
   async function solveCurrent(): Promise<SolverStatus> {
@@ -302,13 +281,6 @@ export function useSolver(deps: SolverDeps) {
         const content: ApiContent = useVision
           ? [{ type: 'text', text: firstUser }, ...imagesRef.current.map((url) => ({ type: 'image_url' as const, image_url: { url } }))]
           : firstUser;
-        const messages: ApiMessage[] = [
-          { role: 'system', content: systemPrompt(py) },
-          { role: 'user', content },
-          ...convoRef.current,
-        ];
-        // Anything appended past this point is this attempt's tool traffic.
-        const baseLen = messages.length;
         push({
           role: 'system',
           kind: 'solve',
@@ -316,51 +288,56 @@ export function useSolver(deps: SolverDeps) {
           text: `Attempt ${a + 1}/${cfg.maxAttempts} · ${model}${useVision ? ' · images' : ''}${py ? (forcePython ? ' · python (required)' : ' · python') : ''}`,
         });
 
-        // The model may run Python as often as its budget allows before it
-        // answers; `submit_answers` is what ends the turn.
-        const tools = py ? [PYTHON_TOOL, SUBMIT_TOOL] : [SUBMIT_TOOL];
+        // One run of the Salem runtime: it works the question out, running
+        // Python for the maths as often as its budget allows, and returns
+        // answers already checked against the shape the app can submit.
         const budget = py ? Math.max(1, cfg.pythonMaxCalls || 6) : 0;
-        let choice: unknown = py ? (forcePython ? FORCE_PYTHON : 'auto') : FORCE_SUBMIT;
-        let reply: AiReply | null = null;
+        const runId = crypto.randomUUID();
+        runRef.current = runId;
         let ranPython = 0;
-        let failed = false;
-        for (let round = 0; round < budget + 3; round++) {
+        let solved: { message?: unknown; answers?: unknown } | null = null;
+        try {
+          solved = await generate<{ message?: unknown; answers?: unknown }>({
+            feature: 'solver',
+            system: systemPrompt(py) + (forcePython ? '\n\nWork this question out in Python before answering. Do not answer from memory.' : ''),
+            instruction: threadText(content, convoRef.current),
+            schema: SUBMIT_TOOL.function.parameters,
+            run: runId,
+            python: { maxCalls: budget },
+            onTelemetry: (t) => trackUsage(model, { prompt_tokens: t.input_tokens, completion_tokens: t.output_tokens }),
+            onEvent: (event: SalemEvent) => {
+              if (event.kind !== 'python') return;
+              ranPython += 1;
+              pyUsedRef.current = true;
+              push({
+                role: 'assistant', kind: 'python',
+                text: event.status === 'ok' ? summarizeOutput(event.output) : 'Python failed',
+                tone: event.status === 'ok' ? 'ok' : 'bad',
+                code: event.code, output: event.output,
+              });
+              // What was computed belongs to the thread, so the next attempt
+              // does not work it out again.
+              convoRef.current.push({
+                role: 'assistant',
+                content: `[ran Python:\n${event.code}\n→ ${event.output.slice(0, 800)}]`,
+              });
+            },
+          });
+        } catch (e) {
+          runRef.current = null;
           if (stopRef.current) { setStat('stopped'); return 'stopped'; }
-          let turn: AiReply;
-          try {
-            turn = await aiChat({ feature: 'solver', model, messages, thinking: false, tools, toolChoice: choice });
-          } catch (e) {
-            push({ role: 'system', kind: 'error', tone: 'bad', text: errText(e) });
-            failed = true;
-            break;
-          }
-          trackUsage(model, turn.usage);
-          const calls = (turn.tool_calls ?? []).filter((c) => c.function?.name);
-          if (calls.some((c) => c.function.name === 'submit_answers')) { reply = turn; break; }
-          if (!calls.length) {
-            // Prose instead of an answer: keep it and ask for the answer.
-            messages.push({ role: 'assistant', content: turn.content ?? '' });
-            choice = FORCE_SUBMIT;
-            continue;
-          }
-          ranPython += await answerToolCalls(messages, calls, turn.content ?? '', budget - ranPython);
-          choice = ranPython >= budget ? FORCE_SUBMIT : 'auto';
+          push({ role: 'system', kind: 'error', tone: 'bad', text: errText(e) });
+          setStat('failed');
+          return 'failed';
         }
-        if (failed) { setStat('failed'); return 'failed'; }
+        runRef.current = null;
         if (stopRef.current) { setStat('stopped'); return 'stopped'; }
-        if (!reply) {
-          push({ role: 'system', kind: 'feedback', tone: 'bad', text: 'The model never came back with an answer — retrying.' });
-          convoRef.current = [];
-          attemptRef.current = a + 1;
-          setAttempt(a + 1);
-          continue;
-        }
-        // Everything the tool rounds added belongs to the thread, so the next
-        // attempt can see what was already computed.
-        convoRef.current.push(...messages.slice(baseLen));
         const usedPythonHere = ranPython > 0;
 
-        const parsed = answersFromReply(reply);
+        const parsed = {
+          message: String(solved?.message ?? ''),
+          answers: (solved?.answers && typeof solved.answers === 'object' ? solved.answers : null) as Record<string, unknown> | null,
+        };
         const proposed = parsed.answers ? normalizeAnswers(q, parsed.answers) : {};
         // Strip anything the question already prints around a box before it
         // can cost a submission.
@@ -375,13 +352,10 @@ export function useSolver(deps: SolverDeps) {
           });
         }
         const hasAnswers = Object.keys(answers).length > 0;
-        push({ role: 'assistant', kind: 'solve', text: parsed.message || '(no explanation)', answers: hasAnswers ? answers : null, model: reply.model || model });
-        // The answer came back as a tool call, so the thread keeps a plain
-        // transcript of it rather than an unanswered call.
-        convoRef.current.push({
-          role: 'assistant',
-          content: reply.content?.trim() || JSON.stringify({ message: parsed.message, answers }),
-        });
+        push({ role: 'assistant', kind: 'solve', text: parsed.message || '(no explanation)', answers: hasAnswers ? answers : null, model });
+        // The answer arrived as structured data; the thread keeps a plain
+        // transcript of it.
+        convoRef.current.push({ role: 'assistant', content: JSON.stringify({ message: parsed.message, answers }) });
         for (const note of notes) push({ role: 'system', kind: 'feedback', tone: 'muted', text: note });
         attemptRef.current = a + 1;
         setAttempt(a + 1);
@@ -523,7 +497,7 @@ export function useSolver(deps: SolverDeps) {
 
   /** Skip the current question and continue with the queue. */
   async function nextQuestion() {
-    if (runningRef.current) { pendingAdvanceRef.current = true; stopRef.current = true; return; }
+    if (runningRef.current) { pendingAdvanceRef.current = true; stopRef.current = true; stopRun(); return; }
     finalizeQuestion();
     stopRef.current = false;
     await advanceQueue();
@@ -531,6 +505,7 @@ export function useSolver(deps: SolverDeps) {
 
   function stop() {
     stopRef.current = true;
+    stopRun();
     pendingAdvanceRef.current = false;
     queueRef.current = [];
     setQueue([]);
@@ -577,35 +552,38 @@ export function useSolver(deps: SolverDeps) {
     if (!cfg?.hasKey) { push({ role: 'system', kind: 'error', tone: 'bad', text: 'No DeepSeek API key set.' }); return; }
     const q = qnumRef.current != null ? depsRef.current.questionOf(qnumRef.current) : undefined;
     const py = pythonOn();
-    const messages: ApiMessage[] = [{ role: 'system', content: systemPrompt(py) }];
-    if (q) messages.push({ role: 'user', content: questionPrompt(q, { images: false, transcript: transcriptRef.current }) });
-    messages.push(...convoRef.current);
-    const baseLen = messages.length;
     const budget = py ? Math.max(1, cfg.pythonMaxCalls || 6) : 0;
+    const head = q ? questionPrompt(q, { images: false, transcript: transcriptRef.current }) : 'No question is open.';
+    const runId = crypto.randomUUID();
+    runRef.current = runId;
     try {
-      // The chat can compute too: it keeps answering tool calls until the
-      // model writes a normal reply.
-      let used = 0;
-      for (let round = 0; round < budget + 1; round++) {
-        const r = await aiChat({ feature: 'solver',
-          model: cfg.flashModel,
-          messages,
-          thinking: false,
-          tools: py ? [PYTHON_TOOL] : undefined,
-        });
-        trackUsage(cfg.flashModel, r.usage);
-        const calls = (r.tool_calls ?? []).filter((c) => c.function?.name === 'run_python');
-        if (calls.length && used < budget) {
-          used += await answerToolCalls(messages, calls, r.content ?? '', budget - used);
-          continue;
-        }
-        convoRef.current.push(...messages.slice(baseLen), { role: 'assistant', content: r.content });
-        push({ role: 'assistant', kind: 'chat', text: r.content.trim() || '(empty)', model: r.model });
-        return;
-      }
-      push({ role: 'system', kind: 'feedback', tone: 'bad', text: 'The model kept calling Python without answering. Ask again.' });
+      // Talking about the question is a chat, not a solve: the runtime can
+      // still compute, but nothing here touches the answer boxes.
+      const text = await generateText({
+        feature: 'solver',
+        system: systemPrompt(py),
+        instruction: threadText(head, convoRef.current),
+        run: runId,
+        python: { maxCalls: budget },
+        onTelemetry: (t) => trackUsage(cfg.flashModel, { prompt_tokens: t.input_tokens, completion_tokens: t.output_tokens }),
+        onEvent: (event: SalemEvent) => {
+          if (event.kind !== 'python') return;
+          pyUsedRef.current = true;
+          push({
+            role: 'assistant', kind: 'python',
+            text: event.status === 'ok' ? summarizeOutput(event.output) : 'Python failed',
+            tone: event.status === 'ok' ? 'ok' : 'bad',
+            code: event.code, output: event.output,
+          });
+          convoRef.current.push({ role: 'assistant', content: `[ran Python:\n${event.code}\n→ ${event.output.slice(0, 800)}]` });
+        },
+      });
+      convoRef.current.push({ role: 'assistant', content: text });
+      push({ role: 'assistant', kind: 'chat', text: text.trim() || '(empty)', model: cfg.flashModel });
     } catch (e) {
       push({ role: 'system', kind: 'error', tone: 'bad', text: errText(e) });
+    } finally {
+      runRef.current = null;
     }
   }
 

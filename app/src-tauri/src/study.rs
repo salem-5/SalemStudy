@@ -10,6 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
+use serde_json::Value;
 use tauri::{AppHandle, Manager, State};
 
 pub mod cards;
@@ -336,6 +337,57 @@ CREATE TABLE memory (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
+"#,
+// 9: the Salem AI runtime's own state — the working memory a long task carries
+// between runs, and the execution metrics behind Settings → AI.
+r#"
+CREATE TABLE salem_task (
+  task_id TEXT PRIMARY KEY,
+  state_json TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE salem_run (
+  id INTEGER PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  feature TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL DEFAULT '',
+  duration_ms INTEGER NOT NULL DEFAULT 0,
+  steps INTEGER NOT NULL DEFAULT 0,
+  tool_calls INTEGER NOT NULL DEFAULT 0,
+  tool_failures INTEGER NOT NULL DEFAULT 0,
+  python_calls INTEGER NOT NULL DEFAULT 0,
+  python_failures INTEGER NOT NULL DEFAULT 0,
+  retrieval_failures INTEGER NOT NULL DEFAULT 0,
+  subagents INTEGER NOT NULL DEFAULT 0,
+  retries INTEGER NOT NULL DEFAULT 0,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX salem_run_created ON salem_run(created_at);
+-- Mutating tool calls that already happened, so a retry cannot apply the same
+-- change twice.
+CREATE TABLE salem_applied (
+  idem TEXT PRIMARY KEY,
+  tool TEXT NOT NULL,
+  result_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+"#,
+// 10: finished focus sessions, so the activity map counts the time the
+// student actually sat down to work, not only what they produced.
+r#"
+CREATE TABLE focus_session (
+  id INTEGER PRIMARY KEY,
+  phase TEXT NOT NULL,
+  started_at INTEGER NOT NULL,
+  finished_at INTEGER NOT NULL,
+  minutes INTEGER NOT NULL,
+  tasks_done INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX focus_session_finished ON focus_session(finished_at);
 "#];
 
 /// How many migrations this build knows; files from a newer build are refused.
@@ -529,11 +581,21 @@ pub fn study_update_subject(
     expect_one(changed, "Subject")
 }
 
+/// Delete a course and everything that only existed because of it: its
+/// notebooks (by cascade), its syllabus, and its place in the calendar.
+///
+/// One transaction, because the calendar entries can only be recognised while
+/// the subject is still there — losing them without losing the course would
+/// be worse than either on its own.
 #[tauri::command]
 pub fn study_delete_subject(app: AppHandle, db: State<'_, StudyDb>, id: i64) -> Result<(), String> {
     let changed = with_db(&app, &db, |c| {
-        syllabus::delete_file_of(c, id)?;
-        c.execute("DELETE FROM subject WHERE id = ?1", [id])
+        let tx = c.unchecked_transaction()?;
+        syllabus::delete_file_of(&tx, id)?;
+        events::delete_for_subject(&tx, id)?;
+        let changed = tx.execute("DELETE FROM subject WHERE id = ?1", [id])?;
+        tx.commit()?;
+        Ok(changed)
     })?;
     expect_one(changed, "Subject")
 }
@@ -599,10 +661,117 @@ pub fn activity(app: AppHandle, db: State<'_, StudyDb>, since: i64) -> Result<Ve
              UNION ALL SELECT finished_at FROM quiz_attempt WHERE finished_at >= ?1
              UNION ALL SELECT m.created_at FROM message m WHERE m.role = 'user' AND m.created_at >= ?1
              UNION ALL SELECT created_at FROM note WHERE created_at >= ?1
-             UNION ALL SELECT created_at FROM source WHERE created_at >= ?1",
+             UNION ALL SELECT created_at FROM source WHERE created_at >= ?1
+             UNION ALL SELECT finished_at FROM focus_session WHERE finished_at >= ?1",
         )?;
         let times = stmt.query_map([since], |r| r.get(0))?.collect::<Result<_, _>>()?;
         Ok(times)
+    })
+}
+
+/// What was studied on a given day, and where.
+///
+/// The heatmap knows only that *something* happened; this is what makes a
+/// square worth clicking. One row per action, with the notebook and subject
+/// it belonged to, so the day can be read back as "Calculus II — Midterm
+/// Review: a quiz and nine cards".
+#[tauri::command]
+pub fn activity_detail(app: AppHandle, db: State<'_, StudyDb>, from: i64, to: i64) -> Result<Vec<Value>, String> {
+    with_db(&app, &db, |c| {
+        let mut stmt = c.prepare(
+            "SELECT * FROM (
+               SELECT r.reviewed_at AS at, 'card' AS kind, n.id AS notebook_id, n.name AS notebook, s.name AS subject
+                 FROM card_review r
+                 JOIN card cd ON cd.id = r.card_id
+                 JOIN notebook n ON n.id = cd.notebook_id
+                 JOIN subject s ON s.id = n.subject_id
+                WHERE r.reviewed_at >= ?1 AND r.reviewed_at < ?2
+               UNION ALL
+               SELECT a.finished_at, 'quiz', n.id, n.name, s.name
+                 FROM quiz_attempt a
+                 JOIN notebook n ON n.id = a.notebook_id
+                 JOIN subject s ON s.id = n.subject_id
+                WHERE a.finished_at >= ?1 AND a.finished_at < ?2
+               UNION ALL
+               SELECT m.created_at, 'chat', n.id, n.name, s.name
+                 FROM message m
+                 JOIN conversation cv ON cv.id = m.conversation_id
+                 JOIN notebook n ON n.id = cv.notebook_id
+                 JOIN subject s ON s.id = n.subject_id
+                WHERE m.role = 'user' AND m.created_at >= ?1 AND m.created_at < ?2
+               UNION ALL
+               SELECT nt.created_at, 'note', n.id, n.name, s.name
+                 FROM note nt
+                 JOIN notebook n ON n.id = nt.notebook_id
+                 JOIN subject s ON s.id = n.subject_id
+                WHERE nt.created_at >= ?1 AND nt.created_at < ?2
+               UNION ALL
+               SELECT src.created_at, 'source', n.id, n.name, s.name
+                 FROM source src
+                 JOIN notebook n ON n.id = src.notebook_id
+                 JOIN subject s ON s.id = n.subject_id
+                WHERE src.created_at >= ?1 AND src.created_at < ?2
+               UNION ALL
+               -- Focus sessions belong to no notebook; they are the day's own work.
+               SELECT f.finished_at, 'focus', NULL, NULL, NULL
+                 FROM focus_session f
+                WHERE f.finished_at >= ?1 AND f.finished_at < ?2
+             ) ORDER BY at",
+        )?;
+        let rows = stmt
+            .query_map(params![from, to], |r| {
+                Ok(serde_json::json!({
+                    "at": r.get::<_, i64>(0)?,
+                    "kind": r.get::<_, String>(1)?,
+                    "notebookId": r.get::<_, Option<i64>>(2)?,
+                    "notebook": r.get::<_, Option<String>>(3)?,
+                    "subject": r.get::<_, Option<String>>(4)?,
+                }))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    })
+}
+
+/// Record a focus session the student actually finished.
+///
+/// Only completed sessions count: a timer that was reset or skipped is not
+/// study, and counting it would flatter the activity map into uselessness.
+#[tauri::command]
+pub fn focus_session_add(
+    app: AppHandle,
+    db: State<'_, StudyDb>,
+    phase: String,
+    started_at: i64,
+    finished_at: i64,
+    tasks_done: i64,
+) -> Result<(), String> {
+    if phase != "focus" {
+        // Breaks are part of the method, not study time.
+        return Ok(());
+    }
+    let minutes = ((finished_at - started_at).max(0)) / 60_000;
+    if minutes < 1 {
+        return Ok(());
+    }
+    with_db(&app, &db, |c| {
+        c.execute(
+            "INSERT INTO focus_session (phase, started_at, finished_at, minutes, tasks_done) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![phase, started_at, finished_at, minutes, tasks_done.max(0)],
+        )?;
+        Ok(())
+    })
+}
+
+/// Focus minutes per day since `since`, for the analytics view.
+#[tauri::command]
+pub fn focus_minutes(app: AppHandle, db: State<'_, StudyDb>, since: i64) -> Result<Vec<(i64, i64)>, String> {
+    with_db(&app, &db, |c| {
+        let mut stmt = c.prepare(
+            "SELECT finished_at, minutes FROM focus_session WHERE finished_at >= ?1 ORDER BY finished_at",
+        )?;
+        let rows = stmt.query_map([since], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?;
+        Ok(rows)
     })
 }
 
@@ -614,6 +783,37 @@ mod tests {
         let c = Connection::open_in_memory().unwrap();
         prepare(&c).unwrap();
         c
+    }
+
+    /// Only finished focus sessions count as study, and the activity feed
+    /// has to see them alongside everything else.
+    #[test]
+    fn focus_sessions_are_recorded_and_show_up_in_activity() {
+        let c = mem();
+        let add = |phase: &str, start: i64, end: i64| {
+            let minutes = ((end - start).max(0)) / 60_000;
+            if phase != "focus" || minutes < 1 {
+                return 0usize;
+            }
+            c.execute(
+                "INSERT INTO focus_session (phase, started_at, finished_at, minutes, tasks_done) VALUES (?1, ?2, ?3, ?4, 0)",
+                rusqlite::params![phase, start, end, minutes],
+            )
+            .unwrap()
+        };
+        assert_eq!(add("focus", 0, 25 * 60_000), 1, "a finished focus session is study");
+        assert_eq!(add("short", 0, 5 * 60_000), 0, "a break is not");
+        assert_eq!(add("focus", 0, 30_000), 0, "half a minute is not a session");
+
+        let total: i64 = c
+            .query_row("SELECT COALESCE(SUM(minutes), 0) FROM focus_session", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(total, 25);
+
+        let seen: i64 = c
+            .query_row("SELECT COUNT(*) FROM focus_session WHERE finished_at >= 0", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(seen, 1);
     }
 
     #[test]

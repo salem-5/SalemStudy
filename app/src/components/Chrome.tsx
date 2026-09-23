@@ -1,4 +1,5 @@
 import { RotateCw, Settings as SettingsIcon } from 'lucide-react';
+import { Select } from './Select';
 import type { AssignmentList, AssignmentSummary, BridgeInfo, Course, Status } from '../types';
 import { fmtDue, parseDue, relTime } from '../lib/format';
 import { AssignmentListSkeleton } from './Skeleton';
@@ -19,11 +20,8 @@ export function Sidebar({ list, loading, selected, multi, onSelect, courses, sec
   return (
     <aside className="sidebar">
       <div className="side-top">
-        <select value={section ?? ''} onChange={(e) => onSection(e.target.value)} title="Course">
-          {courses.map((c) => (
-            <option key={c.id} value={c.sectionId}>{c.course} · {c.section} · {c.term}</option>
-          ))}
-        </select>
+        <Select className="select side-course" value={section ?? ''} onChange={onSection} title="Course"
+          options={courses.map((c) => ({ value: c.sectionId, label: `${c.course} · ${c.section}`, text: c.course, hint: c.term }))} />
         <button type="button" className="icon-btn" onClick={onRefresh} title="Reload assignment list"><RotateCw /></button>
       </div>
       {loading && !list && <AssignmentListSkeleton />}

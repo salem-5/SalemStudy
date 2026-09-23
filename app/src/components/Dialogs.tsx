@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { POPOVER_OPEN } from './Select';
 import { X } from 'lucide-react';
 import type { Box, Draft, DryRun, Question } from '../types';
 import { MathView } from './MathView';
@@ -11,7 +12,10 @@ export function Modal({ title, onClose, children, wide }: { title: string; onClo
   useEffect(() => {
     // Keep focus on an autoFocus field inside the dialog; otherwise take it for Escape.
     if (!ref.current?.contains(document.activeElement)) ref.current?.focus();
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } };
+    const onKey = (e: KeyboardEvent) => {
+      // An open dropdown inside the dialog takes Esc for itself.
+      if (e.key === 'Escape' && !document.documentElement.hasAttribute(POPOVER_OPEN)) { e.preventDefault(); onClose(); }
+    };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [onClose]);

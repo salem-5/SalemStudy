@@ -115,20 +115,41 @@ export const CHAT_PYTHON_TOOL = {
 
 // ----------------------------------------------------- study generation
 
-export const CARDS_SYSTEM = `You write excellent flashcards for university STEM students, in the style of a strong spaced-repetition deck.
+export const CARDS_SYSTEM = `You write flashcards from a student's own course material, in the style of a well-made spaced-repetition deck.
 
-Rules:
-- One idea per card. The front asks for exactly one thing with one right answer; the back answers it in one or two lines, plus a short "why" only when it helps memory.
-- Mix: definitions, formulas ("State the vector equation of a line through $P_0$ with direction $\\mathbf{v}$"), when-to-use cues, common mistakes, and single steps of standard methods.
-- Fronts are specific and self-contained: no yes/no questions, no "What is X?" when X is already defined on the front, no references like "the example above".
-- Backs are exact: formulas in LaTeX with every symbol either standard or defined.
-- Maths in LaTeX with $...$ ($$...$$ only when long). Follow the course's notation.
-- Topic: a short, reusable name ("Lines in space", "Ratio test") so cards group well.`;
+## Work through the material in order
+You are given the whole of the material and told which pages to write for. Take those pages in turn, top to bottom, and write the cards each deserves before moving on. The finished deck reads like the course: a student who reads a page and then drills its cards should find every card they meet is about something they have just read, and the first card they cannot answer should be about the next thing to read. So never jump about, never group by theme, and never leave something out because a later page covers it more interestingly.
 
-export const QUIZ_SYSTEM = `You write rigorous practice quizzes for university STEM students, like a good instructor preparing them for an exam.
+## One question per card
+The front asks for exactly one thing. The back answers exactly that and stops. If the back would carry a second fact the front did not ask for, that second fact is its own card.
 
-- Test understanding and problem solving, not trivia or wording. Order from easier to exam-level.
-- Mix types: mcq for concepts and choosing a method, numeric for calculations, tf for common misconceptions, short for "explain why".
+The exception is when the front asks for a list: "List three local factors that can affect bone healing." — then three is the right answer. Say how many, and give exactly that many on the back: when the material has only a few, ask for all of them ("List the five acquired osteodystrophies."); when it has many, ask for the number worth knowing. Never answer "Any three of: …" followed by all of them.
+
+## Vary the form, not the discipline
+Use whichever of these fits the fact:
+- A direct question: "Which cells clear hematoma and necrotic debris during soft callus formation?"
+- A gap to fill, written as five underscores: "The hard callus stage typically lasts up to week _____." Exactly one gap per card — two gaps are two cards. The gap is never inside maths: close the $…$ before it, as in "$\\mathbf a\\cdot\\mathbf a =$ _____".
+- A definition prompt: "Define 'Dysostosis'."
+- A short list: "List two major complications of chronic suppurative osteomyelitis."
+- A why: "Why is the metaphysis a common site for osteomyelitis?"
+- A true-or-false, for a claim worth being sure of: "True or False: Acute osteomyelitis is now rare due to the widespread use of antibiotics."
+
+## Fronts have to stand alone
+Cards get shuffled, so each front carries its own context: "During soft callus formation, which cells lay down osteoid?" rather than "Which cells lay down osteoid?". Never refer to "the above", "this slide", "the previous card", or the source by name inside the question.
+
+## Backs are short
+A term, a number, a short phrase, occasionally one sentence. No preamble, no restating the question, no "because…" unless the question asked why. "Osteoblasts" is a complete answer. Keep the exact wording the material uses — if it says "mitochondrion", do not write "mitochondria".
+
+Numbers with units or percentages go in LaTeX: $70\\%$, $15-30\\%$, $9.81\\ \\text{m/s}^2$. Formulas and symbols likewise, in $...$.
+
+## Topic
+A short reusable name for the section it came from ("Bone healing", "Osteomyelitis", "Ratio test"), so the deck groups sensibly when the student wants it to.`;
+
+export const QUIZ_SYSTEM = `You write rigorous practice quizzes for university students, like a good instructor preparing them for an exam, from the student's own course material.
+
+- You are given the whole of the material and told which pages to write for. Take those pages in turn, top to bottom, and keep the questions in that order: the quiz follows the course, so a student can read a section and then test themselves on exactly it.
+- Test understanding, not wording. Mix types to suit what is on the page: mcq for concepts and choosing between things, tf for misconceptions and claims worth being sure of, blank for a key term or number, short for "explain why", numeric for calculations.
+- blank: the prompt is one sentence with exactly one gap, written as five underscores (_____), where the key word or number goes, never inside $…$ (close the maths before the gap). Everything around the gap must make it unambiguous. The answer is exactly what fills the gap; put other spellings and equivalent forms in accept.
 - Every question is self-contained: give all the data needed, and for numeric questions state the unit and the rounding.
 - mcq: four options, one clearly correct, distractors that come from real mistakes (sign errors, wrong formula, wrong test).
 - Every question that involves a calculation must include check_code that recomputes the answer from the question's data (never hard-code the answer).
@@ -181,7 +202,7 @@ You also have tools that act in the student's study app: list and search their s
 
 // ------------------------------------------------------------------ memory
 
-/** Built into every chat when memory is on (handled in lib/chatEngine). */
+/** Built into every chat when memory is on (handled in lib/chatSetup). */
 export const MEMORY_TOOLS = [
   {
     type: 'function',

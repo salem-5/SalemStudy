@@ -4,6 +4,8 @@ import { highlight } from './highlight';
 import katex from 'katex';
 import DOMPurify from 'dompurify';
 import 'katex/dist/katex.min.css';
+import { repairTex } from './mathText';
+export { asMath } from './mathText';
 
 /**
  * Markdown with LaTeX for model output, cards and quiz questions. Maths is
@@ -16,15 +18,25 @@ const MATH = [
   { re: /\$\$([\s\S]+?)\$\$/g, display: true },
   { re: /\\\[([\s\S]+?)\\\]/g, display: true },
   { re: /\\\(([\s\S]+?)\\\)/g, display: false },
+  // Inline $…$ that ends in a space before its closing $ — "$\mathbf a\cdot
+  // \mathbf a = $ _____", where a fill-the-gap card stops the maths short of
+  // its gap. Pandoc's rule would leave it as raw LaTeX; a LaTeX command inside
+  // says it is maths, and a price never has one.
+  { re: /(?<![\\$\w])\$(?!\s)([^$\n]*?\\[a-zA-Z]+[^$\n]*?)\s+\$(?![\w$])/g, display: false },
   // Inline $…$: not $ followed by a digit-and-space (prices), no newline inside.
   { re: /(?<![\\$\w])\$(?!\s)([^$\n]+?)(?<!\s)\$(?![\w$])/g, display: false },
 ];
 
+const escHtml = (t: string) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!);
+
 function renderMath(tex: string, display: boolean): string {
+  const options = { displayMode: display, throwOnError: true, output: 'html' as const, strict: 'ignore' as const };
   try {
-    return katex.renderToString(tex.trim(), { displayMode: display, throwOnError: false, output: 'html', strict: 'ignore' });
+    return katex.renderToString(repairTex(tex.trim()), options);
   } catch {
-    return `<code>${tex.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!)}</code>`;
+    // Maths that still will not parse is shown as the text it is, quietly,
+    // rather than as KaTeX's red error — the student can still read it.
+    return `<span class="math-raw" title="This formula could not be typeset">${escHtml(tex.trim())}</span>`;
   }
 }
 

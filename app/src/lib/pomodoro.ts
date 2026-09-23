@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
+import { studyApi } from '../study/api';
 
 /**
  * Pomodoro timer: focus → short break → … → long break every N focuses.
@@ -115,6 +116,13 @@ function finish(completed: boolean) {
     alarm: completed ? { ended, next } : null,
   });
   if (completed) ring();
+  // A focus session the student saw through is study time, and the activity
+  // map should show it. Breaks and abandoned timers are not recorded.
+  if (completed && ended === 'focus' && state.startedAt) {
+    void studyApi
+      .addFocusSession(ended, state.startedAt, now, doneIds.length)
+      .catch(() => { /* the timer must not fail because the log did */ });
+  }
 }
 
 // --------------------------------------------------------------- actions

@@ -7,7 +7,12 @@
     "sync-mathpad": "node scripts/sync-mathpad.mjs",
     "dev": "node scripts/sync-mathpad.mjs && vite",
     "build": "node scripts/sync-mathpad.mjs && tsc -b && vite build",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "node --test --experimental-strip-types 'src/**/*.test.ts'",
+    "test:rust": "cd src-tauri && cargo test",
+    "test:ai": "node scripts/test-ai.mjs",
+    "test:ai:live": "python3 scripts/live-ai.py",
+    "test:ai:app": "VITE_SELFTEST=1 npm run tauri dev"
   },
   "dependencies": {
     "@assistant-ui/react": "^0.15.21",

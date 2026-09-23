@@ -6,10 +6,33 @@ import { api, useHttpTransport } from './api';
 import './wa-base.css';
 import './styles.css';
 import { initTheme } from './lib/theme';
+import { inTabMode, installTabTransport, tabToken } from './lib/tabClient';
+import { installTabHost } from './lib/tabHost';
 
 initTheme();
 
+function fatal(message: string) {
+  const root = document.getElementById('root');
+  if (root) {
+    root.innerHTML = '';
+    const box = document.createElement('div');
+    box.className = 'boot-error';
+    box.textContent = message;
+    root.append(box);
+  }
+}
+
 async function boot() {
+  // Served by the app's own tab-mode server: talk to it over HTTP instead of
+  // through Tauri. Everything above this line is the same app.
+  if (inTabMode()) {
+    try {
+      await installTabTransport(tabToken()!);
+    } catch (e) {
+      fatal(String(e instanceof Error ? e.message : e));
+      return;
+    }
+  }
   // No native WebView context menu in the app chrome; the app supplies its own
   // menus. Text fields keep theirs so paste still works.
   document.addEventListener('contextmenu', (e) => {
@@ -32,6 +55,18 @@ async function boot() {
       installDevAi();
     }
     installStudyMock();
+  }
+  // In the desktop app, stand ready to answer for any browser tabs.
+  if ('__TAURI_INTERNALS__' in window && !inTabMode()) {
+    void installTabHost().catch(() => {});
+  }
+  // Dev-only: VITE_SELFTEST=1 runs the in-app AI smoke test (src/devSelfTest.ts).
+  if (import.meta.env.DEV && import.meta.env.VITE_SELFTEST === '1') {
+    void import('./devSelfTest').then((m) => m.runSelfTest());
+  }
+  // Dev-only: VITE_SELFTEST=walk runs the page-walk benchmark on one source.
+  if (import.meta.env.DEV && import.meta.env.VITE_SELFTEST === 'walk') {
+    void import('./devSelfTest').then((m) => m.runWalkBenchmark(import.meta.env.VITE_SELFTEST_SOURCE ?? 'MSK'));
   }
   createRoot(document.getElementById('root')!).render(
     <StrictMode>

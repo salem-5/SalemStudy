@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
-import { aiChat, getAiConfig, toSupportedImage } from './ai';
+import { toSupportedImage } from './ai';
+import { generateVision } from './salem/generate';
 import { pythonStatus, runPython, sandboxName } from './python';
 import { studyApi, type Source, type SourceKind } from '../study/api';
 
@@ -74,17 +75,9 @@ const FIGURE_PROMPT = `Describe the figures, graphs, diagrams, tables and pictur
 Output only the description.`;
 
 async function vision(dataUrl: string, prompt: string): Promise<string> {
-  const cfg = await getAiConfig();
-  if (!cfg.hasKey) throw new Error('Reading images needs a DeepSeek API key (Settings).');
   const url = await toSupportedImage(dataUrl);
   if (!url) throw new Error('This image format cannot be read.');
-  const r = await aiChat({
-    feature: 'sources',
-    model: cfg.flashModel,
-    thinking: false,
-    messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url } }] }],
-  });
-  return r.content.trim();
+  return generateVision({ feature: 'sources', prompt, image: url });
 }
 
 export const transcribe = (dataUrl: string) => vision(dataUrl, VISION_PROMPT);
@@ -143,7 +136,54 @@ for i in ${JSON.stringify(batch)}:
       stage(`looking at pages with figures (${done}/${visual.length})`);
     });
   }
-  return pages.map((p, i) => ({ label: `Page ${i + 1}`, text: p.text }));
+  const units = pages.map((p, i) => ({ label: `Page ${i + 1}`, text: p.text }));
+  await saveReport(s.id, units, {
+    transcribed: visual.filter((i) => pages[i].scan).length,
+    described: visual.filter((i) => pages[i].figure).length,
+    skipped: Math.max(0, pages.filter((p) => p.scan || p.figure).length - visual.length),
+  });
+  return units;
+}
+
+/**
+ * What reading this source was actually like.
+ *
+ * A page that came back empty looks exactly like a page that was blank, and a
+ * scan whose transcription failed looks like a page with nothing on it. That
+ * silence is the failure mode worth catching: the report says which pages are
+ * empty, which had to be looked at, and whether two pages came back identical
+ * — the sign of an extractor repeating itself.
+ */
+async function saveReport(
+  sourceId: number,
+  units: Unit[],
+  extra: { transcribed?: number; described?: number; skipped?: number } = {},
+): Promise<void> {
+  const empty: number[] = [];
+  const seen = new Map<string, number>();
+  const duplicated: number[] = [];
+  units.forEach((u, i) => {
+    const text = u.text.trim();
+    if (!text) {
+      empty.push(i + 1);
+      return;
+    }
+    // Identical long pages are the extractor stuttering, not the document.
+    if (text.length > 200) {
+      const first = seen.get(text);
+      if (first !== undefined) duplicated.push(i + 1);
+      else seen.set(text, i + 1);
+    }
+  });
+  const report = {
+    pages: units.length,
+    characters: units.reduce((n, u) => n + u.text.length, 0),
+    empty,
+    duplicated,
+    ...extra,
+    at: Date.now(),
+  };
+  await studyApi.setSourceReport(sourceId, report).catch(() => {});
 }
 
 async function extractSlides(s: Source, stage: (t: string) => void): Promise<Unit[]> {
@@ -314,6 +354,9 @@ export async function ingest(s: Source, file?: File): Promise<Source> {
       if (yt.title && (s.title === s.url || !s.title)) await studyApi.renameSource(s.id, yt.title.slice(0, 200));
     } else throw new Error('This file type cannot be read.');
     if (!units.some((u) => u.text.trim())) throw new Error('No text could be read from this source.');
+    // Anything that did not write its own report gets the basic one, so every
+    // source can say how its reading went.
+    if (s.kind !== 'pdf') await saveReport(s.id, units);
     stage('indexing');
     return await studyApi.setSourceContent(s.id, units);
   } catch (e) {

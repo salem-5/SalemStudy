@@ -1,18 +1,21 @@
-import { useEffect, useRef, useState } from 'react';
-import { Download, Monitor, Moon, Search, Settings as SettingsIcon, Sun, TriangleAlert, Upload, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Select } from './Select';
+import { Download, Monitor, Moon, RectangleHorizontal, Search, Settings as SettingsIcon, Square, Sun, TriangleAlert, Upload, X } from 'lucide-react';
 import type { Box, Question } from '../types';
 import type { ChatEntry, useSolver } from '../lib/solver';
-import { deepseekBalance, getAiConfig, setAiConfig, type AiConfig, type Balance, type ConfigPatch } from '../lib/ai';
+import { deepseekBalance, getAiConfig, setAiConfig, type AiConfig, type Balance, type ConfigPatch, type Effort } from '../lib/ai';
 import { onPythonProgress, pythonSetup, pythonStatus, type PythonStatus } from '../lib/python';
 import { fmtCost, fmtInt, type UsageRecord } from '../lib/usage';
 import { refetchesLeft } from '../lib/cache';
 import { MathView } from './MathView';
 import { Modal } from './Dialogs';
+import { invoke } from '@tauri-apps/api/core';
+import { restartRuntime, runtimeStatus, runtimeTelemetry, type RuntimeStatus } from '../lib/salem/runtime';
 import { studyApi, type MemoryState, type UsageSummary } from '../study/api';
 import { setSolverEnabled, useSolverEnabled } from '../lib/features';
 import { exportData, fmtBytes, importData, pickImport, resetData, type ExportInfo } from '../lib/dataFile';
 import { TONES, setPersonal, usePersonal } from '../lib/personal';
-import { ACCENTS, setAccentPref, setThemePref, useAccentPref, useThemePref, type ThemePref } from '../lib/theme';
+import { ACCENTS, PALETTES, paletteOf, setAccentPref, setShapePref, setThemePref, useAccentPref, useShapePref, useThemePref, type Palette, type ShapePref } from '../lib/theme';
 
 type Solver = ReturnType<typeof useSolver>;
 
@@ -353,6 +356,8 @@ function PythonSection({ cfg, patch, onChanged, solverOn }: {
       // The interpreter override has to be on disk before setup reads it.
       await setAiConfig({ pythonPath: cfg.path });
       setStatus(await pythonSetup(repair));
+      // Whatever was installed only reaches the AI runtime after it restarts.
+      await invoke('salem_restart').catch(() => {});
       onChanged();
     } catch (e) {
       setErr(errText(e));
@@ -440,6 +445,7 @@ export function AiSettingsDialog({ onClose, onSaved, onClearCache, onPythonChang
   const [base, setBase] = useState('');
   const [maxA, setMaxA] = useState(4);
   const [pause, setPause] = useState(2);
+  const [effort, setEffort] = useState<Effort>('low');
   const [py, setPy] = useState({ enabled: true, auto: true, path: '', timeout: 25, maxCalls: 6 });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -452,6 +458,7 @@ export function AiSettingsDialog({ onClose, onSaved, onClearCache, onPythonChang
     setBase(c.baseUrl);
     setMaxA(c.maxAttempts);
     setPause(c.pauseAfter);
+    setEffort(c.effort ?? 'low');
     setPy({
       enabled: c.pythonEnabled,
       auto: c.pythonAuto,
@@ -470,7 +477,7 @@ export function AiSettingsDialog({ onClose, onSaved, onClearCache, onPythonChang
     setErr(null);
     try {
       const patch: ConfigPatch = {
-        flashModel: flash, proModel: pro, baseUrl: base, maxAttempts: maxA, pauseAfter: pause,
+        flashModel: flash, proModel: pro, baseUrl: base, maxAttempts: maxA, pauseAfter: pause, effort,
         pythonEnabled: py.enabled, pythonAuto: py.auto, pythonPath: py.path,
         pythonTimeout: py.timeout, pythonMaxCalls: py.maxCalls,
       };
@@ -551,6 +558,8 @@ export function AiSettingsDialog({ onClose, onSaved, onClearCache, onPythonChang
 
         <UsageSection />
 
+        <RuntimeSection />
+
         <DataSection />
 
         <PythonSection cfg={py} patch={(p) => setPy((v) => ({ ...v, ...p }))} onChanged={onPythonChanged} solverOn={solverOn} />
@@ -583,6 +592,19 @@ export function AiSettingsDialog({ onClose, onSaved, onClearCache, onPythonChang
             <span>API base URL</span>
             <input value={base} spellCheck={false} onChange={(e) => setBase(e.target.value)} />
           </label>
+          <label>
+            <span>How hard to think</span>
+            <Select className="field-input" value={effort} onChange={(v) => setEffort(v as Effort)}
+              options={[
+                { value: 'low', label: 'Fast', hint: 'least reasoning per step' },
+                { value: 'high', label: 'Balanced' },
+                { value: 'max', label: 'Thorough', hint: 'slowest' },
+              ]} />
+            <small>
+              An agent spends most of its steps choosing a tool, where extra reasoning buys
+              nothing and costs a second each time. Turn it up for a hard task.
+            </small>
+          </label>
           {solverOn && <div className="ai-settings-row">
             <label>
               <span>Max attempts per question</span>
@@ -613,31 +635,170 @@ const FEATURE_LABEL: Record<string, string> = {
 function ThemePicker() {
   const pref = useThemePref();
   const accent = useAccentPref();
+  const shape = useShapePref();
   const preset = ACCENTS.some((a) => a.color === accent);
-  const opts: [ThemePref, string, typeof Moon][] = [['system', 'System', Monitor], ['dark', 'Dark', Moon], ['light', 'Light', Sun]];
+  const showing = paletteOf(pref);
+  const swatch = (p: Palette) => (
+    <span className="theme-mini" style={{ '--b': p.swatch[0], '--p': p.swatch[1], '--t': p.swatch[2], '--a': p.swatch[3] } as React.CSSProperties}>
+      <i className="mini-side" /><i className="mini-card"><b /><b /><em /></i>
+    </span>
+  );
   return (
     <>
-      <div className="theme-picker" role="radiogroup" aria-label="Theme">
-      {opts.map(([v, label, Icon]) => (
-        <button key={v} type="button" role="radio" aria-checked={pref === v} className={`theme-opt${pref === v ? ' on' : ''}`} onClick={() => setThemePref(v)}>
-          <span className={`theme-swatch ${v}`}><Icon /></span>{label}
+      <div className="theme-grid" role="radiogroup" aria-label="Theme">
+        <button type="button" role="radio" aria-checked={pref === 'system'} className={`theme-opt${pref === 'system' ? ' on' : ''}`}
+          onClick={() => setThemePref('system')} title="Graphite or Paper, following your system">
+          <span className="theme-mini split">{swatch(PALETTES.find((p) => p.id === 'dark')!)}{swatch(PALETTES.find((p) => p.id === 'light')!)}</span>
+          <span className="theme-name"><Monitor />System</span>
         </button>
-      ))}
+        {PALETTES.map((p) => (
+          <button key={p.id} type="button" role="radio" aria-checked={pref === p.id} className={`theme-opt${pref === p.id ? ' on' : ''}`}
+            onClick={() => setThemePref(p.id)} title={`${p.name} (${p.base})`}>
+            {swatch(p)}
+            <span className="theme-name">{p.base === 'dark' ? <Moon /> : <Sun />}{p.name}</span>
+          </button>
+        ))}
+      </div>
+      <div className="accent-row" role="radiogroup" aria-label="Shape">
+        <span>Shape</span>
+        <div className="seg small shape-seg" style={{ '--n': 2 } as React.CSSProperties}>
+          {(['sharp', 'rounded'] as ShapePref[]).map((v) => (
+            <button key={v} type="button" role="radio" aria-checked={shape === v} className={`seg-item${shape === v ? ' on' : ''}`} onClick={() => setShapePref(v)}>
+              {v === 'sharp' ? <><Square />Sharp</> : <><RectangleHorizontal />Rounded</>}
+            </button>
+          ))}
+          <span className="seg-glider" style={{ transform: `translateX(${shape === 'sharp' ? 0 : 100}%)` }} />
+        </div>
       </div>
       <div className="accent-row" role="radiogroup" aria-label="Accent colour">
         <span>Accent</span>
         {ACCENTS.map((a) => (
-          <button key={a.name} type="button" role="radio" aria-checked={accent === a.color} title={a.name}
-            className={`accent-dot${accent === a.color ? ' on' : ''}`} style={{ '--c': a.color || '#8fb3d1' } as React.CSSProperties}
+          <button key={a.name} type="button" role="radio" aria-checked={accent === a.color} title={a.color ? a.name : `${showing.name}'s own`}
+            className={`accent-dot${accent === a.color ? ' on' : ''}`} style={{ '--c': a.color || showing.swatch[3] } as React.CSSProperties}
             onClick={() => setAccentPref(a.color)} />
         ))}
         <label className={`accent-dot accent-custom${preset ? '' : ' on'}`} title="Custom colour">
-          <input type="color" value={accent || '#8fb3d1'} onChange={(e) => setAccentPref(e.target.value)} />
+          <input type="color" value={accent || showing.swatch[3]} onChange={(e) => setAccentPref(e.target.value)} />
         </label>
       </div>
     </>
   );
 }
+
+/**
+ * How the AI runtime has actually been behaving.
+ *
+ * Counts and durations only — never what was asked or answered. This is the
+ * page to look at when the AI "feels broken": it says whether tools are
+ * failing, whether runs are being retried, and whether the runtime can even
+ * start.
+ */
+function RuntimeSection() {
+  const [health, setHealth] = useState<RuntimeStatus | null>(null);
+  const [stats, setStats] = useState<RuntimeStats | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    runtimeStatus().then(setHealth).catch(() => setHealth(null));
+    runtimeTelemetry().then((t) => setStats(t as RuntimeStats)).catch(() => setStats(null));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const total = stats?.total;
+  const rate = total && total.runs ? Math.round((total.completed / total.runs) * 100) : null;
+  const toolRate = total && total.toolCalls ? Math.round((total.toolFailures / total.toolCalls) * 100) : 0;
+
+  return (
+    <section>
+      <h4>AI RUNTIME</h4>
+      {health ? (
+        health.ready ? (
+          <p className="muted small">
+            Ready · smolagents {health.hello?.smolagents ?? '?'} on Python {health.hello?.python ?? '?'}
+          </p>
+        ) : (
+          <div className="runtime-trouble">
+            <p className="form-err">Not running: {health.error ?? 'unknown reason'}</p>
+            {health.interpreter && <p className="muted small mono">Tried: {health.interpreter}</p>}
+            {health.details && (
+              <details>
+                <summary className="muted small">What Python said</summary>
+                <pre className="runtime-log">{health.details}</pre>
+              </details>
+            )}
+            <p className="muted small">
+              If you have just installed or updated Python, press Restart the runtime below.
+            </p>
+          </div>
+        )
+      ) : <p className="muted small">Checking…</p>}
+
+      {total && total.runs > 0 ? (
+        <>
+          <div className="usage-totals">
+            <div className="usage-total">
+              <span className="usage-num">{rate}%</span>
+              <span className="muted">finished · {fmtInt(total.runs)} runs</span>
+            </div>
+            <div className="usage-total">
+              <span className="usage-num">{Math.round(total.avgDurationMs / 100) / 10}s</span>
+              <span className="muted">average run</span>
+            </div>
+            <div className="usage-total">
+              <span className="usage-num">{toolRate}%</span>
+              <span className="muted">of {fmtInt(total.toolCalls)} tool calls failed</span>
+            </div>
+          </div>
+          <p className="muted small">
+            {fmtInt(total.retries)} retries · {fmtInt(total.pythonFailures)} Python failures ·{' '}
+            {fmtInt(total.retrievalFailures)} retrieval failures · {fmtInt(total.subagents)} sub-agents ·{' '}
+            {fmtInt(total.failed)} failed · {fmtInt(total.cancelled)} stopped
+          </p>
+          {!!stats?.byFeature?.length && (
+            <div className="usage-features">
+              {stats.byFeature.map((f) => (
+                <div key={f.feature} className="usage-feature">
+                  <span className="usage-feature-name">{FEATURE_LABEL[f.feature] ?? f.feature}</span>
+                  <span className="usage-bar"><span style={{ width: `${(f.runs / Math.max(1, total.runs)) * 100}%` }} /></span>
+                  <span className="usage-feature-num">{fmtInt(f.runs)}</span>
+                  <span className="muted usage-feature-tok">{f.failed ? `${fmtInt(f.failed)} failed` : 'all fine'}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      ) : <p className="muted small">No AI runs recorded yet.</p>}
+
+      <div className="account-row">
+        <button type="button" className="btn ghost" onClick={load}>Refresh</button>
+        <button
+          type="button"
+          className="btn ghost"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            // Restarting picks up a changed interpreter or a reinstalled
+            // smolagents without closing the app.
+            await restartRuntime().catch(() => {});
+            await runtimeStatus().then(setHealth).catch(() => {});
+            setBusy(false);
+          }}
+        >
+          {busy ? 'Restarting…' : 'Restart the runtime'}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+type RuntimeStats = {
+  total: {
+    runs: number; completed: number; failed: number; cancelled: number; avgDurationMs: number;
+    toolCalls: number; toolFailures: number; pythonCalls: number; pythonFailures: number;
+    retrievalFailures: number; retries: number; subagents: number; tokens: number;
+  };
+  byFeature: { feature: string; runs: number; failed: number; avgDurationMs: number }[];
+};
 
 /** Every AI call the app makes, totalled: solver, chats, notes, cards, quizzes, reading sources. */
 function UsageSection() {

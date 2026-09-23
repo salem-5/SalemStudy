@@ -5,10 +5,13 @@ import {
 import { api, errorText } from '../api';
 import { ContextMenu, type MenuItem } from '../components/ContextMenu';
 import { Markdown } from '../lib/markdown';
-import { markdownToLatex } from '../lib/mdLatex';
+import { markdownToPrintHtml } from '../lib/mdPrint';
 import { refineNote, stopNote, useNoteJobs } from '../lib/notesGen';
+import { formatCost, recalledCost } from '../lib/meter';
 import { relTime } from '../lib/format';
+import { restoreWhenReady, loadPosition, tagAnchors, watch } from '../lib/scrollMemory';
 import { studyApi, type Note } from './api';
+import { AskableArea, ChatButton, noteBriefing } from './StudyChat';
 import { ConfirmDialog, NameDialog } from './dialogs';
 
 /** A plain-text taste of a note for the list: no title line, no maths, no markup. */
@@ -44,15 +47,15 @@ export function NotesPane({ notes, onOpen, onGenerate, onBlank, onChanged }: {
         <button type="button" className="btn ghost" onClick={onBlank} title="Empty note you write yourself"><Plus />Blank</button>
       </div>
       {!notes.length && <p className="muted small pane-note">No notes yet. Have them written from your sources, a topic or a chat, in the style you ask for.</p>}
-      <ul className="deck-list stagger">
+      <ul className="set-list stagger">
         {notes.map((n, i) => (
-          <li key={n.id} className="deck-item" style={{ '--i': i } as React.CSSProperties}
+          <li key={n.id} className="set-item" style={{ '--i': i } as React.CSSProperties}
             onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, items: menuFor(n) }); }}>
-            <button type="button" className="deck-main" onClick={() => onOpen(n)}>
-              <span className="deck-icon">{jobs.has(n.id) ? <Loader2 className="spin" /> : <NotebookPen />}</span>
-              <span className="deck-text">
-                <span className="deck-title">{n.title}</span>
-                <span className="deck-meta">{jobs.has(n.id) ? 'writing…' : `${relTime(new Date(n.updatedAt))} · ${preview(n.content) || 'empty'}`}</span>
+            <button type="button" className="set-main" onClick={() => onOpen(n)}>
+              <span className="set-icon">{jobs.has(n.id) ? <Loader2 className="spin" /> : <NotebookPen />}</span>
+              <span className="set-text">
+                <span className="set-title">{n.title}</span>
+                <span className="set-meta">{jobs.has(n.id) ? 'writing…' : `${relTime(new Date(n.updatedAt))} · ${preview(n.content) || 'empty'}`}</span>
               </span>
             </button>
             <button type="button" className="icon-btn ghost-icon" onClick={(e) => setMenu({ x: e.clientX, y: e.clientY, items: menuFor(n) })} title="More"><MoreHorizontal /></button>
@@ -78,16 +81,17 @@ const REFINE_PRESETS = ['Make it shorter', 'Add more worked examples', 'Add a su
 
 /** Export a note as a typeset PDF in Documents and open it. */
 async function exportPdf(note: Note): Promise<string> {
-  const tex = markdownToLatex(note.content, note.title);
-  const res = await api.exportLatex(note.title, tex, true, [], note.title);
+  const html = markdownToPrintHtml(note.content);
+  const res = await api.exportPdf(note.title, html, [], '', note.title);
   if (!res.pdf) throw new Error('No PDF was produced.');
   await api.openPath(res.pdf).catch(() => {});
   return res.pdf;
 }
 
-export function NoteView({ noteId, onBack, onChanged }: { noteId: number; onBack: () => void; onChanged: () => void }) {
+export function NoteView({ noteId, notebookId, onBack, onChanged }: { noteId: number; notebookId: number; onBack: () => void; onChanged: () => void }) {
   const jobs = useNoteJobs();
   const job = jobs.get(noteId);
+  const written = recalledCost('note', noteId);
   const [note, setNote] = useState<Note | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -98,6 +102,31 @@ export function NoteView({ noteId, onBack, onChanged }: { noteId: number; onBack
   const [renaming, setRenaming] = useState(false);
   const [removing, setRemoving] = useState(false);
   const saveTimer = useRef<number | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const paperRef = useRef<HTMLElement | null>(null);
+
+  /**
+   * Where the student had got to in this note.
+   *
+   * Each note keeps its own position, and it survives switching notes,
+   * notebooks and subjects, and closing the app. Restoring waits for the
+   * Markdown and the maths to finish laying out, or it would land in the
+   * wrong place — and it anchors on the paragraph that was at the top, so a
+   * rewrite further up does not throw the reader down the page.
+   */
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    const paper = paperRef.current;
+    if (!scroller || !paper || !draft) return;
+    tagAnchors(paper);
+    const key = `note-${noteId}`;
+    const saved = loadPosition(key);
+    // Nothing to restore while it is still being written — that view follows
+    // the text as it arrives.
+    const stop = saved && !job ? restoreWhenReady(scroller, saved) : () => {};
+    const unwatch = watch(scroller, key);
+    return () => { stop(); unwatch(); };
+  }, [noteId, draft, job, editing, fullscreen]);
 
   const load = () => studyApi.note(noteId).then((n) => { setNote(n); setDraft(n.content); }).catch(() => setNote(null));
   // Reload when a writing job for this note finishes.
@@ -154,6 +183,12 @@ export function NoteView({ noteId, onBack, onChanged }: { noteId: number; onBack
           <button type="button" className="btn ghost" onClick={doExport} disabled={status?.kind === 'busy' || !draft.trim()} title="Export as PDF"><FileDown /><span className="btn-label">PDF</span></button>
         </>
       )}
+      <ChatButton
+        notebookId={notebookId}
+        where={note?.title || 'this note'}
+        tag={note?.title || 'note'}
+        briefing={noteBriefing(note?.title ?? '', draft)}
+      />
       <button type="button" className="icon-btn ghost-icon" onClick={() => setFullscreen((f) => !f)} title={fullscreen ? 'Exit full screen (Esc)' : 'Full screen'}>
         {fullscreen ? <Minimize2 /> : <Maximize2 />}
       </button>
@@ -186,12 +221,25 @@ export function NoteView({ noteId, onBack, onChanged }: { noteId: number; onBack
           <div className="note-paper"><Markdown text={draft} /></div>
         </div>
       ) : (
-        <div className="note-scroll">
-          <article className={`note-paper${job ? ' writing' : ''}`}>
-            {body ? <Markdown text={body} /> : <p className="muted">{job ? 'Starting…' : 'Empty note. Press Edit to write, or Rewrite to have it written.'}</p>}
-            {job && <span className="caret" />}
-          </article>
-        </div>
+        <AskableArea
+          className="note-askable"
+          notebookId={notebookId}
+          title={note?.title || 'This note'}
+          briefing={noteBriefing(note?.title ?? '', draft)}
+          target={{
+            kind: 'note',
+            label: note?.title || 'Note',
+            detail: 'your note',
+            locator: { notebookId, noteId },
+          }}
+        >
+          <div ref={scrollRef} className="note-scroll">
+            <article className={`note-paper${job ? ' writing' : ''}`} ref={paperRef}>
+              {body ? <Markdown text={body} /> : <p className="muted">{job ? 'Starting…' : 'Empty note. Press Edit to write, or Rewrite to have it written.'}</p>}
+              {job && <span className="caret" />}
+            </article>
+          </div>
+        </AskableArea>
       )}
     </>
   );
@@ -202,7 +250,8 @@ export function NoteView({ noteId, onBack, onChanged }: { noteId: number; onBack
         <div className="stage-head">
           <button type="button" className="link" onClick={onBack}><ArrowLeft />back</button>
           <button type="button" className="stage-title as-button" onClick={() => setRenaming(true)} title="Rename">{note.title}</button>
-          {job && <span className="muted small"><Loader2 className="spin" /> writing</span>}
+          {job && <span className="muted small"><Loader2 className="spin" /> writing{job.cost > 0 ? ` · ${formatCost(job.cost)}` : ''}</span>}
+          {!job && written !== null && <span className="note-cost muted small" title="What having this note written cost">{formatCost(written)}</span>}
           <span className="spacer" />
           {toolbar}
           <button type="button" className="icon-btn ghost-icon danger" onClick={() => setRemoving(true)} title="Delete note" disabled={!!job}><Trash /></button>

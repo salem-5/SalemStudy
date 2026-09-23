@@ -4,7 +4,7 @@ import { ChatView } from '../components/chat/ChatView';
 import { ViewBar } from '../components/ViewBar';
 import { relTime } from '../lib/format';
 import { APP_POLICY, chatPrompt } from '../lib/prompts';
-import { appTools } from '../lib/assistant';
+import { registry, type ToolEnv } from '../lib/salem/tools';
 import { studyApi, type ChatThread, type SubjectNode } from './api';
 import { ConfirmDialog } from './dialogs';
 import { dropEmpty } from '../lib/chatThreads';
@@ -41,11 +41,17 @@ export function ChatPage({ threadId, tree, open, refreshTree }: {
   // The assistant's tools read the latest tree, including changes made earlier in the same reply.
   const treeRef = useRef(tree);
   treeRef.current = tree;
-  const tools = useMemo(() => appTools({
+  const toolEnv = useMemo<ToolEnv>(() => ({
     tree: () => treeRef.current,
     refresh: async () => { const t = await refreshTree(); treeRef.current = t; return t; },
     open,
   }), [open, refreshTree]);
+  // With App control off the assistant can still look things up and search the
+  // web; it just cannot change anything. That is a tool list, not a prompt.
+  const allowTools = useMemo(
+    () => (control ? undefined : registry(toolEnv).filter((t) => !t.mutating).map((t) => t.name)),
+    [control, toolEnv],
+  );
   const system = useCallback((python: boolean) => {
     const now = new Date();
     const today = `Today is ${now.toLocaleDateString('en-CA')} (${now.toLocaleDateString(undefined, { weekday: 'long' })}), local time ${now.toTimeString().slice(0, 5)}.`;
@@ -141,7 +147,8 @@ export function ChatPage({ threadId, tree, open, refreshTree }: {
           threadId={threadId}
           notebookId={null}
           system={system}
-          appTools={control ? tools : undefined}
+          toolEnv={toolEnv}
+          allowTools={allowTools}
           reloadToken={reload}
           emptyTitle="Ask anything"
           emptyHint={control

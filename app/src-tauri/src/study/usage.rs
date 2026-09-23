@@ -29,6 +29,15 @@ pub fn cost(model: &str, hit: i64, miss: i64, completion: i64, at_ms: i64) -> f6
     (hit as f64 * h + miss as f64 * m + completion as f64 * o) / 1e6 * mult
 }
 
+/// What one completion cost, from its `usage` object, in USD.
+pub fn cost_of(model: &str, usage: &Value, at_ms: i64) -> f64 {
+    let n = |k: &str| usage.get(k).and_then(Value::as_i64).unwrap_or(0);
+    let prompt = n("prompt_tokens");
+    let hit = n("prompt_cache_hit_tokens");
+    let miss = usage.get("prompt_cache_miss_tokens").and_then(Value::as_i64).unwrap_or((prompt - hit).max(0));
+    cost(model, hit, miss, n("completion_tokens"), at_ms)
+}
+
 /// Log one completion from its `usage` object. Missing fields count as zero.
 pub fn record(conn: &Connection, model: &str, feature: &str, usage: &Value) -> rusqlite::Result<()> {
     let n = |k: &str| usage.get(k).and_then(Value::as_i64).unwrap_or(0);

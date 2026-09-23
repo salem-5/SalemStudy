@@ -1,12 +1,22 @@
 import { pomodoro, type Phase } from './pomodoro';
 import { courseContextOf } from './syllabus';
 import { solverEnabled } from './features';
-import { generateQuiz, type GenSource } from './studyGen';
+import { type GenSource } from './studyGen';
 import { writeNote } from './notesGen';
-import type { AppTools } from './chatEngine';
-import { generateDeck } from '../study/Flashcards';
+import { makeSet } from './makeSet';
 import { studyApi, type EventKind, type NotebookSummary, type SubjectNode } from '../study/api';
+import { notebookMaterial } from './material';
 import type { Route } from '../study/pages';
+
+/**
+ * What each app tool does. The declarations here and in `lib/salem/tools`
+ * together make the registry the runtime is given; this file is the part that
+ * actually acts on the student's study space.
+ */
+export type AppTools = {
+  defs: unknown[];
+  run: (name: string, args: Record<string, unknown>) => Promise<{ ok: boolean; label: string; detail?: string; result: unknown }>;
+};
 
 /**
  * The standalone chat's app tools: with them the assistant can organise the
@@ -37,11 +47,13 @@ export const APP_TOOL_DEFS = [
   fn('save_note', 'Save a note you wrote yourself (Markdown with LaTeX maths) into a notebook, e.g. a summary of this conversation.', {
     notebook: NOTEBOOK, title: { type: 'string' }, content: { type: 'string', description: 'The note in Markdown.' },
   }, ['notebook', 'title', 'content']),
-  fn('make_flashcards', 'Generate a flashcard deck in a notebook from its sources (default) or a topic.', {
-    notebook: NOTEBOOK, topic: { type: 'string', description: 'Leave empty to use the notebook sources.' }, count: { type: 'number' },
+  fn('make_flashcards', 'Generate a flashcard deck in a notebook. From its sources (the default) it walks every page in reading order and writes as many cards as the material needs; or from a topic.', {
+    notebook: NOTEBOOK, topic: { type: 'string', description: 'Leave empty to use the notebook sources.' },
+    count: { type: 'number', description: 'Only when the student asked for a particular number; it caps the deck. Leave it out otherwise.' },
   }, ['notebook']),
-  fn('make_quiz', 'Generate a checked practice quiz in a notebook from its sources (default) or a topic.', {
-    notebook: NOTEBOOK, topic: { type: 'string', description: 'Leave empty to use the notebook sources.' }, count: { type: 'number' },
+  fn('make_quiz', 'Generate a checked practice quiz in a notebook. From its sources (the default) it walks every page in reading order and writes as many questions as the material needs; or from a topic.', {
+    notebook: NOTEBOOK, topic: { type: 'string', description: 'Leave empty to use the notebook sources.' },
+    count: { type: 'number', description: 'Only when the student asked for a particular number; it caps the quiz. Leave it out otherwise.' },
   }, ['notebook']),
   fn('timer', 'Control the focus (Pomodoro) timer.', {
     action: { type: 'string', enum: ['start', 'pause', 'reset', 'skip', 'status'] },
@@ -102,12 +114,24 @@ function findNotebook(tree: SubjectNode[], name: string): { notebook: NotebookSu
   throw new Error(`"${name}" matches several notebooks: ${hits.map((x) => `${x.subject.name} / ${x.notebook.name}`).join(', ')}. Say which.`);
 }
 
-async function sourceMaterial(notebookId: number, topic: string): Promise<GenSource> {
+/**
+ * What to build from. A deck or quiz walks every page of the notebook's
+ * sources in reading order; notes are written from a sample, since they are
+ * written in one go.
+ */
+async function sourceMaterial(notebookId: number, topic: string, walk = false): Promise<GenSource> {
   if (topic.trim()) return { kind: 'topic', prompt: topic };
   const ready = (await studyApi.sources(notebookId)).filter((s) => s.status === 'ready');
   if (!ready.length) throw new Error('That notebook has no sources yet; give a topic instead.');
-  return { kind: 'sources', hits: await studyApi.sampleSources(ready.map((s) => s.id), 50_000), focus: '' };
+  const hits = walk ? await notebookMaterial(notebookId) : await studyApi.sampleSources(ready.map((s) => s.id), 50_000);
+  return { kind: 'sources', hits, focus: '' };
 }
+
+/** A number of items the assistant was asked for, if it was asked for one. */
+const countOf = (value: unknown): number | undefined => {
+  const n = Math.round(Number(value));
+  return Number.isFinite(n) && n > 0 ? Math.min(128, n) : undefined;
+};
 
 export function appTools(env: Env): AppTools {
   const str = (v: unknown) => (typeof v === 'string' ? v : '');
@@ -187,20 +211,19 @@ export function appTools(env: Env): AppTools {
         }
         case 'make_flashcards': {
           const { notebook, subject } = findNotebook(tree, str(a.notebook));
-          const src = await sourceMaterial(notebook.id, str(a.topic));
+          const src = await sourceMaterial(notebook.id, str(a.topic), true);
           const ctx = { subject: subject.name, notebook: notebook.name, courseContext: courseContextOf(subject) };
-          const { message } = await generateDeck(ctx, notebook.id, src, Math.min(40, Math.max(1, Number(a.count) || 15)), () => {});
+          const { message } = await makeSet('cards', ctx, notebook.id, src, () => {}, { limit: countOf(a.count) });
           await env.refresh();
           return { ok: true, label: `${message.replace(/\.$/, '')} in ${notebook.name}`, result: { message } };
         }
         case 'make_quiz': {
           const { notebook, subject } = findNotebook(tree, str(a.notebook));
-          const src = await sourceMaterial(notebook.id, str(a.topic));
+          const src = await sourceMaterial(notebook.id, str(a.topic), true);
           const ctx = { subject: subject.name, notebook: notebook.name, courseContext: courseContextOf(subject) };
-          const q = await generateQuiz(ctx, src, Math.min(30, Math.max(1, Number(a.count) || 8)), notebook.id, () => {});
-          await studyApi.createQuiz(notebook.id, q.title, q.questions);
+          const q = await makeSet('quiz', ctx, notebook.id, src, () => {}, { limit: countOf(a.count) });
           await env.refresh();
-          return { ok: true, label: `Made the quiz “${q.title}” (${q.questions.length} questions) in ${notebook.name}`, result: { title: q.title, questions: q.questions.length } };
+          return { ok: true, label: `Made the quiz “${q.title}” (${q.count} questions) in ${notebook.name}`, result: { title: q.title, questions: q.count, note: q.note } };
         }
         case 'timer': {
           const phase = str(a.phase) as Phase;

@@ -1,21 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Select } from '../components/Select';
 import { dropEmpty } from '../lib/chatThreads';
 import { SyllabusPanel } from './Syllabus';
 import { courseContextOf } from '../lib/syllabus';
 import { BookOpenText, ChartColumn, Paintbrush, Loader2, Eraser, RefreshCw, MessageSquare, Pencil, Plus, Trash } from 'lucide-react';
 import { ChatView } from '../components/chat/ChatView';
 import { ActivityHeatmap } from '../components/ActivityHeatmap';
+import { ActivityDay } from '../components/ActivityDay';
 import { Modal } from '../components/Dialogs';
 import { SUBJECT_COLORS, SUBJECT_ICONS, SubjectIcon, guessIcon, subjectColor } from '../components/subjectIcons';
 import { usePomodoro } from '../lib/pomodoro';
 import { ViewBar } from '../components/ViewBar';
-import { generateQuiz, type GenSource, type StudyContext } from '../lib/studyGen';
+import { type GenSource, type StudyContext, type QuizOptions, type CardOptions } from '../lib/studyGen';
+import { makeSet } from '../lib/makeSet';
+import { clearQuizSession, loadQuizSession } from '../lib/studySession';
 import { notebookPrompt } from '../lib/prompts';
 import { retrieve } from '../lib/retrieval';
-import { studyApi, type Card, type ChatThread, type Deck, type Note, type NotebookSummary, type StudyEvent, type QuizSummary, type Source, type SubjectNode } from './api';
+import {studyApi, type Card, type ChatThread, type Deck, type Note, type NotebookSummary, type StudyEvent, type QuizSummary, type Source, type SubjectNode, type Quiz } from './api';
 import { Analytics } from './Analytics';
-import { DeckPlayer, DeckView, DecksPane, GenerateDialog, generateDeck } from './Flashcards';
-import { QuizRunner, QuizzesPane } from './Quizzes';
+import { DeckPlayer, DeckView, GenerateDialog, playOrder } from './Flashcards';
+import { QuizRunner, QuizView } from './Quizzes';
+import { SetsPane, startSet, useSetBusy, type SetKind } from './StudySets';
 import { SourcesPane, SourceViewer } from './Sources';
 import { NotesPane, NoteView } from './Notes';
 import { writeNote } from '../lib/notesGen';
@@ -99,6 +104,9 @@ export function StudyHome({ tree, actions }: { tree: SubjectNode[]; actions: Stu
       .catch(() => setUpcoming([]));
   }, []);
 
+  /** The day whose breakdown is open, if any. */
+  const [pickedDay, setPickedDay] = useState<number | null>(null);
+
   // Focus sessions from the timer count as activity too.
   const allTimes = useMemo(() => [...times, ...pomo.history.filter((h) => h.phase === 'focus' && h.completed).map((h) => h.end)], [times, pomo.history]);
   const nbs = tree.flatMap((s) => s.notebooks);
@@ -122,10 +130,18 @@ export function StudyHome({ tree, actions }: { tree: SubjectNode[]; actions: Stu
           </div>
         </section>
 
+        {pickedDay !== null && (
+          <ActivityDay
+            day={pickedDay}
+            onClose={() => setPickedDay(null)}
+            onOpenNotebook={(id) => actions.open({ kind: 'notebook', id })}
+          />
+        )}
+
         <section className="home-grid">
           <div className="card-panel home-activity">
             <div className="panel-title">Activity</div>
-            <ActivityHeatmap times={allTimes} />
+            <ActivityHeatmap times={allTimes} onPickDay={setPickedDay} />
           </div>
           <div className="card-panel home-upcoming">
             <div className="panel-title-row">
@@ -297,6 +313,7 @@ type Center =
   | { kind: 'deck'; id: number }
   | { kind: 'play'; deckId: number; cards: Card[]; title: string; practice: boolean }
   | { kind: 'quiz'; id: number }
+  | { kind: 'quizrun'; id: number; only?: number[]; startAt?: number }
   | { kind: 'source'; id: number; unit?: number }
   | { kind: 'note'; id: number };
 
@@ -328,6 +345,19 @@ export function NotebookPage({ notebook, subject, actions, target }: { notebook:
   });
   const [decks, setDecks] = useState<Deck[]>([]);
   const [quizzes, setQuizzes] = useState<QuizSummary[]>([]);
+  /**
+   * Decks and quizzes written since the notebook was opened and not looked at
+   * yet, with a note if part of the material could not be written. They are
+   * marked in the list rather than thrown open: the student may be in the
+   * middle of something else when one lands.
+   */
+  const [fresh, setFresh] = useState<Record<SetKind, Record<number, string>>>({ cards: {}, quiz: {} });
+  const seen = useCallback((kind: SetKind, id: number) => setFresh((f) => {
+    if (!(id in f[kind])) return f;
+    const next = { ...f[kind] };
+    delete next[id];
+    return { ...f, [kind]: next };
+  }), []);
   const [sources, setSources] = useState<Source[]>([]);
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [thread, setThread] = useState<number | null>(null);
@@ -337,11 +367,14 @@ export function NotebookPage({ notebook, subject, actions, target }: { notebook:
   const firstThreads = useRef(true);
   const [generating, setGenerating] = useState<{ kind: 'cards' | 'quiz' | 'notes'; thread?: number | null } | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
+  // A deck or quiz being written shows on its tab, so it can be seen from
+  // the others.
+  const writingDeck = useSetBusy('cards', notebook.id);
+  const writingQuiz = useSetBusy('quiz', notebook.id);
   const [chatReload, setChatReload] = useState(0);
   const [clearing, setClearing] = useState<'one' | 'all' | null>(null);
   const [clearMenu, setClearMenu] = useState<{ x: number; y: number } | null>(null);
   const [newDeck, setNewDeck] = useState(false);
-  const [deleteQuiz, setDeleteQuiz] = useState<QuizSummary | null>(null);
   const [version, setVersion] = useState(0);
   const offKey = `wa.nb.${notebook.id}.sourcesOff`;
   const [off, setOff] = useState<Set<number>>(() => { try { return new Set(JSON.parse(store.get(offKey) || '[]')); } catch { return new Set(); } });
@@ -382,7 +415,7 @@ export function NotebookPage({ notebook, subject, actions, target }: { notebook:
   }, [reloadDecks, reloadQuizzes, actions]);
   const sourcesChanged = useCallback(() => { reloadSources(); actions.refresh(); }, [reloadSources, actions]);
 
-  const runGeneration = async (kind: 'cards' | 'quiz' | 'notes', src: GenSource, count: number, progress: (t: string) => void, instructions: string) => {
+  const runGeneration = async (kind: 'cards' | 'quiz' | 'notes', src: GenSource, instructions: string, options: QuizOptions & CardOptions) => {
     if (kind === 'notes') {
       // The note opens straight away and fills in as it is written.
       setTab('notes');
@@ -391,19 +424,25 @@ export function NotebookPage({ notebook, subject, actions, target }: { notebook:
         .finally(reloadNotes);
       return 'Writing your notes…';
     }
-    if (kind === 'cards') {
-      const { id, message } = await generateDeck(ctx, notebook.id, src, count, progress);
-      changed();
-      setTab('decks');
-      setCenter({ kind: 'deck', id });
-      return message;
-    }
-    const { title, questions, dropped } = await generateQuiz(ctx, src, count, notebook.id, progress);
-    const id = await studyApi.createQuiz(notebook.id, title, questions);
-    changed();
-    setTab('quizzes');
-    setCenter({ kind: 'quiz', id });
-    return `“${title}”: ${questions.length} questions${dropped ? ` (${dropped} failed their check and were replaced or dropped)` : ''}.`;
+    // Decks and quizzes run in the background, and are saved as soon as they
+    // are written: the dialog closes, the list shows the one being written,
+    // and clicking it shows how far it has got.
+    const setKind: SetKind = kind === 'cards' ? 'cards' : 'quiz';
+    startSet(
+      setKind,
+      notebook,
+      src.kind === 'sources',
+      async (report, meter) => {
+        const made = await makeSet(setKind, ctx, notebook.id, src, report, { ...options, meter });
+        return { id: made.id, note: made.note };
+      },
+      (id, note) => {
+        setFresh((f) => ({ ...f, [setKind]: { ...f[setKind], [id]: note } }));
+        changed();
+      },
+    );
+    setTab(setKind === 'cards' ? 'decks' : 'quizzes');
+    return '';
   };
 
   const readySelected = useMemo(() => sources.filter((s) => selected.has(s.id)), [sources, selected]);
@@ -415,17 +454,55 @@ export function NotebookPage({ notebook, subject, actions, target }: { notebook:
 
   const openCitation = useCallback((sourceId: number, unit: number) => setCenter({ kind: 'source', id: sourceId, unit }), []);
   const deck = center.kind === 'deck' ? decks.find((d) => d.id === center.id) : undefined;
+  useEffect(() => {
+    if (center.kind === 'deck' || center.kind === 'play') seen('cards', center.kind === 'deck' ? center.id : center.deckId);
+    if (center.kind === 'quiz' || center.kind === 'quizrun') seen('quiz', center.id);
+  }, [center, seen]);
+  // The quiz itself (its questions) is loaded on demand; the pane only has
+  // the summary rows.
+  const [openQuiz, setOpenQuiz] = useState<Quiz | null>(null);
+  const quizId = center.kind === 'quiz' ? center.id : null;
+  const reloadQuiz = useCallback(() => {
+    if (quizId === null) { setOpenQuiz(null); return; }
+    studyApi.quiz(quizId).then(setOpenQuiz).catch(() => setOpenQuiz(null));
+  }, [quizId]);
+  useEffect(reloadQuiz, [reloadQuiz]);
   const source = center.kind === 'source' ? sources.find((s) => s.id === center.id) : undefined;
 
   let body: React.ReactNode;
   if (center.kind === 'play') {
-    body = <DeckPlayer key={`${center.deckId}-${center.cards.length}`} deckId={center.deckId} cards={center.cards} title={center.title} practice={center.practice} onClose={() => setCenter({ kind: 'deck', id: center.deckId })} onFinished={changed} />;
+    body = <DeckPlayer key={`${center.deckId}-${center.cards.length}`} deckId={center.deckId} cards={center.cards} title={center.title} notebookId={notebook.id} practice={center.practice} onClose={() => setCenter({ kind: 'deck', id: center.deckId })} onFinished={changed} />;
   } else if (center.kind === 'deck' && deck) {
-    body = <DeckView key={deck.id} deck={deck} onBack={() => setCenter({ kind: 'chat' })} onChanged={changed} onPlay={(cards, title, practice) => setCenter({ kind: 'play', deckId: deck.id, cards, title, practice })} />;
-  } else if (center.kind === 'quiz') {
-    body = <QuizRunner key={center.id} quizId={center.id} notebookId={notebook.id} onClose={() => setCenter({ kind: 'chat' })} onFinished={changed} />;
+    body = <DeckView key={deck.id} deck={deck} notebookId={notebook.id} onBack={() => setCenter({ kind: 'chat' })} onChanged={changed} onPlay={(cards, title, practice) => setCenter({ kind: 'play', deckId: deck.id, cards, title, practice })} />;
+  } else if (center.kind === 'quiz' && openQuiz?.id !== center.id) {
+    body = <div className="stage"><div className="pane-empty center"><span className="dots"><i /><i /><i /></span></div></div>;
+  } else if (center.kind === 'quiz' && openQuiz) {
+    body = (
+      <QuizView
+        key={openQuiz.id}
+        quiz={openQuiz}
+        summary={quizzes.find((q) => q.id === openQuiz.id)}
+        notebookId={notebook.id}
+        ctx={ctx}
+        onBack={() => setCenter({ kind: 'chat' })}
+        onChanged={() => { changed(); reloadQuiz(); }}
+        onPlay={(only, startAt) => setCenter({ kind: 'quizrun', id: openQuiz.id, only, startAt })}
+      />
+    );
+  } else if (center.kind === 'quizrun') {
+    body = (
+      <QuizRunner
+        key={`${center.id}-${center.only?.join(',') ?? 'all'}`}
+        quizId={center.id}
+        notebookId={notebook.id}
+        onlyIndexes={center.only}
+        startAt={center.startAt}
+        onClose={() => setCenter({ kind: 'quiz', id: center.id })}
+        onFinished={changed}
+      />
+    );
   } else if (center.kind === 'note') {
-    body = <NoteView key={center.id} noteId={center.id} onBack={() => setCenter({ kind: 'chat' })} onChanged={reloadNotes} />;
+    body = <NoteView key={center.id} noteId={center.id} notebookId={notebook.id} onBack={() => setCenter({ kind: 'chat' })} onChanged={reloadNotes} />;
   } else if (center.kind === 'source' && source) {
     body = <SourceViewer key={`${source.id}-${center.unit ?? ''}`} source={source} unit={center.unit} onClose={() => setCenter({ kind: 'chat' })} />;
   } else {
@@ -441,10 +518,8 @@ export function NotebookPage({ notebook, subject, actions, target }: { notebook:
           <span className="spacer" />
           {center.kind === 'chat' && (
             <>
-              <select className="select thread-select" value={thread ?? ''} onChange={(e) => setThread(e.target.value ? Number(e.target.value) : null)} title="Chats in this notebook">
-                <option value="">New chat</option>
-                {threads.map((t) => <option key={t.id} value={t.id}>{t.title || 'Untitled chat'}</option>)}
-              </select>
+              <Select className="select thread-select" value={String(thread ?? '')} onChange={(v) => setThread(v ? Number(v) : null)} title="Chats in this notebook"
+                options={[{ value: '', label: 'New chat' }, ...threads.map((t) => ({ value: String(t.id), label: t.title || 'Untitled chat' }))]} />
               <button type="button" className="icon-btn" onClick={() => setThread(null)} title="New chat"><Plus /></button>
               <button type="button" className="icon-btn" onClick={(e) => setClearMenu({ x: e.clientX, y: e.clientY })} title="Clear chat…"><Eraser /></button>
             </>
@@ -460,6 +535,10 @@ export function NotebookPage({ notebook, subject, actions, target }: { notebook:
             notebookId={notebook.id}
             system={system}
             retrieve={readySelected.length ? retriever : undefined}
+            agent="notebook"
+            // The hard boundary of this chat: the agent can search and read
+            // these sources and nothing else, however it is asked.
+            sourceIds={readySelected.map((s) => s.id)}
             onCite={openCitation}
             reloadToken={chatReload}
             emptyTitle={`Chat with ${notebook.name}`}
@@ -516,26 +595,56 @@ export function NotebookPage({ notebook, subject, actions, target }: { notebook:
           value={tab}
           onChange={setTab}
           label={(t) => (t === 'decks'
-            ? <>Cards{decks.length > 0 && <span className="tab-count">{decks.length}</span>}</>
+            ? <>Cards{writingDeck ? <Loader2 className="spin tab-busy" /> : decks.length > 0 && <span className="tab-count">{decks.length}</span>}</>
             : t === 'quizzes'
-              ? <>Quizzes{quizzes.length > 0 && <span className="tab-count">{quizzes.length}</span>}</>
+              ? <>Quizzes{writingQuiz ? <Loader2 className="spin tab-busy" /> : quizzes.length > 0 && <span className="tab-count">{quizzes.length}</span>}</>
               : <>Notes{notes.length > 0 && <span className="tab-count">{notes.length}</span>}</>)}
         />
         <div className="tab-panel" key={tab}>
           {tab === 'decks' ? (
-            <DecksPane
-              decks={decks}
-              onOpen={(d) => setCenter({ kind: 'deck', id: d.id })}
-              onPlay={async (d) => {
-                const cards = await studyApi.deckCards(d.id);
-                if (cards.length) setCenter({ kind: 'play', deckId: d.id, cards: [...cards].sort(() => Math.random() - 0.5), title: d.title, practice: false });
+            <SetsPane
+              kind="cards"
+              rows={decks.map((d) => ({ id: d.id, title: d.title, count: d.cardCount, runs: d.runs, best: d.best, last: d.last }))}
+              notebookId={notebook.id}
+              fresh={fresh.cards}
+              onOpen={(id) => setCenter({ kind: 'deck', id })}
+              onPlay={async (id) => {
+                const d = decks.find((x) => x.id === id);
+                const cards = await studyApi.deckCards(id);
+                if (d && cards.length) setCenter({ kind: 'play', deckId: id, cards: playOrder(cards), title: d.title, practice: false });
               }}
               onGenerate={() => setGenerating({ kind: 'cards' })}
               onNew={() => setNewDeck(true)}
-              onChanged={changed}
+              onRename={async (id, name) => { await studyApi.renameDeck(id, name); changed(); }}
+              onDelete={async (id) => {
+                await studyApi.deleteDeck(id);
+                if ((center.kind === 'deck' && center.id === id) || (center.kind === 'play' && center.deckId === id)) setCenter({ kind: 'chat' });
+                changed();
+              }}
+              deleteText={(r) => <>Delete <b>{r.title}</b> with its {plural(r.count, 'card')} and {plural(r.runs, 'saved score')}?</>}
             />
           ) : tab === 'quizzes' ? (
-            <QuizzesPane quizzes={quizzes} onStart={(id) => setCenter({ kind: 'quiz', id })} onGenerate={() => setGenerating({ kind: 'quiz' })} onDelete={setDeleteQuiz} />
+            <SetsPane
+              kind="quiz"
+              rows={quizzes.map((q) => {
+                const session = loadQuizSession(q.id);
+                const answered = session && !session.reviewing ? Object.keys(session.answers).length : 0;
+                return { id: q.id, title: q.title, count: q.questionCount, runs: q.attempts, best: q.best, last: q.last, extra: answered ? `${answered} answered so far` : undefined };
+              })}
+              notebookId={notebook.id}
+              fresh={fresh.quiz}
+              onOpen={(id) => setCenter({ kind: 'quiz', id })}
+              onPlay={(id) => setCenter({ kind: 'quizrun', id })}
+              onGenerate={() => setGenerating({ kind: 'quiz' })}
+              onRename={async (id, title) => { await studyApi.renameQuiz(id, title); changed(); if (quizId === id) reloadQuiz(); }}
+              onDelete={async (id) => {
+                clearQuizSession(id);
+                await studyApi.deleteQuiz(id);
+                if ((center.kind === 'quiz' || center.kind === 'quizrun') && center.id === id) setCenter({ kind: 'chat' });
+                changed();
+              }}
+              deleteText={(r) => <>Delete <b>{r.title}</b> and its {plural(r.runs, 'attempt')}? Its results leave the analytics too.</>}
+            />
           ) : (
             <NotesPane
               notes={notes}
@@ -555,7 +664,7 @@ export function NotebookPage({ notebook, subject, actions, target }: { notebook:
           sources={sources}
           initialThread={generating.thread}
           onClose={() => setGenerating(null)}
-          run={(src, count, progress, instructions) => runGeneration(generating.kind, src, count, progress, instructions)}
+          run={(src, _progress, instructions, options) => runGeneration(generating.kind, src, instructions, options)}
         />
       )}
       {newDeck && (
@@ -577,12 +686,6 @@ export function NotebookPage({ notebook, subject, actions, target }: { notebook:
             reloadThreads();
           }}>
           {clearing === 'one' ? 'Remove every message in this chat? The chat itself stays.' : `Delete all ${threads.length} chats in ${notebook.name}, with their messages and files?`}
-        </ConfirmDialog>
-      )}
-      {deleteQuiz && (
-        <ConfirmDialog title="Delete quiz" confirmLabel="Delete quiz" onClose={() => setDeleteQuiz(null)}
-          onConfirm={async () => { await studyApi.deleteQuiz(deleteQuiz.id); changed(); }}>
-          Delete <b>{deleteQuiz.title}</b> and its {plural(deleteQuiz.attempts, 'attempt')}? Its results leave the analytics too.
         </ConfirmDialog>
       )}
     </div>

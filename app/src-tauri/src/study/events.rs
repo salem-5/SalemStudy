@@ -103,6 +103,24 @@ pub fn update(conn: &Connection, id: i64, e: &EventIn) -> rusqlite::Result<usize
     )
 }
 
+/// Everything in the calendar that belonged to a course.
+///
+/// Must run *before* the subject row goes. Both links are `ON DELETE SET
+/// NULL`, so once it is gone there is nothing left to recognise its exams and
+/// deadlines by — they would stay in the calendar as unattached entries the
+/// student never put there and cannot tell apart from their own.
+///
+/// A notebook's events count as the course's: the notebooks go with the
+/// subject, and their deadlines were never separate from it.
+pub fn delete_for_subject(conn: &Connection, subject_id: i64) -> rusqlite::Result<usize> {
+    conn.execute(
+        "DELETE FROM event
+          WHERE subject_id = ?1
+             OR notebook_id IN (SELECT id FROM notebook WHERE subject_id = ?1)",
+        [subject_id],
+    )
+}
+
 #[tauri::command]
 pub fn events_between(app: AppHandle, db: State<'_, StudyDb>, from: i64, to: i64) -> Result<Vec<Event>, String> {
     with_db(&app, &db, |c| between(c, from, to))
@@ -149,6 +167,42 @@ mod tests {
         assert_eq!(got, ["spans in", "inside"]);
         assert!(validate(&ev(" ", 0, None)).is_err());
         assert!(validate(&ev("x", 10, Some(5))).is_err());
+    }
+
+    #[test]
+    fn deleting_a_course_takes_its_calendar_with_it() {
+        let c = Connection::open_in_memory().unwrap();
+        super::super::prepare(&c).unwrap();
+        let calc = super::super::create_subject(&c, "Calc").unwrap();
+        let phys = super::super::create_subject(&c, "Physics").unwrap();
+        let series = super::super::create_notebook(&c, calc, "Series", "").unwrap();
+
+        add(&c, &EventIn { subject_id: Some(calc), ..ev("Calc final", 10, None) }).unwrap();
+        add(&c, &EventIn { notebook_id: Some(series), ..ev("Series quiz", 20, None) }).unwrap();
+        add(&c, &EventIn { subject_id: Some(phys), ..ev("Physics lab", 30, None) }).unwrap();
+        add(&c, &ev("Dentist", 40, None)).unwrap();
+
+        // Before the subject row goes, while the links still say whose it is.
+        assert_eq!(delete_for_subject(&c, calc).unwrap(), 2);
+        c.execute("DELETE FROM subject WHERE id = ?1", [calc]).unwrap();
+
+        let left: Vec<String> = between(&c, 0, 100).unwrap().into_iter().map(|e| e.title).collect();
+        assert_eq!(left, ["Physics lab", "Dentist"]);
+    }
+
+    #[test]
+    fn another_course_and_the_student_s_own_entries_are_left_alone() {
+        let c = Connection::open_in_memory().unwrap();
+        super::super::prepare(&c).unwrap();
+        let calc = super::super::create_subject(&c, "Calc").unwrap();
+        let phys = super::super::create_subject(&c, "Physics").unwrap();
+        super::super::create_notebook(&c, phys, "Waves", "").unwrap();
+        add(&c, &EventIn { subject_id: Some(phys), ..ev("Physics lab", 30, None) }).unwrap();
+        add(&c, &ev("Dentist", 40, None)).unwrap();
+
+        // A course with nothing in the calendar takes nothing out of it.
+        assert_eq!(delete_for_subject(&c, calc).unwrap(), 0);
+        assert_eq!(between(&c, 0, 100).unwrap().len(), 2);
     }
 
     #[test]

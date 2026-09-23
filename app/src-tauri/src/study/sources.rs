@@ -6,6 +6,7 @@
 use base64::Engine;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tauri::{AppHandle, State};
 
 use super::{expect_one, now_ms, with_db, StudyDb};
@@ -30,6 +31,9 @@ pub struct Source {
     pub unit_count: i64,
     pub char_count: i64,
     pub created_at: i64,
+    /// How the reading went: pages that came back empty, pages that had to be
+    /// transcribed, anything that looked wrong. Null until it is read.
+    pub report: Option<Value>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -62,7 +66,7 @@ pub struct Hit {
     pub score: f64,
 }
 
-const SOURCE_COLS: &str = "id, notebook_id, kind, title, filename, mime, size, url, status, error, unit_count, char_count, created_at";
+const SOURCE_COLS: &str = "id, notebook_id, kind, title, filename, mime, size, url, status, error, unit_count, char_count, created_at, profile_json";
 
 fn row_source(r: &rusqlite::Row) -> rusqlite::Result<Source> {
     Ok(Source {
@@ -79,6 +83,9 @@ fn row_source(r: &rusqlite::Row) -> rusqlite::Result<Source> {
         unit_count: r.get(10)?,
         char_count: r.get(11)?,
         created_at: r.get(12)?,
+        // A report that cannot be parsed is no report; it must never stop the
+        // source itself from loading.
+        report: r.get::<_, Option<String>>(13)?.and_then(|s| serde_json::from_str(&s).ok()),
     })
 }
 
@@ -323,6 +330,20 @@ pub fn source_set_content(app: AppHandle, db: State<'_, StudyDb>, id: i64, units
 pub fn source_set_status(app: AppHandle, db: State<'_, StudyDb>, id: i64, status: String, error: Option<String>) -> Result<(), String> {
     let changed = with_db(&app, &db, |c| c.execute("UPDATE source SET status = ?2, error = ?3 WHERE id = ?1", params![id, status, error]))?;
     expect_one(changed, "Source")
+}
+
+/// Record how reading a source went.
+///
+/// Extraction is the step most likely to be quietly wrong — a scanned page
+/// that transcribed to nothing still looks like a page. The report is what
+/// lets the student, and the agents, see that rather than assume the document
+/// simply had nothing on it.
+#[tauri::command]
+pub fn source_set_report(app: AppHandle, db: State<'_, StudyDb>, id: i64, report: Value) -> Result<(), String> {
+    with_db(&app, &db, |c| {
+        c.execute("UPDATE source SET profile_json = ?2 WHERE id = ?1", params![id, report.to_string()])
+    })
+    .and_then(|n| crate::study::expect_one(n, "source"))
 }
 
 #[tauri::command]

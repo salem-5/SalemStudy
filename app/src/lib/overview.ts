@@ -1,4 +1,4 @@
-import { aiChat, getAiConfig } from './ai';
+import { generateText } from './salem/generate';
 import { studyApi, type NotebookSummary, type Source } from '../study/api';
 
 /**
@@ -27,8 +27,6 @@ export async function writeOverview(nb: NotebookSummary, subject: string): Promi
   if (running.has(nb.id)) throw new Error('Already writing the overview.');
   running.add(nb.id);
   try {
-    const cfg = await getAiConfig();
-    if (!cfg.hasKey) throw new Error('No DeepSeek API key yet. Add one in Settings.');
     const [sources, notes, decks] = await Promise.all([studyApi.sources(nb.id), studyApi.notes(nb.id), studyApi.decks(nb.id)]);
     const ready = sources.filter((s) => s.status === 'ready');
     const hits = ready.length ? await studyApi.sampleSources(ready.map((s) => s.id), 30_000) : [];
@@ -39,9 +37,11 @@ Notes: ${notes.map((n) => n.title).join('; ') || 'none'}
 Flashcard decks: ${decks.map((d) => d.title).join('; ') || 'none'}
 
 ${material || 'There are no source excerpts; base the overview on the titles above.'}`;
-    const r = await aiChat({ feature: 'overview', model: cfg.flashModel, thinking: false, messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: user }] });
-    const text = r.content.trim();
-    if (!text) throw new Error('The model returned nothing.');
+    const text = await generateText({
+      feature: 'overview',
+      system: SYSTEM,
+      instruction: user,
+    });
     await studyApi.setOverview(nb.id, text);
     return text;
   } finally {

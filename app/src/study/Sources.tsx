@@ -16,6 +16,26 @@ export const KindIcon = ({ kind }: { kind: SourceKind }) => {
 
 const unitWord = (s: Source) => (s.kind === 'pdf' ? 'page' : s.kind === 'slides' ? 'slide' : s.kind === 'youtube' ? 'part' : 'section');
 
+/**
+ * What went wrong while reading a source, in a few words.
+ *
+ * A page that came back empty looks exactly like a blank page, so nothing in
+ * the app would otherwise say that four slides of a lecture are missing. This
+ * is the one line that does, on the row itself.
+ */
+function readingTrouble(s: Source): string | null {
+  const r = s.report;
+  if (!r) return null;
+  const notes: string[] = [];
+  if (r.empty.length) {
+    const where = r.empty.slice(0, 3).join(', ');
+    notes.push(`${r.empty.length} empty page${r.empty.length === 1 ? '' : 's'} (${where}${r.empty.length > 3 ? '…' : ''})`);
+  }
+  if (r.duplicated.length) notes.push(`${r.duplicated.length} repeated`);
+  if (r.skipped) notes.push(`${r.skipped} figure page${r.skipped === 1 ? '' : 's'} not read`);
+  return notes.length ? notes.join(' · ') : null;
+}
+
 export function SourcesPane({ notebookId, sources, selected, onToggle, onToggleAll, collapsed, onCollapse, onOpen, onChanged }: {
   notebookId: number;
   sources: Source[];
@@ -128,7 +148,10 @@ export function SourcesPane({ notebookId, sources, selected, onToggle, onToggleA
                     {stage ? <><Loader2 className="spin" />{stage}</>
                       : stuck ? <span className="bad-text">interrupted — read it again</span>
                       : s.status === 'error' ? <span className="bad-text">{s.error ?? 'could not be read'}</span>
-                        : `${s.unitCount} ${unitWord(s)}${s.unitCount === 1 ? '' : 's'}`}
+                        : <>
+                          {`${s.unitCount} ${unitWord(s)}${s.unitCount === 1 ? '' : 's'}`}
+                          {readingTrouble(s) && <span className="bad-text"> · {readingTrouble(s)}</span>}
+                        </>}
                   </span>
                 </span>
               </button>

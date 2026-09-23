@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { charge, type Meter } from './meter';
 import { listen } from '@tauri-apps/api/event';
 import type { Box, Draft, Question } from '../types';
 
@@ -6,6 +7,8 @@ import type { Box, Draft, Question } from '../types';
 // Tauri bridge: settings live in a JSON file next to the app (see lib.rs), so
 // the API key is never stored in the webview. `deepseek_chat` injects the key.
 // ---------------------------------------------------------------------------
+
+export type Effort = 'low' | 'high' | 'max';
 
 export type AiConfig = {
   hasKey: boolean;
@@ -15,6 +18,8 @@ export type AiConfig = {
   baseUrl: string;
   maxAttempts: number;
   pauseAfter: number;
+  /** How hard the model reasons before it answers: 'low', 'high' or 'max'. */
+  effort: Effort;
   /** Offer the sandboxed run_python tool to the model. */
   pythonEnabled: boolean;
   /** Insist on Python for anything that needs calculating. */
@@ -34,6 +39,7 @@ export type ConfigPatch = {
   baseUrl?: string;
   maxAttempts?: number;
   pauseAfter?: number;
+  effort?: Effort;
   pythonEnabled?: boolean;
   pythonAuto?: boolean;
   pythonPath?: string;
@@ -66,12 +72,12 @@ export type ApiMessage =
   | ToolCallMessage
   | ToolResultMessage;
 
-export type AiReply = { content: string; reasoning: string; model: string; usage: unknown; tool_calls?: ToolCall[] | null };
+export type AiReply = { content: string; reasoning: string; model: string; usage: unknown; tool_calls?: ToolCall[] | null; /** USD, worked out where the call was logged. */ cost?: number };
 
 /** What an AI call is for, so Settings can show where the tokens went. */
 export type AiFeature = 'solver' | 'chat' | 'notebook' | 'notes' | 'flashcards' | 'quiz' | 'sources' | 'overview' | 'other';
 
-export const aiChat = (args: {
+export const aiChat = async (args: {
   feature?: AiFeature;
   model: string;
   messages: ApiMessage[];
@@ -80,8 +86,10 @@ export const aiChat = (args: {
   json?: boolean;
   tools?: unknown[];
   toolChoice?: unknown;
-}) =>
-  invoke<AiReply>('deepseek_chat', {
+  /** Adds this call's price to the piece of work it belongs to. */
+  meter?: Meter;
+}) => {
+  const reply = await invoke<AiReply>('deepseek_chat', {
     feature: args.feature ?? 'other',
     model: args.model,
     messages: args.messages,
@@ -91,6 +99,9 @@ export const aiChat = (args: {
     tools: args.tools ?? null,
     choice: args.toolChoice ?? null,
   });
+  charge(args.meter, reply);
+  return reply;
+};
 
 /**
  * Streamed chat: `onDelta` gets every piece of text as DeepSeek produces it;
@@ -106,7 +117,7 @@ export async function aiStream(
     if (e.payload.id === id) onDelta(e.payload.content, e.payload.reasoning);
   });
   try {
-    return await invoke<AiReply & { cancelled?: boolean }>('deepseek_stream', {
+    const reply = await invoke<AiReply & { cancelled?: boolean }>('deepseek_stream', {
       feature: args.feature ?? 'other',
       id,
       model: args.model,
@@ -116,6 +127,8 @@ export async function aiStream(
       tools: args.tools ?? null,
       choice: args.toolChoice ?? null,
     });
+    charge(args.meter, reply);
+    return reply;
   } finally {
     unlisten();
   }

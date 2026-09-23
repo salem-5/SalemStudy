@@ -13,7 +13,11 @@ const GAP = 3;
 const DAY_LABELS = 30;
 const startOfDay = (t: number) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
 
-export function ActivityHeatmap({ times }: { times: number[] }) {
+export function ActivityHeatmap({ times, onPickDay }: {
+  times: number[];
+  /** Clicking a day asks for its breakdown. Omit it and the squares are inert. */
+  onPickDay?: (day: number) => void;
+}) {
   const wrap = useRef<HTMLDivElement>(null);
   const [tip, setTip] = useState<{ x: number; y: number; text: string } | null>(null);
   const [WEEKS, setWeeks] = useState(26);
@@ -82,14 +86,20 @@ export function ActivityHeatmap({ times }: { times: number[] }) {
             {weeks.map((col, w) => col.map((c, d) => (
               <span
                 key={c.t}
-                className={`heat l${level(c.n)}${c.future ? ' future' : ''}`}
+                role={onPickDay && c.n ? 'button' : undefined}
+                tabIndex={onPickDay && c.n ? 0 : undefined}
+                aria-label={onPickDay && c.n ? `${c.n} action${c.n === 1 ? '' : 's'} on ${new Date(c.t).toDateString()}` : undefined}
+                className={`heat l${level(c.n)}${c.future ? ' future' : ''}${onPickDay && c.n ? ' pickable' : ''}`}
                 style={{ gridColumn: w + 1, gridRow: d + 1 }}
+                onClick={() => { if (c.n && !c.future) onPickDay?.(c.t); }}
+                onKeyDown={(e) => { if (e.key === 'Enter' && c.n && !c.future) onPickDay?.(c.t); }}
                 onMouseEnter={(e) => {
                   if (c.future) return;
                   const r = wrap.current!.getBoundingClientRect();
                   const b = (e.target as HTMLElement).getBoundingClientRect();
                   const date = new Date(c.t).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
-                  setTip({ x: b.left - r.left + b.width / 2, y: b.top - r.top, text: `${c.n || 'No'} action${c.n === 1 ? '' : 's'} · ${date}` });
+                  const hint = onPickDay && c.n ? ' · click to see what' : '';
+                  setTip({ x: b.left - r.left + b.width / 2, y: b.top - r.top, text: `${c.n || 'No'} action${c.n === 1 ? '' : 's'} · ${date}${hint}` });
                 }}
               />
             )))}

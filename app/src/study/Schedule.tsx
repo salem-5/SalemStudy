@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Select } from '../components/Select';
 import { Bot, CalendarDays, Check, ChevronDown, ChevronUp, ClipboardCheck, FileUp, Pencil, Plus, Trash } from 'lucide-react';
 import { Modal } from '../components/Dialogs';
 import { api } from '../api';
 import { ViewBar } from '../components/ViewBar';
 import { parseDue } from '../lib/format';
+import { describeChanges, loadCache, needsRefresh, reconcile, saveCache, type CachedAssignment } from '../lib/assignmentCache';
 import { studyApi, type EventInput, type EventKind, type StudyEvent, type SubjectNode } from './api';
 import type { Route } from './pages';
 import { SyllabusDialog } from './Syllabus';
@@ -31,7 +33,15 @@ const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.g
 const fmtTime = (t: number) => new Date(t).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 
-type Due = { id: number; title: string; at: number };
+type Due = {
+  id: number;
+  title: string;
+  at: number;
+  /** No longer listed in WebAssign — kept, and shown greyed. */
+  stale?: boolean;
+  /** Its due date has moved since we last looked. */
+  moved?: boolean;
+};
 
 /** A month's days in whole weeks (Monday first), with blank cells outside the month. */
 function monthCells(month: Date): (Date | null)[] {
@@ -46,10 +56,19 @@ const monthId = (d: Date) => `cal-${d.getFullYear()}-${d.getMonth()}`;
 /** Months added at a time when scrolling near either end. */
 const CHUNK = 6;
 
-export function SchedulePage({ tree, open, refreshTree }: { tree: SubjectNode[]; open: (r: Route) => void; refreshTree?: () => void }) {
+export function SchedulePage({ tree, open, refreshTree, reload = 0 }: {
+  tree: SubjectNode[];
+  open: (r: Route) => void;
+  refreshTree?: () => void;
+  /** Bumped when the study space changed under us — deleting a course takes
+   *  its exams and deadlines with it, and this page may be on screen. */
+  reload?: number;
+}) {
   const [selected, setSelected] = useState(() => startOfDay(new Date()));
   const [events, setEvents] = useState<StudyEvent[]>([]);
   const [dues, setDues] = useState<Due[]>([]);
+  /** One line about what changed in WebAssign since last time. */
+  const [dueNote, setDueNote] = useState<string | null>(null);
   const [editing, setEditing] = useState<StudyEvent | 'new' | null>(null);
   const [importing, setImporting] = useState(false);
   // Months shown, relative to this month; the list grows as you scroll either way.
@@ -65,13 +84,44 @@ export function SchedulePage({ tree, open, refreshTree }: { tree: SubjectNode[];
     const from = months[0].getTime();
     const to = monthOf(months[months.length - 1], 1).getTime();
     studyApi.events(from, to).then(setEvents).catch(() => setEvents([]));
-  }, [months]);
+    // `reload` is not used in here, but deleting a course from the sidebar
+    // takes its entries out of the database while this page is on screen.
+  }, [months, reload]);
   useEffect(load, [load]);
 
-  // WebAssign assignments, if the bridge is up (silently absent otherwise).
+  /**
+   * WebAssign assignments.
+   *
+   * The cache is shown first, so the calendar is populated even when the
+   * bridge is down or no tab is logged in. A fresh listing is then folded in
+   * rather than replacing it: a due date that moved is picked up, and one
+   * that has vanished from WebAssign is marked rather than silently dropped.
+   */
   useEffect(() => {
-    api.assignments().then((l) => setDues([...l.current, ...l.past].map((a) => ({ id: a.id, title: a.name, at: parseDue(a.due).getTime() }))))
-      .catch(() => setDues([]));
+    let alive = true;
+    const show = (list: CachedAssignment[]) => {
+      if (!alive) return;
+      setDues(list.filter((a) => a.due !== null).map((a) => ({
+        id: a.id, title: a.title, at: a.due as number, stale: a.missingSince !== undefined, moved: a.movedFrom !== undefined,
+      })));
+    };
+    const cached = loadCache();
+    show(cached);
+    if (!needsRefresh(cached)) return () => { alive = false; };
+    api.assignments()
+      .then((l) => {
+        const incoming = [...l.current, ...l.past].map((a) => {
+          const at = parseDue(a.due).getTime();
+          return { id: a.id, title: a.name, due: Number.isFinite(at) ? at : null, dueText: String(a.due ?? '') };
+        });
+        const result = reconcile(cached, incoming);
+        saveCache(result.assignments);
+        show(result.assignments);
+        if (alive) setDueNote(describeChanges(result));
+      })
+      // No bridge, no tab, no network: the cache is what the student sees.
+      .catch(() => {});
+    return () => { alive = false; };
   }, []);
 
   const jumpTo = useCallback((d: Date, smooth = true) => {
@@ -194,6 +244,12 @@ export function SchedulePage({ tree, open, refreshTree }: { tree: SubjectNode[];
             <span>{selected.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</span>
           </div>
           <button type="button" className="btn primary" onClick={() => setEditing('new')}><Plus />Add to this day</button>
+          {dueNote && (
+            <p className="muted small due-note">
+              WebAssign: {dueNote}
+              <button type="button" className="link" onClick={() => setDueNote(null)}>dismiss</button>
+            </p>
+          )}
           {!dayEvents.length && !dayDues.length && <p className="muted small">Nothing planned. Double-click a day to add something quickly.</p>}
           <ul className="day-list stagger">
             {dayEvents.map((e, i) => (
@@ -221,11 +277,15 @@ export function SchedulePage({ tree, open, refreshTree }: { tree: SubjectNode[];
               </li>
             ))}
             {dayDues.map((d) => (
-              <li key={`d${d.id}`} className="day-event webassign">
+              <li key={`d${d.id}`} className={`day-event webassign${d.stale ? ' stale' : ''}`}>
                 <span className="check-btn static"><ClipboardCheck /></span>
                 <div className="day-event-main">
                   <div className="day-event-title">{d.title}</div>
-                  <div className="day-event-meta">WebAssign · due {fmtTime(d.at)}</div>
+                  <div className="day-event-meta">
+                    WebAssign · due {fmtTime(d.at)}
+                    {d.moved && <span className="tag moved" title="The due date changed since the last check"> moved</span>}
+                    {d.stale && <span className="tag stale" title="No longer listed in WebAssign — kept in case it comes back"> not listed any more</span>}
+                  </div>
                 </div>
                 <button type="button" className="link" onClick={() => open({ kind: 'solver' })}>open</button>
               </li>
@@ -332,17 +392,19 @@ function EventEditor({ event, day, notebooks, courses, onClose, onSaved }: {
               <label className="field"><span>Course</span>
                 <span className="course-select" style={{ '--k': course ? subjectColor(course) : NO_COURSE } as React.CSSProperties}>
                   <span className="kind-dot" />
-                  <select className="select" value={subjectId ?? ''} onChange={(e) => { setSubjectId(e.target.value ? Number(e.target.value) : null); setNotebookId(null); }}>
-                    <option value="">No course</option>
-                    {courses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
+                  <Select className="select" value={String(subjectId ?? '')} onChange={(v) => { setSubjectId(v ? Number(v) : null); setNotebookId(null); }}
+                    options={[
+                      { value: '', label: 'No course' },
+                      ...courses.map((c) => ({ value: String(c.id), text: c.name, label: <span className="opt-dotted"><i style={{ background: subjectColor(c) }} />{c.name}</span> })),
+                    ]} />
                 </span>
               </label>
               <label className="field"><span>Notebook <i className="muted">optional</i></span>
-                <select className="select" value={notebookId ?? ''} disabled={!course} onChange={(e) => setNotebookId(e.target.value ? Number(e.target.value) : null)}>
-                  <option value="">{course ? 'None' : 'Pick a course first'}</option>
-                  {notebooks.filter((n) => n.subjectId === subjectId).map((n) => <option key={n.id} value={n.id}>{n.label.split(' / ').pop()}</option>)}
-                </select>
+                <Select className="select" value={String(notebookId ?? '')} disabled={!course} onChange={(v) => setNotebookId(v ? Number(v) : null)}
+                  options={[
+                    { value: '', label: course ? 'None' : 'Pick a course first' },
+                    ...notebooks.filter((n) => n.subjectId === subjectId).map((n) => ({ value: String(n.id), label: n.label.split(' / ').pop() ?? n.label })),
+                  ]} />
               </label>
             </div>
             <label className="field"><span>Notes</span><textarea className="textarea" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} /></label>

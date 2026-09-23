@@ -95,7 +95,10 @@
 :root[data-theme='light'] .qfig img.img-invert { filter: none; }
 :root[data-theme='light'] .qfig { background: #fff; }
 
-* { box-sizing: border-box; border-radius: 0 !important; }
+* { box-sizing: border-box; }
+/* Sharp (the default): nothing is rounded, whatever a rule below says. The
+   rounded shape lifts this and sets its own radii (end of this file). */
+:root:not([data-shape='rounded']) * { border-radius: 0 !important; }
 html, body, #root { height: 100%; margin: 0; }
 body {
   background: var(--bg);
@@ -192,14 +195,6 @@ code { color: var(--accent); font-size: 0.92em; }
   padding-bottom: 20px;
 }
 .side-top { display: flex; gap: 6px; padding: 10px; border-bottom: 1px solid var(--line); }
-.side-top select {
-  flex: 1;
-  min-width: 0;
-  background: var(--panel);
-  border: 1px solid var(--line-2);
-  padding: 4px 6px;
-  font: 12px var(--mono);
-}
 .side-loading { padding: 14px; font-family: var(--mono); color: var(--muted); }
 .side-group { padding-top: 6px; }
 .side-title {
@@ -1464,7 +1459,7 @@ code { color: var(--accent); font-size: 0.92em; }
 .check:hover { border-color: var(--accent); }
 .check.on { background: var(--good); border-color: var(--good); animation: pop var(--dur-2) var(--ease); }
 .task-x { background: none; border: 0; color: var(--muted); font-size: 16px; line-height: 1; cursor: pointer; opacity: 0; padding: 0 4px; transition: opacity var(--dur-1) var(--ease), color var(--dur-1) var(--ease); }
-.task:hover .task-x, .thread-item:hover .task-x, .quiz-row:hover .task-x, .task-x:focus-visible { opacity: 1; }
+.task:hover .task-x, .thread-item:hover .task-x, .task-x:focus-visible { opacity: 1; }
 .task-x:hover { color: var(--bad); }
 .tasks-done-head { display: flex; justify-content: space-between; align-items: center; margin: 14px 0 6px; }
 .pomo-settings { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px 16px; align-items: end; }
@@ -1734,12 +1729,6 @@ code { color: var(--accent); font-size: 0.92em; }
 
 /* ------------------------------------------------------------- quizzes */
 
-.quiz-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.quiz-row { display: flex; align-items: center; background: var(--panel); border: 1px solid var(--line-2); transition: border-color var(--dur-1) var(--ease); }
-.quiz-row:hover { border-color: var(--line-3); }
-.quiz-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; background: none; border: 0; color: var(--text); text-align: left; cursor: pointer; }
-.quiz-title { font: 600 13px var(--mono); }
-.quiz-meta { font: 11.5px var(--mono); }
 
 .question-card { width: min(760px, 100%); margin: 0 auto; padding: 32px 24px; display: flex; flex-direction: column; gap: 16px; animation: slide-in var(--dur-3) var(--ease); }
 .q-meta { display: flex; justify-content: space-between; font: 11.5px var(--mono); }
@@ -1773,6 +1762,21 @@ code { color: var(--accent); font-size: 0.92em; }
 .choice.wrong { border-color: var(--bad); background: var(--bad-wash); animation: shake 320ms var(--ease); }
 .choice.picked kbd { border-color: var(--accent); color: var(--accent); }
 .numeric-row { display: flex; align-items: center; gap: 10px; max-width: 320px; }
+/* Fill the gap: the box sits in the sentence, where the gap was. */
+.gap-slot { display: inline-block; vertical-align: baseline; }
+.gap-input {
+  font: inherit; color: var(--text); background: var(--panel);
+  border: 0; border-bottom: 2px solid var(--accent); border-radius: 3px 3px 0 0;
+  padding: 0 6px; margin: 0 2px; height: 1.5em; line-height: 1.5em; min-width: 7ch; max-width: 100%;
+  text-align: center; outline: none; transition: border-color 0.12s, background 0.12s;
+}
+.gap-input::placeholder { color: var(--text-2); font-size: 0.85em; }
+.gap-input:focus { background: var(--panel-2); box-shadow: 0 0 0 2px var(--accent-dim); }
+.gap-input:disabled { opacity: 1; cursor: default; }
+.gap-input.right { border-bottom-color: var(--good); background: var(--good-wash); color: var(--good); }
+.gap-input.wrong { border-bottom-color: var(--bad); background: var(--bad-wash); color: var(--bad); text-decoration: line-through; }
+.gap-view { display: inline-block; width: 7ch; height: 1.1em; vertical-align: -0.15em; margin: 0 2px; border-bottom: 2px solid var(--line-3); background: var(--panel); border-radius: 2px 2px 0 0; }
+.gap-fallback { margin-top: 10px; }
 .numeric-row .field-input { font-family: var(--mono); font-size: 15px; }
 .feedback { padding: 14px 16px; border: 1px solid; border-left-width: 3px; animation: rise-in var(--dur-2) var(--ease); }
 .feedback.right { border-color: var(--good-dim); border-left-color: var(--good); background: var(--good-wash); }
@@ -1834,6 +1838,10 @@ code { color: var(--accent); font-size: 0.92em; }
 .msg-plain { white-space: pre-wrap; word-break: break-word; font-size: 14px; line-height: 1.55; }
 .msg-atts:empty { display: none; }
 .msg-atts { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+/* A reference on a message that has been sent: same place as its files. */
+.ref-chips.msg-refs { justify-content: flex-end; padding: 0; }
+/* Near the top of the thread there is no room above; drop it below instead. */
+.msg-refs .ref-peek { bottom: auto; top: calc(100% + 8px); left: auto; right: 0; }
 .msg-body { display: flex; flex-direction: column; gap: 10px; font-size: 14.5px; line-height: 1.65; }
 .msg-error { padding: 8px 12px; border: 1px solid var(--bad); color: var(--bad); font: 12.5px var(--mono); background: var(--bad-wash); }
 .msg-error.muted { border-color: var(--line-2); color: var(--muted); background: none; }
@@ -2040,7 +2048,7 @@ code { color: var(--accent); font-size: 0.92em; }
 .combo-caret.lucide { width: 13px; height: 13px; }
 .spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.q-verify .lucide, .quiz-title .lucide { margin-right: 5px; width: 13px; height: 13px; }
+.q-verify .lucide { margin-right: 5px; width: 13px; height: 13px; }
 .feedback-icon .lucide { width: 13px; height: 13px; }
 .grade-icon .lucide { width: 16px; height: 16px; }
 .att-remove .lucide { width: 13px; height: 13px; }
@@ -2144,43 +2152,76 @@ code { color: var(--accent); font-size: 0.92em; }
 
 /* ------------------------------------------------------------------ decks */
 
-.deck-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.deck-item { display: flex; align-items: center; gap: 4px; padding-right: 6px; background: var(--panel); border: 1px solid var(--line-2); transition: border-color var(--dur-1) var(--ease), transform var(--dur-1) var(--ease); }
-.deck-item:hover { border-color: var(--line-3); }
-.deck-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 10px 6px 10px 10px; background: none; border: 0; color: var(--text); text-align: left; cursor: pointer; }
-.deck-icon { display: grid; place-items: center; width: 30px; height: 30px; flex: none; background: var(--bg); border: 1px solid var(--line-2); color: var(--accent); }
-.deck-icon .lucide { width: 15px; height: 15px; }
-.deck-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.deck-title { font: 600 13px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.deck-meta { font: 11px var(--mono); color: var(--muted); }
-.deck-play { height: 28px; min-width: 28px; }
-.deck-play:hover:not(:disabled) { color: var(--bg); background: var(--accent); border-color: var(--accent); box-shadow: none; }
+/* A deck, a quiz or a note in the notebook's right-hand pane: one shape for
+   all three, so each tab reads the same way. */
+.set-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.set-item { display: flex; align-items: center; gap: 2px; padding-right: 6px; background: var(--panel); border: 1px solid var(--line-2); transition: border-color var(--dur-1) var(--ease), background-color var(--dur-1) var(--ease); }
+.set-item:hover { border-color: var(--line-3); }
+.set-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 10px 6px 10px 10px; background: none; border: 0; color: var(--text); text-align: left; cursor: pointer; }
+.set-icon { display: grid; place-items: center; width: 30px; height: 30px; flex: none; background: var(--bg); border: 1px solid var(--line-2); color: var(--accent); }
+.set-icon .lucide { width: 15px; height: 15px; }
+.set-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.set-title { min-width: 0; font: 600 13px/1.35 var(--mono); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.set-title .set-new { margin-left: 6px; vertical-align: 1px; }
+.set-meta { font: 11px/1.4 var(--mono); color: var(--muted); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.set-go { width: 14px; height: 14px; flex: none; margin-left: auto; color: var(--muted); transition: transform var(--dur-1) var(--ease), color var(--dur-1) var(--ease); }
+.set-item.pending .set-main:hover .set-go { color: var(--text); transform: translateX(2px); }
+.set-play { height: 28px; min-width: 28px; }
+.set-play:hover:not(:disabled) { color: var(--bg); background: var(--accent); border-color: var(--accent); box-shadow: none; }
+/* Just written, not looked at yet. */
+.set-item.fresh { border-color: var(--accent-dim); background: var(--accent-wash); }
+.set-new { display: inline-block; padding: 0 6px; border-radius: 999px; background: var(--accent); color: var(--bg); font: 600 10px/16px var(--mono); text-transform: uppercase; letter-spacing: 0.04em; }
+.set-warn { display: flex; align-items: center; gap: 4px; font: 11px var(--mono); color: var(--bad); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.set-warn .lucide { width: 12px; height: 12px; flex: none; }
+.tab-busy { width: 12px; height: 12px; margin-left: 6px; color: var(--accent); vertical-align: -1px; }
 
-.deck-body { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 22px 30px; display: flex; flex-direction: column; gap: 14px; }
-.deck-view .deck-hero { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; padding: 16px 18px; background: var(--panel); border: 1px solid var(--line-2); }
-.deck-scores { display: flex; gap: 28px; }
-.deck-scores > div { display: flex; flex-direction: column; gap: 2px; font: 11.5px var(--mono); }
-.deck-num { font: 500 24px/1 var(--mono); color: var(--text); font-variant-numeric: tabular-nums; }
-.deck-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* One deck or quiz: scores and how to play it, then everything in it. */
+.set-body { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 22px 30px; display: flex; flex-direction: column; gap: 14px; }
+.set-hero { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; padding: 16px 18px; background: var(--panel); border: 1px solid var(--line-2); }
+.set-scores { display: flex; gap: 28px; }
+.set-scores > div { display: flex; flex-direction: column; gap: 2px; font: 11.5px var(--mono); }
+.set-num { font: 500 24px/1 var(--mono); color: var(--text); font-variant-numeric: tabular-nums; }
+.set-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .toggle.small { grid-column: auto; font: 12px var(--mono); }
-.deck-cards-head { display: flex; align-items: center; }
-.deck-cards-head .panel-title { margin: 0; }
-.deck-cards { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.deck-card { display: flex; align-items: stretch; background: var(--panel); border: 1px solid var(--line-2); transition: border-color var(--dur-1) var(--ease); }
-.deck-card:hover { border-color: var(--line-3); }
-.deck-card-main { flex: 1; min-width: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); cursor: pointer; outline: none; }
-.deck-card-main:focus-visible { box-shadow: inset 0 0 0 1px var(--accent-dim); }
-.deck-card-front, .deck-card-back { padding: 10px 12px; background: var(--panel); font-size: 13.5px; line-height: 1.5; min-width: 0; }
-.deck-card-back { color: var(--text-2); }
-.deck-card-stat { display: grid; place-items: center; width: 34px; flex: none; color: var(--muted); border-left: 1px solid var(--line); }
-.deck-card-stat.good { color: var(--good); }
-.deck-card-stat.bad { color: var(--bad); }
-.deck-card-stat .lucide { width: 14px; height: 14px; }
+.set-list-head { display: flex; align-items: center; gap: 10px; }
+.set-list-head .panel-title { margin: 0; }
+.set-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.set-entry { display: flex; align-items: stretch; background: var(--panel); border: 1px solid var(--line-2); transition: border-color var(--dur-1) var(--ease); }
+.set-entry:hover { border-color: var(--line-3); }
+.set-entry-n { flex: none; width: 34px; padding-top: 11px; text-align: center; font-size: 11px; color: var(--muted); border-right: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.set-entry-main { flex: 1; min-width: 0; cursor: pointer; outline: none; }
+.set-entry-main:focus-visible { box-shadow: inset 0 0 0 1px var(--accent-dim); }
+.set-entry-stat { display: grid; place-items: center; width: 34px; flex: none; color: var(--muted); border-left: 1px solid var(--line); }
+.set-entry-stat.good { color: var(--good); }
+.set-entry-stat.bad { color: var(--bad); }
+.set-entry-stat .lucide { width: 14px; height: 14px; }
+.set-entry-side { display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 0 12px; border-left: 1px solid var(--line); flex: none; }
+/* A card: its two sides side by side. */
+.set-card { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; height: 100%; background: var(--line); }
+.set-card-front, .set-card-back { padding: 10px 12px; background: var(--panel); font-size: 13.5px; line-height: 1.5; min-width: 0; }
+.set-card-back { color: var(--text-2); }
+/* A question: what kind it is, what it asks, and its answer. */
+.set-question { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; }
+@media (max-width: 640px) {
+  .set-card { grid-template-columns: 1fr; }
+  .set-scores { gap: 18px; }
+}
 
 .pick-list { display: flex; flex-direction: column; gap: 2px; max-height: 210px; overflow-y: auto; padding: 6px; background: var(--bg); border: 1px solid var(--line-2); }
 .pick { display: flex; align-items: center; gap: 8px; padding: 5px 6px; font-size: 13px; cursor: pointer; }
 .pick:hover { background: var(--panel); }
 .pick span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Sources in reading order: a number, and a way to move each up or down. */
+.pick-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.pick-row .pick { flex: 1; min-width: 0; }
+.pick-row:hover { background: var(--panel); }
+.pick-row .pick:hover { background: none; }
+.pick-ord { flex: none; min-width: 16px; text-align: right; font-size: 11px; color: var(--text-2); }
+.pick-move { display: flex; flex: none; opacity: 0; transition: opacity 0.12s; }
+.pick-row:hover .pick-move, .pick-move:focus-within { opacity: 1; }
+.pick-move .icon-btn { width: 22px; height: 22px; }
+.pick-move .icon-btn svg { width: 14px; height: 14px; }
+@media (hover: none) { .pick-move { opacity: 1; } }
 .center-bar .tabs { width: 230px; }
 .tab .lucide { width: 13px; height: 13px; margin-right: 5px; }
 
@@ -2356,7 +2397,7 @@ select { color-scheme: dark; }
 body { -webkit-user-select: none; user-select: none; }
 input, textarea, [contenteditable='true'],
 .md, .msg-plain, .msg-bubble, .note-paper, .note-source, .viewer-body, .card-face, .q-prompt, .feedback, .choice,
-.py-code, .py-out, pre, code, .qhtml, .qtext, .question, .deck-card-main, .summary-missed, .source-viewer, .search-hit-text, .event-notes, .overview-body {
+.py-code, .py-out, pre, code, .qhtml, .qtext, .question, .set-entry-main, .summary-missed, .source-viewer, .search-hit-text, .event-notes, .overview-body {
   -webkit-user-select: text;
   user-select: text;
 }
@@ -2573,15 +2614,27 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .theme-switching, .theme-switching * { transition: background-color 300ms var(--ease), color 300ms var(--ease), border-color 300ms var(--ease) !important; }
 
 /* ── settings: appearance + usage ───────────────────────── */
-.theme-picker { display: flex; gap: 8px; }
-.theme-opt { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 10px 7px; min-width: 92px; background: var(--bg-2); border: 1px solid var(--line-2); color: var(--text-2); font: 12px var(--sans); cursor: pointer; transition: border-color var(--dur-1), color var(--dur-1); }
+.theme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
+.theme-opt { display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding: 6px 6px 7px; background: var(--bg-2); border: 1px solid var(--line-2); color: var(--text-2); font: 12px var(--sans); cursor: pointer; transition: border-color var(--dur-1), color var(--dur-1), transform var(--dur-1) var(--ease); }
 .theme-opt:hover { color: var(--text); border-color: var(--line-3); }
-.theme-opt.on { color: var(--text); border-color: var(--accent); }
-.theme-swatch { display: grid; place-items: center; width: 72px; height: 38px; border: 1px solid var(--line-2); }
-.theme-swatch .lucide { width: 15px; height: 15px; }
-.theme-swatch.dark { background: #0e1012; color: #d7dce0; }
-.theme-swatch.light { background: #f6f6f3; color: #1c2025; }
-.theme-swatch.system { background: linear-gradient(135deg, #0e1012 50%, #f6f6f3 50%); color: #8fb3d1; }
+.theme-opt.on { color: var(--text); border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.theme-name { display: flex; align-items: center; justify-content: center; gap: 5px; }
+.theme-name .lucide { width: 12px; height: 12px; opacity: 0.7; }
+/* A tiny window in the theme's own colours: a sidebar, and a card with two
+   lines of text and an accent mark. */
+.theme-mini { position: relative; display: flex; gap: 4px; height: 46px; padding: 5px; background: var(--b); border: 1px solid rgba(128, 128, 128, 0.25); overflow: hidden; }
+.theme-mini.split { padding: 0; gap: 0; border: 0; }
+.theme-mini.split > .theme-mini { flex: 1; border: 0; }
+.mini-side { width: 18%; background: var(--p); opacity: 0.8; }
+.mini-card { flex: 1; display: flex; flex-direction: column; gap: 4px; padding: 5px; background: var(--p); }
+.mini-card b { display: block; height: 3px; width: 80%; background: var(--t); opacity: 0.75; border-radius: 2px; }
+.mini-card b + b { width: 55%; opacity: 0.45; }
+.mini-card em { display: block; margin-top: auto; width: 34%; height: 6px; background: var(--a); border-radius: 2px; }
+:root[data-shape='rounded'] .theme-mini { border-radius: var(--r-sm); }
+:root[data-shape='rounded'] .theme-mini .mini-card, :root[data-shape='rounded'] .theme-mini .mini-side { border-radius: 3px; }
+.shape-seg { width: 220px; }
+.shape-seg .seg-item { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.shape-seg .lucide { width: 12px; height: 12px; }
 .usage-totals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line-2); border: 1px solid var(--line-2); margin-bottom: 12px; }
 .usage-total { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; background: var(--panel); font-size: 11.5px; }
 .usage-num { font: 600 17px var(--mono); color: var(--text); font-variant-numeric: tabular-nums; }
@@ -2819,3 +2872,707 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .pomo-ring-track { stroke: var(--line-2); }
 .pomo-ring-fill { stroke: var(--accent); stroke-linecap: round; transition: stroke-dashoffset 400ms linear, stroke var(--dur-3) var(--ease); }
 .pomo-ring.short .pomo-ring-fill, .pomo-ring.long .pomo-ring-fill { stroke: var(--good); }
+
+/* ------------------------------------------------------------------ quizzes
+   A progress bar while answering, hints, and the "Ask AI" sheet. */
+
+.quiz-stage { display: flex; flex-direction: column; min-height: 0; }
+
+.quiz-resumed { padding: 8px 0 0; }
+
+.quiz-hint {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--mid);
+  border-radius: 8px;
+  background: var(--mid-wash);
+  color: var(--text);
+}
+.quiz-hint svg { width: 15px; height: 15px; flex: none; margin-top: 2px; color: var(--mid); }
+.quiz-hint p:last-child { margin-bottom: 0; }
+.quiz-hint-btn { margin-top: 12px; }
+
+.quiz-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 0 4px;
+  border-top: 1px solid var(--line);
+  margin-top: auto;
+}
+
+/* The Ask AI sheet: a full chat, so it needs room and its own scrolling. */
+.modal.quiz-ask {
+  display: flex;
+  flex-direction: column;
+  width: min(900px, 94vw);
+  height: min(80vh, 780px);
+  padding: 0;
+  overflow: hidden;
+}
+.quiz-ask-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.quiz-ask .chat { flex: 1; min-height: 0; }
+.quiz-ask-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
+}
+
+/* The hint replayed under the feedback: one line, with its maths rendered. */
+.feedback-hint { display: flex; align-items: baseline; gap: 6px; margin-top: 8px; }
+.feedback-hint > svg { width: 13px; height: 13px; flex: none; align-self: center; }
+.feedback-hint-label { flex: none; }
+.md.tight > :first-child { margin-top: 0; }
+.md.tight > :last-child { margin-bottom: 0; }
+
+/* The hint button sits under the answer, not across it. */
+.quiz-hint-btn { align-self: flex-start; width: fit-content; }
+
+/* Previous and Next sit inset from the edges of the stage, with room inside
+   them, rather than flush against the frame. */
+.quiz-footer {
+  /* The card behind animates in from the side; without this the overflow
+     shows a scrollbar for the length of the animation. */
+  overflow: hidden;
+  padding-bottom: 18px;
+}
+.quiz-footer .btn { gap: 6px; }
+.quiz-footer .nav-prev { padding-left: 16px; margin-left: 4px; }
+.quiz-footer .nav-next { padding-right: 16px; margin-right: 4px; }
+.quiz-footer .nav-prev .lucide, .quiz-footer .nav-next .lucide { width: 14px; height: 14px; }
+.quiz-finish { padding-left: 18px; padding-right: 18px; }
+
+/* The question animates in from the side, which overflows the stage for a
+   frame or two. Clipping it here is what stops the scrollbar flashing. */
+.quiz-stage, .question-askable { overflow-x: hidden; }
+.quiz-stage { padding-bottom: 4px; }
+
+/* A small button that sits comfortably in a header row. */
+.btn.small { padding: 4px 10px; font-size: 12px; }
+.btn.small .lucide { width: 13px; height: 13px; }
+
+/* The quiz's progress bar sits under the header, like a deck's. */
+.quiz-stage > .progress { margin: 10px 0 14px; }
+
+/* Choices and answers carry maths, so the feedback line renders them rather
+   than printing the LaTeX at the student. */
+.feedback-said { display: inline-flex; align-items: baseline; gap: 4px; }
+.md.inline, .md.inline > p { display: inline; margin: 0; }
+
+/* A boot failure in a browser tab, before React is up to show anything. */
+.boot-error {
+  max-width: 34rem;
+  margin: 18vh auto;
+  padding: 18px 20px;
+  border: 1px solid var(--bad);
+  border-radius: 10px;
+  background: var(--bad-wash);
+  color: var(--text);
+  font: 14px/1.6 var(--mono);
+}
+
+/* An assignment WebAssign has stopped listing is kept and greyed, never
+   silently deleted — it may be a bad fetch rather than a removed assignment. */
+.day-event.webassign.stale { opacity: 0.55; }
+.day-event .tag {
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 11px;
+  border: 1px solid var(--line-2);
+}
+.day-event .tag.moved { color: var(--mid); border-color: var(--mid); }
+.day-event .tag.stale { color: var(--muted); }
+.due-note { display: flex; gap: 8px; align-items: baseline; }
+
+/* "Ask AI about this card" sits under the grade buttons, out of the way of
+   the flip target but reachable without leaving the card. */
+.card-actions { display: flex; justify-content: center; margin-top: 14px; }
+
+/* The deck player's footer matches the quiz's. */
+.review .quiz-footer { border-top: none; margin-top: 6px; }
+
+.quiz-question-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 11.5px; }
+.quiz-question-prompt { font-size: 13.5px; line-height: 1.5; }
+.quiz-question-answer { display: flex; align-items: baseline; gap: 5px; font-size: 12.5px; }
+
+/* Two short fields side by side in a dialog. */
+.form-row { display: flex; gap: 12px; }
+.form-row > .field { flex: 1; min-width: 0; }
+
+
+/* A deck or quiz being written: it takes its place in the list straight away
+   so the student can see it coming, and can stop it from there. */
+.set-item.pending { border-style: dashed; }
+.set-item.pending .set-icon { color: var(--text-2); }
+.set-item.pending.failed { border-color: var(--bad); }
+.set-item.pending.failed .set-icon, .set-item.pending.cancelled .set-icon { color: var(--bad); }
+
+/* A day on the activity map, opened up: what was studied, and where. */
+.heat.pickable { cursor: pointer; }
+.heat.pickable:hover { outline: 1px solid var(--accent); outline-offset: 1px; }
+.activity-day { display: flex; flex-direction: column; gap: 14px; }
+.activity-subject { display: flex; flex-direction: column; gap: 4px; }
+.activity-notebook {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--line-2);
+  border-radius: 7px;
+  background: var(--panel);
+}
+.activity-notebook-name { flex: 1; min-width: 0; text-align: left; font-size: 13px; }
+.activity-counts { display: flex; gap: 10px; flex: none; }
+.activity-count { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-2); }
+.activity-count .lucide { width: 13px; height: 13px; }
+
+/* ---------------------------------------------------------- onboarding
+   One row per thing Salem needs, each saying what it is for. Nothing is
+   installed without the student reading why. */
+.onboard-list { display: flex; flex-direction: column; gap: 8px; margin: 14px 0; }
+.onboard-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 9px;
+  background: var(--panel);
+}
+.onboard-row.ready { border-color: var(--good-dim); }
+.onboard-icon { display: grid; place-items: center; width: 20px; flex: none; padding-top: 2px; color: var(--mid); }
+.onboard-row.ready .onboard-icon { color: var(--good); }
+.onboard-icon .lucide { width: 15px; height: 15px; }
+.onboard-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.onboard-name { font-size: 13.5px; }
+.onboard-detail { font-family: var(--mono); font-size: 11.5px; word-break: break-word; }
+.onboard-row .btn { flex: none; align-self: center; }
+
+/* When the AI runtime will not start, the reason matters more than the fact. */
+.runtime-trouble { display: flex; flex-direction: column; gap: 6px; }
+.runtime-trouble summary { cursor: pointer; }
+.runtime-log {
+  max-height: 180px;
+  overflow: auto;
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: var(--bg);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  color: var(--text-2);
+}
+
+.quiz-ask-wait { display: grid; place-items: center; flex: 1; padding: 30px; }
+
+/* ------------------------------------------------------- job in progress
+   The card standing in for the thing being made is also the way into what
+   it is doing: a spinner says it is alive, the steps say where it has got. */
+
+.task-detail { display: flex; flex-direction: column; gap: 14px; }
+.task-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel-2);
+}
+.task-detail-head.failed { border-color: var(--bad-dim, var(--line)); }
+.task-detail-icon { display: grid; place-items: center; color: var(--accent); flex: none; }
+.task-detail-icon .lucide { width: 16px; height: 16px; }
+.task-detail-head.completed .task-detail-icon { color: var(--ok, var(--accent)); }
+.task-detail-head.failed .task-detail-icon,
+.task-detail-head.cancelled .task-detail-icon { color: var(--muted); }
+.task-detail-now { font-size: 13px; min-width: 0; }
+.task-detail-time { margin-left: auto; font-size: 12px; font-variant-numeric: tabular-nums; flex: none; }
+
+.task-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  max-height: 46vh;
+  margin: 0;
+  padding: 0 0 0 2px;
+  overflow: auto;
+  list-style: none;
+}
+.task-steps li {
+  display: flex;
+  gap: 10px;
+  padding: 7px 4px 7px 14px;
+  border-left: 2px solid var(--line);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.task-steps li.now { border-left-color: var(--accent); color: var(--text); }
+.task-step-at { flex: none; width: 52px; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.task-step-text { min-width: 0; color: var(--text-2); }
+.task-steps li.now .task-step-text { color: var(--text); }
+
+/* ------------------------------------------------------------ busy marker
+   Work the student cannot see from where they are standing: an answer being
+   written in a chat they have left, a deck being made in another notebook.
+   A dot on the way back to it, not a number they have to read. */
+.nav-busy {
+  width: 6px;
+  height: 6px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+  animation: nav-busy-pulse 1.6s var(--ease) infinite;
+}
+.nav-item.on .nav-busy { background: currentColor; }
+@keyframes nav-busy-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.8); }
+}
+@media (prefers-reduced-motion: reduce) { .nav-busy { animation: none; } }
+
+/* ------------------------------------------------------ selection menu
+   The app suppresses the native context menu, so selected text needs its own.
+   It shows what you selected, so there is no doubt what the AI will be given. */
+.selection-menu {
+  position: fixed;
+  z-index: 80;
+  min-width: 210px;
+  max-width: 260px;
+  padding: 6px;
+  border: 1px solid var(--line-3);
+  border-radius: 9px;
+  background: var(--panel);
+  animation: menu-in 0.1s var(--ease);
+}
+@keyframes menu-in { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: none; } }
+.selection-quote {
+  padding: 6px 8px 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11.5px;
+  font-style: italic;
+  line-height: 1.4;
+}
+.selection-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.selection-item:hover { background: var(--panel-2); }
+.selection-item .lucide { width: 14px; height: 14px; color: var(--text-2); }
+@media (prefers-reduced-motion: reduce) { .selection-menu { animation: none; } }
+
+/* ----------------------------------------------------- referenced material
+   Shown like attachments, because that is what they are: the assistant has
+   been handed this, and the student should be able to see exactly what. */
+.ref-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 4px 6px;
+}
+.ref-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  padding: 3px 9px 3px 7px;
+  border: 1px solid var(--accent-dim);
+  border-radius: 999px;
+  background: var(--accent-wash);
+  cursor: default;
+}
+.ref-chip-icon { display: grid; place-items: center; flex: none; color: var(--accent); }
+.ref-chip-icon .lucide { width: 13px; height: 13px; }
+.ref-chip-label {
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* What was actually handed over, on hover: out of the way until it is wanted. */
+.ref-peek {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: max-content;
+  max-width: 340px;
+  padding: 9px 11px;
+  border: 1px solid var(--line-3);
+  border-radius: 9px;
+  background: var(--panel);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(3px);
+  transition: opacity 0.12s var(--ease), transform 0.12s var(--ease), visibility 0.12s;
+  pointer-events: none;
+}
+.ref-chip:hover .ref-peek,
+.ref-chip:focus-visible .ref-peek { opacity: 1; visibility: visible; transform: none; }
+.ref-peek-head { font-size: 12px; color: var(--text); }
+.ref-peek-quote {
+  font-size: 11.5px;
+  color: var(--text-2);
+  font-style: italic;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ref-peek-note { font-size: 11px; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .ref-peek { transition: none; } }
+
+/* The note's scroller keeps its own box; the askable wrapper only exists to
+   catch selections inside it. */
+.note-askable { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+
+/* The deck player's card slides away when it is graded, which overflows for
+   a frame; clipping it keeps a scrollbar from flashing. */
+.review-askable { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-x: hidden; }
+
+/* Tab mode's dialog had no room in it at all. */
+.modal.tab-mode { padding: 18px 20px 16px; }
+.modal.tab-mode .field { margin-top: 14px; }
+.modal.tab-mode .modal-actions { margin-top: 18px; }
+
+/* ------------------------------------------------------------------ cost
+   What a piece of work cost: small, tabular, never louder than the work. */
+.set-cost { margin-right: 6px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.task-detail-cost { font-variant-numeric: tabular-nums; }
+.note-cost { font: 11.5px var(--mono); font-variant-numeric: tabular-nums; }
+.reply-cost {
+  margin-top: 6px;
+  font: 11px var(--mono);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+.reply-cost.live { color: var(--text-2); }
+
+/* Maths KaTeX still cannot typeset: the source, readable, not an alarm. */
+.math-raw { font-family: var(--mono); font-size: 0.92em; color: var(--text-2); }
+
+/* Fast mode, in the generate dialog. */
+.toggle.gen-fast { align-items: flex-start; grid-column: auto; line-height: 1.45; }
+.toggle.gen-fast input { margin-top: 3px; }
+.toggle.gen-fast .lucide { flex: none; width: 14px; height: 14px; margin: 2px 0 0; color: var(--accent); }
+.toggle.gen-fast > span { color: var(--text); }
+
+/* -------------------------------------------------------------- dropdowns
+   The app's own select (components/Select.tsx). The trigger keeps the look
+   of whatever it stands in for (.select, .field-input); the list is the same
+   family as the context menus. */
+.select-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--dur-1) var(--ease), background-color var(--dur-1) var(--ease);
+}
+.select-trigger:hover:not(:disabled) { border-color: var(--line-3); }
+.select-trigger:focus-visible, .select-trigger.open { border-color: var(--accent-dim); outline: none; }
+.select-trigger:disabled { opacity: 0.5; cursor: default; }
+.select-trigger .select-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.select-trigger .select-value.muted { color: var(--muted); }
+.select-caret { flex: none; width: 14px; height: 14px; color: var(--muted); transition: transform var(--dur-1) var(--ease), color var(--dur-1) var(--ease); }
+.select-trigger.open .select-caret { transform: rotate(180deg); color: var(--accent); }
+.field .select-trigger, .ai-settings .select-trigger { width: 100%; }
+.side-top .side-course { flex: 1; font-size: 12px; background: var(--panel); padding: 4px 6px; }
+
+.select-pop {
+  position: fixed;
+  z-index: 90;
+  max-width: min(420px, calc(100vw - 16px));
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--accent-dim);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.55);
+  animation: select-in var(--dur-1) var(--ease);
+  transform-origin: top center;
+}
+.select-pop.up { transform-origin: bottom center; }
+@keyframes select-in { from { opacity: 0; transform: scaleY(0.96); } to { opacity: 1; transform: none; } }
+.select-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 10px;
+  border-left: 2px solid transparent;
+  font: 12.5px var(--sans);
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+.select-option.active { background: var(--accent-wash); border-left-color: var(--accent); }
+.select-option.chosen { color: var(--accent); }
+.select-option.disabled { color: var(--muted); cursor: default; }
+.select-option-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.select-option-text > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-option-hint { font: 11px var(--mono); color: var(--muted); }
+.select-check { flex: none; width: 13px; height: 13px; color: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .select-pop { animation: none; } .select-caret { transition: none; } }
+.opt-dotted { display: inline-flex; align-items: center; gap: 8px; }
+.opt-dotted i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.course-select .select-trigger .opt-dotted i { display: none; }
+
+/* ---------------------------------------------------------- colour themes
+   Palettes over the dark or light base (lib/theme.ts): surfaces, lines,
+   text and the palette's own accent. A custom accent still wins, so the
+   accent is only set where there is none. */
+:root[data-palette='midnight'] {
+  --bg: #0b1020;
+  --bg-2: #0f1528;
+  --panel: #131a30;
+  --panel-2: #18203a;
+  --line: #1c2440;
+  --line-2: #26304f;
+  --line-3: #36426a;
+  --text: #d5dbf0;
+  --text-2: #97a1c2;
+  --muted: #646e91;
+  --text-strong: #ffffff;
+  --scrim-strong: rgba(11, 16, 32, 0.88);
+  --heat-0: #161d33;
+}
+:root[data-palette='midnight']:not([data-accent]) { --accent: #7aa2f7; --accent-2: #9bb8ff; --accent-dim: #3d5288; --accent-wash: rgba(122, 162, 247, 0.08); }
+:root[data-palette='nord'] {
+  --bg: #242933;
+  --bg-2: #2a303b;
+  --panel: #2e3440;
+  --panel-2: #343b48;
+  --line: #3b4252;
+  --line-2: #434c5e;
+  --line-3: #4c566a;
+  --text: #e5e9f0;
+  --text-2: #b6bfcc;
+  --muted: #7b879b;
+  --text-strong: #eceff4;
+  --scrim-strong: rgba(36, 41, 51, 0.9);
+  --heat-0: #333a47;
+  --good: #a3be8c;
+  --good-wash: color-mix(in srgb, #a3be8c 9%, transparent);
+  --good-dim: color-mix(in srgb, #a3be8c 45%, var(--bg));
+  --bad: #bf616a;
+  --bad-wash: color-mix(in srgb, #bf616a 9%, transparent);
+  --mid: #ebcb8b;
+  --mid-wash: color-mix(in srgb, #ebcb8b 9%, transparent);
+  --info: #b48ead;
+}
+:root[data-palette='nord']:not([data-accent]) { --accent: #88c0d0; --accent-2: #a3d4e0; --accent-dim: #4f7481; --accent-wash: rgba(136, 192, 208, 0.09); }
+:root[data-palette='mocha'] {
+  --bg: #11111b;
+  --bg-2: #181825;
+  --panel: #1e1e2e;
+  --panel-2: #232336;
+  --line: #292a3e;
+  --line-2: #313244;
+  --line-3: #45475a;
+  --text: #cdd6f4;
+  --text-2: #a6adc8;
+  --muted: #7f849c;
+  --text-strong: #ffffff;
+  --scrim-strong: rgba(17, 17, 27, 0.88);
+  --heat-0: #232336;
+  --good: #a6e3a1;
+  --good-wash: color-mix(in srgb, #a6e3a1 9%, transparent);
+  --good-dim: color-mix(in srgb, #a6e3a1 45%, var(--bg));
+  --bad: #f38ba8;
+  --bad-wash: color-mix(in srgb, #f38ba8 9%, transparent);
+  --mid: #fab387;
+  --mid-wash: color-mix(in srgb, #fab387 9%, transparent);
+  --info: #89b4fa;
+}
+:root[data-palette='mocha']:not([data-accent]) { --accent: #cba6f7; --accent-2: #dcc3fa; --accent-dim: #6c5a8c; --accent-wash: rgba(203, 166, 247, 0.08); }
+:root[data-palette='forest'] {
+  --bg: #0d1411;
+  --bg-2: #111a16;
+  --panel: #15201b;
+  --panel-2: #1a2721;
+  --line: #1e2b25;
+  --line-2: #283830;
+  --line-3: #384c42;
+  --text: #d6e2da;
+  --text-2: #9db0a5;
+  --muted: #66786e;
+  --text-strong: #ffffff;
+  --scrim-strong: rgba(13, 20, 17, 0.88);
+  --heat-0: #18231e;
+  --good: #a9d18e;
+  --good-wash: color-mix(in srgb, #a9d18e 9%, transparent);
+  --good-dim: color-mix(in srgb, #a9d18e 45%, var(--bg));
+  --mid: #e0b870;
+  --mid-wash: color-mix(in srgb, #e0b870 9%, transparent);
+}
+:root[data-palette='forest']:not([data-accent]) { --accent: #7fc8a0; --accent-2: #9dd8b8; --accent-dim: #3f6b55; --accent-wash: rgba(127, 200, 160, 0.08); }
+:root[data-palette='rose'] {
+  --bg: #15131f;
+  --bg-2: #191724;
+  --panel: #1f1d2e;
+  --panel-2: #26233a;
+  --line: #2a2740;
+  --line-2: #34304d;
+  --line-3: #4a4566;
+  --text: #e0def4;
+  --text-2: #a8a4c4;
+  --muted: #6e6a86;
+  --text-strong: #ffffff;
+  --scrim-strong: rgba(21, 19, 31, 0.88);
+  --heat-0: #221f33;
+  --good: #9ccfd8;
+  --good-wash: color-mix(in srgb, #9ccfd8 9%, transparent);
+  --good-dim: color-mix(in srgb, #9ccfd8 45%, var(--bg));
+  --bad: #eb6f92;
+  --bad-wash: color-mix(in srgb, #eb6f92 9%, transparent);
+  --mid: #f6c177;
+  --mid-wash: color-mix(in srgb, #f6c177 9%, transparent);
+  --info: #c4a7e7;
+}
+:root[data-palette='rose']:not([data-accent]) { --accent: #ebbcba; --accent-2: #f2d0cf; --accent-dim: #7d5f64; --accent-wash: rgba(235, 188, 186, 0.08); }
+:root[data-palette='mist'] {
+  --bg: #f1f4f8;
+  --bg-2: #e8edf3;
+  --panel: #ffffff;
+  --panel-2: #f3f6fa;
+  --line: #e1e7ee;
+  --line-2: #d0d9e3;
+  --line-3: #aebccb;
+  --text: #17222d;
+  --text-2: #445566;
+  --muted: #7a8896;
+  --text-strong: #0a1118;
+  --scrim-strong: rgba(241, 244, 248, 0.92);
+  --heat-0: #e4eaf1;
+}
+:root[data-palette='mist']:not([data-accent]) { --accent: #0f7c80; --accent-2: #0a6468; --accent-dim: #93c6c8; --accent-wash: rgba(15, 124, 128, 0.08); }
+:root[data-palette='latte'] {
+  --bg: #eff1f5;
+  --bg-2: #e6e9ef;
+  --panel: #f7f8fb;
+  --panel-2: #eceef3;
+  --line: #dfe2ea;
+  --line-2: #ccd0da;
+  --line-3: #acb0be;
+  --text: #4c4f69;
+  --text-2: #5c5f77;
+  --muted: #8c8fa1;
+  --text-strong: #2b2d3f;
+  --scrim-strong: rgba(239, 241, 245, 0.92);
+  --heat-0: #e3e6ee;
+  --good: #40a02b;
+  --good-wash: color-mix(in srgb, #40a02b 9%, transparent);
+  --good-dim: color-mix(in srgb, #40a02b 45%, var(--bg));
+  --bad: #d20f39;
+  --bad-wash: color-mix(in srgb, #d20f39 9%, transparent);
+  --mid: #df8e1d;
+  --mid-wash: color-mix(in srgb, #df8e1d 9%, transparent);
+  --info: #1e66f5;
+}
+:root[data-palette='latte']:not([data-accent]) { --accent: #8839ef; --accent-2: #7028d6; --accent-dim: #c3a6f5; --accent-wash: rgba(136, 57, 239, 0.08); }
+:root[data-palette='sepia'] {
+  --bg: #f4ecd8;
+  --bg-2: #ede3cc;
+  --panel: #fbf6ea;
+  --panel-2: #f1e8d4;
+  --line: #e4d8bd;
+  --line-2: #d8c9a8;
+  --line-3: #bfae8a;
+  --text: #3b2f22;
+  --text-2: #5f4e3b;
+  --muted: #8a7a64;
+  --text-strong: #22190f;
+  --scrim-strong: rgba(244, 236, 216, 0.92);
+  --heat-0: #e8dcc2;
+  --good: #4f7a28;
+  --good-wash: color-mix(in srgb, #4f7a28 9%, transparent);
+  --good-dim: color-mix(in srgb, #4f7a28 45%, var(--bg));
+  --bad: #b3402f;
+  --bad-wash: color-mix(in srgb, #b3402f 9%, transparent);
+  --mid: #a8641a;
+  --mid-wash: color-mix(in srgb, #a8641a 9%, transparent);
+}
+:root[data-palette='sepia']:not([data-accent]) { --accent: #8a5a2b; --accent-2: #6f4520; --accent-dim: #cfae88; --accent-wash: rgba(138, 90, 43, 0.09); }
+
+/* ------------------------------------------------------------------ shape
+   Rounded (Settings → Appearance): the same app with every box softened a
+   little. Only things that are boxes — controls, cards, bubbles, dialogs —
+   are rounded; panes, bars and dividers stay square, since rounding a layout
+   edge only opens gaps at the corners. */
+:root { --r-sm: 0; --r: 0; --r-lg: 0; }
+:root[data-shape='rounded'] { --r-sm: 5px; --r: 7px; --r-lg: 11px; }
+
+:root[data-shape='rounded'] :is(
+  kbd, .icon-btn, .btn, .chip, .badge, .qcell, .chip-btn, .nb-chip, .cite, .cited-item, .att-chip, .att-icon,
+  .py-badge, .py-pkg, .ai-py-chip, .scope, .pomo-chip, .pomo-chip-toggle, .msg-act, .msg-copy, .code-copy,
+  .think-toggle, .suggest-chip, .icon-choice, .set-icon, .rail-btn, .grade-btn, .grade-icon, .check-btn, .opt-mark,
+  .scroll-bottom, .md code, .select-option, .ctx-item, .set-new, .seg-item, .tab-count, .qsubs, .slot-input,
+  .slot-math, .combo-input, .feedback-icon, .quiz-question-n, .pending-more, .gap-input, .gap-view
+) { border-radius: var(--r-sm); }
+
+:root[data-shape='rounded'] :is(
+  .field-input, .select, .textarea, .field input, .text-input, .ai-settings input, .ai-chat-input, .ai-manual-input,
+  .thread-search, .thread-rename, .nav-search, .cmdk-input, .export-field, .mathed-input textarea,
+  .set-item, .set-entry, .set-hero, .choice, .choices button, .feedback, .feedback-explain, .card-face.mini, .task, .stat, .card-panel,
+  .nb-card, .subject-card, .home-stats, .upcoming-row, .day-event, .memory-item, .memory-list, .memory-bar,
+  .syllabus-card, .syllabus-event, .syllabus-empty, .syllabus-drop, .export-item, .result, .result-part, .box,
+  .notice, .toast, .msg-bubble, .msg-error, .py-block, .codeblock, .md pre, .code-block, .action-block, .composer,
+  .edit-composer, .theme-opt, .theme-swatch, .style-preview, .usage-totals, .tone-opt, .pick-list, .seg,
+  .selection-quote, .quiz-figure, .note-source, .refine-bar, .danger-panel, .data-row, .drop-zone, .add-sources,
+  .sources-empty, .skel, .viz-tip, .chat-figure img, .viewer-image, .ai-bubble, .suggest, .deck-hero, .pomo-side,
+  .schedule-tip, .qframe, .qfig, .ai-py, .quiz-hint, .question-card, .reasoning, .onboard-row, .activity-notebook,
+  .task-detail-head, .overview-body, .quiz-question, .gen-status, .form-err, .palette-card, .chatw-list, .focus-timer,
+  .ai-warn, .ai-status, .ai-balance, .py-log, .export-progress, .mathed-preview, .mathed-source, .qimg, .qtext
+) { border-radius: var(--r); }
+
+:root[data-shape='rounded'] :is(
+  .modal, .ctx-menu, .select-pop, .cmdk, .card-face, .export-loading-box, .combo-list, .selection-menu
+) { border-radius: var(--r-lg); }
+
+/* What has a coloured inside needs its corners clipped to match. */
+/* (overflow: hidden lets a flex child shrink below its content, so these are
+   kept from shrinking — otherwise a list row or a score strip loses its
+   bottom half inside a scrolling column.) */
+:root[data-shape='rounded'] :is(.set-entry, .codeblock, .md pre, .usage-totals, .seg, .modal, .card-face, .py-block, .quiz-question) { overflow: hidden; flex-shrink: 0; }
+:root[data-shape='rounded'] .seg-glider { border-radius: calc(var(--r) - 2px); }
+:root[data-shape='rounded'] .modal > header { border-radius: var(--r-lg) var(--r-lg) 0 0; }
+/* Things that are a stripe on one side keep that side square. */
+:root[data-shape='rounded'] :is(.select-option, .ctx-item) { border-left-width: 2px; }
+:root[data-shape='rounded'] .progress, :root[data-shape='rounded'] .progress > i { border-radius: 999px; }
+:root[data-shape='rounded'] :is(input[type='checkbox'], input[type='radio']) { border-radius: 4px; }
+:root[data-shape='rounded'] input[type='radio'] { border-radius: 50%; }

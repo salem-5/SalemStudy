@@ -1,7 +1,14 @@
-import { aiChat, extractJsonObject, getAiConfig, type ApiMessage } from './ai';
 import { pythonStatus, runPython } from './python';
+import { cardGuidance, courseFlavour, guidance } from './subjects';
+import {
+  balancedTrim, budgetFor, CEILING, expectedItems, FAST_WINDOW_CHARS, fastMaterialFor, WINDOW_CHARS, coreOnly, isShrunk, MAX_ITEMS, uncovered, materialFor, pagesLabel, planWalk, sizeRule,
+  type CardOptions, type CardSize, type GenSource, type Page, type WalkSource, type Window,
+} from './deckPlan';
+import { generate, generateQuick } from './salem/generate';
+import type { Meter } from './meter';
 import { CARDS_SYSTEM, GRADE_SYSTEM, QUIZ_SYSTEM } from './prompts';
-import { studyApi, type ChatMessage, type NewCard, type QuestionType, type QuizQuestion, type SourceHit } from '../study/api';
+import { checkAgrees, defaultTolerance, parseNumber, shuffleChoices, usableHint } from './quizRules';
+import { studyApi, type NewCard, type Difficulty, type QuestionType, type QuizQuestion, type SourceHit } from '../study/api';
 
 /**
  * Flashcard and quiz generation with DeepSeek Flash. Output comes through a
@@ -11,18 +18,77 @@ import { studyApi, type ChatMessage, type NewCard, type QuestionType, type QuizQ
 
 export type StudyContext = { subject: string; notebook: string; courseContext: string };
 
-export type GenSource =
-  | { kind: 'topic'; prompt: string }
-  | { kind: 'chat'; messages: ChatMessage[] }
-  | { kind: 'mistakes'; items: { prompt: string; answer: string; explanation: string; topic: string }[] }
-  /** Excerpts of the notebook's sources, plus what to focus on. */
-  | { kind: 'sources'; hits: SourceHit[]; focus: string };
+/** What the student asked for, beyond the material and the count. */
+export type QuizOptions = {
+  /** 'mixed' lets the generator spread the difficulty across the quiz. */
+  difficulty?: Difficulty | 'mixed';
+  /** Which question types to use. Empty means "whatever suits the material". */
+  types?: QuestionType[];
+  /** How thorough to be; the number of questions follows from it. */
+  size?: CardSize;
+  /** A ceiling below `MAX_ITEMS`, when something asked for a particular number. */
+  limit?: number;
+} & RunOptions;
+
+/** How a deck or quiz is written, whatever goes in it. */
+export type RunOptions = {
+  /**
+   * Fast mode (the default): fewer, larger passes, run more at once, each
+   * shown its own pages in full and the rest in outline. Off, every pass
+   * reads all of the material — slower and several times the tokens, for
+   * when the connections between distant pages matter most.
+   */
+  fast?: boolean;
+  /** Adds what every call cost to this deck or quiz. */
+  meter?: Meter;
+};
+
+/** The course's own rules for cards, and the difficulty asked for. */
+function cardStyle(ctx: StudyContext, options: CardOptions): string {
+  const lines = [cardGuidance(courseFlavour(ctx))];
+  if (options.difficulty && options.difficulty !== 'mixed') lines.push(`Pitch them at a ${options.difficulty} level.`);
+  return lines.join('\n');
+}
+
+const TYPE_LABEL: Record<QuestionType, string> = {
+  mcq: 'single-answer multiple choice',
+  multi: 'select-all-that-apply',
+  tf: 'true/false',
+  numeric: 'numeric answer',
+  short: 'short written answer',
+  blank: 'fill in the blank',
+};
+
+function describeOptions(options: QuizOptions): string {
+  const lines: string[] = [];
+  if (options.difficulty && options.difficulty !== 'mixed') {
+    lines.push(`Difficulty: ${options.difficulty}. Every question should be at about this level.`);
+  } else {
+    lines.push('Difficulty: mixed — a few easy, most medium, one or two hard. Set each question\'s difficulty honestly.');
+  }
+  // Every type ticked (the default) is the same as none: use whichever
+  // suits each point. A numeric question on a histology slide is not variety.
+  if (options.types?.length && options.types.length < Object.keys(TYPE_LABEL).length) {
+    lines.push(`Use only these question types: ${options.types.map((t) => TYPE_LABEL[t]).join(', ')}.`);
+  } else {
+    lines.push('Use whichever question type suits each point, and mix them across the quiz.');
+  }
+  return lines.join('\n');
+}
 
 function describeSource(src: GenSource): string {
   if (src.kind === 'topic') return `Material to cover (from the student):\n${src.prompt}`;
   if (src.kind === 'sources') {
     const blocks = src.hits.map((h) => `<excerpt source="${h.sourceTitle}" where="${h.label}">\n${h.text}\n</excerpt>`).join('\n\n');
-    return `Base everything on these excerpts from the student's course material (not on outside knowledge). Cover the important ideas across all of them.${src.focus.trim() ? `\nFocus on: ${src.focus.trim()}` : ''}\n\n${blocks}`;
+    // The student's own notes are material too, and often the better guide to
+    // what their course actually emphasised.
+    const notes = (src.notes ?? [])
+      .map((n) => `<note title="${n.title}">\n${n.content.slice(0, 30_000)}\n</note>`)
+      .join('\n\n');
+    const material = [blocks, notes].filter(Boolean).join('\n\n');
+    const what = src.notes?.length && src.hits.length ? "course material and the student's own notes"
+      : src.notes?.length ? "the student's own notes" : "the student's course material";
+    return `Base everything on this ${what} (not on outside knowledge). Cover the important ideas across all of it.${src.focus.trim() ? `\nFocus on: ${src.focus.trim()}` : ''}\n\n${material}`;
   }
   if (src.kind === 'mistakes') {
     return `Questions the student got wrong:\n${src.items.map((m, i) => `${i + 1}. ${m.prompt}\n   Answer: ${m.answer}\n   Why: ${m.explanation}`).join('\n')}`;
@@ -35,26 +101,35 @@ function describeSource(src: GenSource): string {
 }
 
 function contextBlock(ctx: StudyContext): string {
-  return `Course: ${ctx.subject}\nNotebook: ${ctx.notebook}${ctx.courseContext.trim() ? `\nCourse notes (notation, conventions — follow them):\n${ctx.courseContext.trim()}` : ''}`;
+  // The subject decides how the questions should be asked, so it goes in with
+  // the course itself rather than being bolted on at the end.
+  return `Course: ${ctx.subject}\nNotebook: ${ctx.notebook}${ctx.courseContext.trim() ? `\nCourse notes (notation, conventions — follow them):\n${ctx.courseContext.trim()}` : ''}
+
+## This subject
+${guidance(courseFlavour(ctx))}`;
 }
 
-async function forcedCall(system: string, user: string, tool: { function: { name: string } }): Promise<Record<string, unknown>> {
+type GenTool = { function: { name: string; parameters: unknown } };
+
+/**
+ * One generation: the material and the instruction in, the data out.
+ *
+ * A plain model call. The tool declaration is still the schema — it is what
+ * the answer is checked against, and what the model is shown — but there is
+ * no agent around it: everything this needs is already in `user`, and a quiz
+ * whose answers have to be computed is verified afterwards by running the
+ * `check_code` it wrote, which is cheaper and stricter than asking a second
+ * model to look.
+ */
+async function generated(system: string, user: string, tool: GenTool, meter?: Meter): Promise<Record<string, unknown>> {
   const feature = tool.function.name === 'save_flashcards' ? 'flashcards' : 'quiz';
-  const cfg = await getAiConfig();
-  if (!cfg.hasKey) throw new Error('No DeepSeek API key yet. Add one in Settings.');
-  const messages: ApiMessage[] = [{ role: 'system', content: system }, { role: 'user', content: user }];
-  const reply = await aiChat({
+  return generate<Record<string, unknown>>({
     feature,
-    model: cfg.flashModel,
-    messages,
-    tools: [tool],
-    toolChoice: { type: 'function', function: { name: tool.function.name } },
-    thinking: false,
+    system,
+    instruction: user,
+    schema: tool.function.parameters,
+    meter,
   });
-  const call = reply.tool_calls?.find((c) => c.function?.name === tool.function.name);
-  const args = extractJsonObject(call?.function.arguments ?? reply.content);
-  if (!args) throw new Error('The model did not return anything usable. Try again.');
-  return args;
 }
 
 // ------------------------------------------------------------- flashcards
@@ -67,17 +142,22 @@ const CARDS_TOOL = {
     parameters: {
       type: 'object',
       properties: {
-        title: { type: 'string', description: 'A short, specific name for this set, 2–5 words, e.g. "Lines in 3D space".' },
+        title: { type: 'string', description: 'A short, specific name for the whole deck — all of the material, not only the pages you are writing — 2–5 words, e.g. "Bone healing and osteomyelitis".' },
         cards: {
           type: 'array',
           items: {
             type: 'object',
             properties: {
-              front: { type: 'string', description: 'A question or cue. Markdown; maths in $...$.' },
-              back: { type: 'string', description: 'The answer, short, with one line of why if useful. Markdown; maths in $...$.' },
+              front: { type: 'string', description: 'A cue asking for exactly ONE thing. Markdown; maths in $...$.' },
+              back: { type: 'string', description: 'The answer to that one thing, short, with at most one line of why. If the back would list two things, split it into two cards. Markdown; maths in $...$.' },
               topic: { type: 'string', description: 'Short topic name, e.g. "Ratio test".' },
+              importance: { type: 'string', enum: ['core', 'detail'], description: 'core: needed to pass the exam on this material. detail: worth knowing, but supporting.' },
+              from_source: { type: 'string', description: 'The exact title of the excerpt or note this card came from, so the student can trace it back. Leave it out only if you wrote it from general knowledge.' },
+              from_where: { type: 'string', description: 'Where in that source, exactly as the excerpt is labelled (e.g. "page 12", "slide 4").' },
             },
-            required: ['front', 'back', 'topic'],
+            // Only what makes it a card; a missing topic or importance is
+            // filled in by the reader rather than failing the whole pass.
+            required: ['front', 'back'],
           },
         },
       },
@@ -86,46 +166,303 @@ const CARDS_TOOL = {
   },
 };
 
-export async function generateCards(ctx: StudyContext, src: GenSource, count: number, existingFronts: string[]): Promise<{ title: string; cards: NewCard[] }> {
-  const avoid = existingFronts.length ? `\n\nThe notebook already has cards with these fronts; do not repeat them:\n${existingFronts.slice(-150).map((f) => `- ${f}`).join('\n')}` : '';
-  const args = await forcedCall(
-    CARDS_SYSTEM,
-    `${contextBlock(ctx)}\n\n${describeSource(src)}\n\nWrite ${count} flashcards.${avoid}`,
-    CARDS_TOOL,
-  );
-  const seen = new Set(existingFronts.map((f) => f.trim().toLowerCase()));
-  const out: NewCard[] = [];
-  for (const c of (args.cards as { front?: unknown; back?: unknown; topic?: unknown }[] | undefined) ?? []) {
-    const front = String(c.front ?? '').trim();
-    const back = String(c.back ?? '').trim();
-    if (!front || !back || seen.has(front.toLowerCase())) continue;
-    seen.add(front.toLowerCase());
-    out.push({ front, back, topic: String(c.topic ?? '').trim() });
+// ------------------------------------------------------------- the walk
+
+/**
+ * Whole pages, grouped back into their sources in the order they arrived.
+ *
+ * The generate dialog hands over every page of every chosen source, in the
+ * reading order the student set, so this is the walk's input as it stands.
+ */
+export function hitsToWalk(hits: SourceHit[]): WalkSource[] {
+  const out: WalkSource[] = [];
+  for (const hit of hits) {
+    let source = out[out.length - 1];
+    if (!source || source.id !== hit.sourceId) {
+      // A source seen earlier but interrupted keeps its pages together.
+      source = out.find((s) => s.id === hit.sourceId) ?? { id: hit.sourceId, title: hit.sourceTitle, kind: hit.kind, pages: [] };
+      if (!out.includes(source)) out.push(source);
+    }
+    source.pages.push({
+      sourceId: hit.sourceId,
+      sourceTitle: hit.sourceTitle,
+      kind: hit.kind,
+      ord: hit.unitFrom,
+      label: hit.label,
+      text: hit.text,
+    });
   }
-  if (!out.length) throw new Error('No new cards came back. Try a different prompt.');
-  return { title: String(args.title ?? '').trim() || 'Flashcards', cards: out };
+  return out;
+}
+
+/**
+ * Where in the window an item says it came from, as a source reference.
+ *
+ * `null` when it names a page outside the window: the pass wrote about a page
+ * another pass has, and the item is a duplicate of that pass's (or, filed
+ * under this window's first page, a card in the wrong place).
+ */
+function pageRef(raw: RawQuestion, window: Window): QuizQuestion['sources'] | null {
+  const where = String(raw.from_where ?? '').trim().toLowerCase();
+  const number = /(\d+)/.exec(where)?.[1];
+  const named = window.pages.find((p) => p.label.toLowerCase() === where)
+    ?? (number ? window.pages.find((p) => /(\d+)/.exec(p.label)?.[1] === number) : undefined);
+  if (!named && number) return null;
+  const page: Page = named ?? window.pages[0];
+  return [{ sourceId: page.sourceId, title: page.sourceTitle, label: page.label, unit: page.ord }];
+}
+
+/**
+ * Run `work` over `items` a few at a time, keeping their order.
+ *
+ * The passes do not depend on each other — each can see all of the material
+ * — so there is no reason to make a student wait for them one by one. A few
+ * at a time rather than all at once keeps well inside the provider's limits.
+ */
+async function inOrder<T, R>(items: T[], limit: number, work: (item: T, i: number) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const lane = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await work(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, lane));
+  return out;
+}
+
+const PARALLEL_PASSES = 3;
+
+/**
+ * How a walk runs, fast or thorough: its windows, how many at once, and what
+ * each pass is shown.
+ */
+function walkPlan(walk: WalkSource[], fast: boolean) {
+  const windows = planWalk(walk, fast ? FAST_WINDOW_CHARS : WINDOW_CHARS);
+  return {
+    windows,
+    fast,
+    // Fast passes are small enough to run all at once within the provider's
+    // limits; thorough ones each carry the whole material.
+    parallel: fast ? 6 : PARALLEL_PASSES,
+    material: (w: Window) => (fast ? fastMaterialFor(walk, w) : materialFor(walk, w.sourceId)),
+  };
+}
+
+/** Told to the second, smaller pass over the pages a first pass skipped. */
+const MISSED_NOTE = '\n\nThe first pass over this part of the material stopped before reaching these pages. Write for them now — the same way, at the same depth — and only for them: nothing from any other page. A title page (the course, the lecturers), a divider, or a page that only repeats an earlier one gets nothing; returning an empty list is fine.';
+
+/**
+ * Put a pass's items in the order of their pages, keeping the order they
+ * were written in within a page. A follow-up for a skipped page is written
+ * after the rest, but belongs where its page is.
+ */
+function inPageOrder<T extends { item: { sourceRefs?: unknown; sources?: QuizQuestion['sources'] } }>(items: T[]): T[] {
+  const unit = (t: T) => ((t.item.sources ?? (t.item.sourceRefs as QuizQuestion['sources']))?.[0]?.unit ?? 0);
+  return items.map((t, i) => ({ t, i })).sort((a, b) => unit(a.t) - unit(b.t) || a.i - b.i).map((x) => x.t);
+}
+
+/** Why a pass failed, short enough for a line of progress. */
+const errorText = (e: unknown) => String(e instanceof Error ? e.message : e).slice(0, 200);
+
+/** One pass's instructions: the material, then the pages this pass writes up. */
+function passPrompt(
+  ctx: StudyContext,
+  material: string,
+  window: Window,
+  what: 'cards' | 'questions',
+  size: CardSize,
+  extra: string,
+  focus: string,
+  all: Window[],
+  limit?: number,
+  fast = false,
+): string {
+  const shrunk = isShrunk(all, size, limit, fast);
+  const rule = sizeRule(size === 'fewer' && fast ? 'standard' : size, what, shrunk || (fast && size === 'fewer'));
+  const scale = expectedItems(window, all, size, limit, fast);
+  // In fast mode the number is the deck's own share, so it is said firmly:
+  // everything written past it is paid for and then thrown away.
+  const most = Math.max(scale + 1, Math.ceil(scale * 1.15));
+  const noun = what === 'cards' ? 'flashcards' : 'quiz questions';
+  const order = window.pages.map((p) => p.label).join(', ');
+  return [
+    contextBlock(ctx),
+    '# The material',
+    fast
+      ? 'An outline of all of it, in the order it is read — the first line of every page — and then, in full, the pages you are writing for. The outline is there so you know what comes before and after.'
+      : 'All of it, in the order it is read. You are writing for only part of it (below); the rest is here so you know what comes before and after.',
+    material,
+    '# Your pass',
+    `Write the ${noun} for “${window.sourceTitle}”, ${pagesLabel(window)} — those pages and nothing else. Other passes cover every other page, so anything outside these pages will be written by them; do not write it here, even if it is important.`,
+    `Go through these pages from the top of the first to the bottom of the last, in order: ${order}. Write the ${what} for each part as you reach it, so they come out in the order the material teaches it.`,
+    'Use the rest of the material for context: a question can lean on a definition from an earlier page, and should not ask about something as if it were new when these pages are only mentioning it in passing.',
+    rule,
+    focus.trim() ? `The student asked to focus on: ${focus.trim()}. Write only what bears on that; a page that does not touch it gets nothing.` : '',
+    'A page of yours that only repeats something an earlier page already said — a recap slide, a diagram of a process the text before it described — gets cards only for what is new on it; the pass that wrote the earlier page has the rest.',
+    `Record the page each one came from in from_where, exactly as the page is labelled (e.g. “${window.pages[0].label}”). That is the only place a page goes: the ${what === 'cards' ? 'card' : 'question'} itself never mentions a page, slide or “the diagram” — the student answers it without the material in front of them, so ask about the thing itself.`,
+    fast
+      ? `Write about ${scale} for these pages, and no more than ${most}. ${size === 'fewer' ? 'Only what a student has to know to pass: the key definitions, stages, numbers, classic features and complications.' : 'Spend them on what matters most.'} Spread them across all of these pages from the first to the last — do not use them up before you reach the end. Every page that teaches something gets at least one, however short it is; a title or divider page gets none. Leave from_source out: from_where is enough.`
+      : shrunk
+      // A long set of material on a setting that keeps the deck short: the
+      // pass has to choose, and has to spread its choices to the last page.
+      ? `The whole ${what === 'cards' ? 'deck' : 'quiz'} is kept to a size a student can work through, so these pages come to about ${scale}. Spend them on what matters most, spread across all of these pages from the first to the last — do not use them up before you reach the end. Every page that teaches something gets at least one, however short it is: a slide that only names four conditions still gets a card asking for them. A title or divider page gets none.`
+      : `For pages like these, this setting usually comes to about ${scale}. That is a sense of scale, not a quota: write fewer if the pages hold less than their length suggests (long figure descriptions, a recap of an earlier page), more if they are dense with separate facts. A title or divider page gets none.`,
+    'No single page needs more than about eight. If one seems to — a diagram with many labels, a long table — you are splitting one idea into many: ask for the list as a list, or keep to the labels that are worth learning.',
+    fast && what === 'questions'
+      ? 'Keep every explanation to one or two sentences and every hint to one short line. Write check_code only where there is something to compute.'
+      : '',
+    extra,
+  ].filter(Boolean).join('\n\n');
+}
+
+/**
+ * A name for the whole deck or quiz, once it exists.
+ *
+ * Every pass sees all of the material, but asked for a title a pass names the
+ * pages it was writing — so a deck about four diseases came back called "Bone
+ * fracture healing". Naming it from the topics it actually covers, in order,
+ * is one small call and gets it right.
+ */
+async function nameIt(what: 'deck' | 'quiz', sources: WalkSource[], topics: string[], fallback: string, meter?: Meter): Promise<string> {
+  const covered = [...new Set(topics.map((t) => t.trim()).filter(Boolean))].slice(0, 40);
+  if (!covered.length) return fallback;
+  const args = await generateQuick<{ title?: unknown }>({
+    feature: what === 'deck' ? 'flashcards' : 'quiz',
+    system: `Name a study ${what} like a good document title: 2 to 6 words, specific to what it covers, no quotes, no final full stop. It covers everything listed, so name all of it, not the first part.`,
+    instruction: `Material: ${sources.map((x) => x.title).join('; ')}\n\nWhat it covers, in order:\n${covered.map((t) => `- ${t}`).join('\n')}`,
+    schema: { type: 'object', required: ['title'], properties: { title: { type: 'string' } } },
+    meter,
+  }).catch(() => null);
+  const title = String(args?.title ?? '').trim().replace(/^["'#*\s]+|["'.*\s]+$/g, '');
+  return title ? title.slice(0, 80) : fallback;
+}
+
+/** Which page an item came from, for trimming without losing a page. */
+const pageKey = (item: { sourceRefs?: unknown; sources?: QuizQuestion['sources'] }): string => {
+  const ref = (item.sources ?? (item.sourceRefs as QuizQuestion['sources']))?.[0];
+  return ref ? `${ref.sourceId}:${ref.unit}` : '';
+};
+
+/** Normalised text for spotting a card written twice across passes. */
+const sameCard = (front: string) => front.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+// ------------------------------------------------------------- flashcards
+
+/**
+ * Write a deck from the material, page by page.
+ *
+ * Source material is walked: every page, in reading order, each run of pages
+ * written up by its own pass that can see all of the material around it. The
+ * number of cards is whatever the pages called for. Anything else — a topic,
+ * a chat, a set of mistakes — has no pages to walk and is written in one go,
+ * still with the model deciding how many.
+ */
+export async function generateCards(
+  ctx: StudyContext,
+  src: GenSource,
+  options: CardOptions & RunOptions & { limit?: number; existingFronts?: string[] } = {},
+  progress: (text: string) => void = () => {},
+): Promise<{ title: string; cards: NewCard[]; skipped: string[] }> {
+  const size = options.size ?? 'standard';
+  const gen = (system: string, user: string, tool: GenTool) => generated(system, user, tool, options.meter);
+  let max = Math.min(MAX_ITEMS, options.limit ?? CEILING[size]);
+  const seen = new Set((options.existingFronts ?? []).map(sameCard));
+  /** One list per pass, so going over the ceiling can be trimmed fairly. */
+  const groups: Tagged<NewCard>[][] = [];
+  const skipped: string[] = [];
+  let title = '';
+
+  const keep = (into: Tagged<NewCard>[], raw: RawQuestion, ref: QuizQuestion['sources'] | null) => {
+    if (ref === null) return;
+    const front = String(raw.front ?? '').trim();
+    const back = String(raw.back ?? '').trim();
+    const key = sameCard(front);
+    if (!front || !back || !key || seen.has(key)) return;
+    seen.add(key);
+    into.push({ item: { front, back, topic: String(raw.topic ?? '').trim(), ...(ref ? { sourceRefs: ref } : {}) }, core: isCoreTag(raw) });
+  };
+
+  const walk = src.kind === 'sources' ? hitsToWalk(src.hits) : [];
+  if (walk.length) {
+    const plan = walkPlan(walk, options.fast ?? true);
+    const { windows } = plan;
+    max = budgetFor(windows, size, options.limit);
+    let done = 0;
+    progress(`Reading ${walk.length === 1 ? walk[0].title : `${walk.length} sources`} page by page — ${windows.length} passes`);
+    const results = await inOrder(windows, plan.parallel, async (window) => {
+      const prompt = (w: Window, extra = '') => passPrompt(
+        ctx, plan.material(w), w, 'cards',
+        size, cardStyle(ctx, options) + extra, src.kind === 'sources' ? src.focus : '',
+        windows, options.limit, plan.fast,
+      );
+      let why = '';
+      const args = await gen(CARDS_SYSTEM, prompt(window), CARDS_TOOL).catch((e) => { why = errorText(e); return null; });
+      if (!args) {
+        done += 1;
+        progress(`${window.sourceTitle}, ${pagesLabel(window)}: could not be written — ${why} (${done} of ${windows.length} passes)`);
+        return { window, group: null as Tagged<NewCard>[] | null, title: '' };
+      }
+      const group: Tagged<NewCard>[] = [];
+      for (const r of (args.cards as RawQuestion[] | undefined) ?? []) keep(group, r, pageRef(r, window));
+      // Every page, as promised: what the pass stopped short of gets its own.
+      const gap = uncovered(window, new Set(group.map((t) => pageKey(t.item))));
+      if (gap) {
+        progress(`${window.sourceTitle}, ${pagesLabel(gap)}: not covered yet, writing them now…`);
+        const more = await gen(CARDS_SYSTEM, prompt(gap, MISSED_NOTE), CARDS_TOOL).catch(() => null);
+        for (const r of (more?.cards as RawQuestion[] | undefined) ?? []) keep(group, r, pageRef(r, gap));
+      }
+      done += 1;
+      progress(`${window.sourceTitle}, ${pagesLabel(window)}: ${group.length} card${group.length === 1 ? '' : 's'} (${done} of ${windows.length} passes)`);
+      return { window, group: inPageOrder(group), title: String(args.title ?? '').trim() };
+    });
+    for (const { window, group, title: named } of results) {
+      if (!group) { skipped.push(`${window.sourceTitle}, ${pagesLabel(window)}`); continue; }
+      title ||= named;
+      groups.push(group);
+    }
+  } else {
+    progress('Writing the cards…');
+    const args = await gen(
+      CARDS_SYSTEM,
+      `${contextBlock(ctx)}\n\n${describeSource(src)}\n\n${sizeRule(size, 'cards')}\n\nKeep them in the order the material goes. Write as many as it needs, at most ${max}.\n\n${cardStyle(ctx, options)}`,
+      CARDS_TOOL,
+    );
+    title = String(args.title ?? '').trim();
+    const group: Tagged<NewCard>[] = [];
+    for (const r of (args.cards as RawQuestion[] | undefined) ?? []) keep(group, r, provenance(r, src));
+    groups.push(group);
+  }
+
+  if (!groups.some((g) => g.length)) throw new Error(skipped.length ? 'None of the passes over the material could be written. Try again.' : 'No new cards came back. Try a different prompt.');
+  // Fewer is a complete pass cut down to its core, so this is where it is made.
+  const all = size === 'fewer' ? coreOnly(groups.flat(), (t) => pageKey(t.item), (t) => t.core) : groups.flat();
+  const kept = balancedTrim(all, (t) => pageKey(t.item), max, (t) => t.core).map((t) => t.item);
+  if (walk.length) {
+    progress('Naming the deck…');
+    title = await nameIt('deck', walk, kept.map((c) => c.topic ?? ''), title || 'Flashcards', options.meter);
+  }
+  return { title: title || 'Flashcards', cards: kept, skipped };
 }
 
 /** A short title for a chat, from its first exchange. */
 export async function generateTitle(question: string, answer: string): Promise<string | null> {
-  const cfg = await getAiConfig();
-  if (!cfg.hasKey) return null;
-  const reply = await aiChat({
+  const args = await generateQuick<{ title?: unknown }>({
     feature: 'chat',
-    model: cfg.flashModel,
-    thinking: false,
-    messages: [
-      { role: 'system', content: 'Name this conversation in 2 to 6 words, like a good document title: specific, no quotes, no final period, no "Question about". Reply with the title only.' },
-      { role: 'user', content: `User: ${question.slice(0, 1500)}\n\nAssistant: ${answer.slice(0, 1500)}` },
-    ],
-  });
-  const t = reply.content.trim().split('\n')[0].replace(/^["'#*\s]+|["'.*\s]+$/g, '');
-  return t ? t.slice(0, 80) : null;
+    system: 'Name this conversation like a good document title: 2 to 6 words, specific, no quotes, no final full stop, never "Question about".',
+    instruction: `User: ${question.slice(0, 1500)}\n\nAssistant: ${answer.slice(0, 1500)}`,
+    schema: { type: 'object', required: ['title'], properties: { title: { type: 'string' } } },
+  }).catch(() => null);
+  const title = String(args?.title ?? '').trim().replace(/^["'#*\s]+|["'.*\s]+$/g, '');
+  return title ? title.slice(0, 80) : null;
 }
 
 /** Missed quiz questions become cards directly: no model call needed. */
 export const cardsFromMistakes = (items: { prompt: string; answer: string; explanation: string; topic: string }[]): NewCard[] =>
   items.map((m) => ({ front: m.prompt, back: `**${m.answer}**${m.explanation ? `\n\n${m.explanation}` : ''}`, topic: m.topic }));
+
+export { checkAgrees, defaultTolerance, fillsTheGap, gradeLocal, parseNumber, picked, shuffleChoices, unpick, usableHint } from './quizRules';
 
 // ----------------------------------------------------------------- quizzes
 
@@ -143,21 +480,32 @@ const QUIZ_TOOL = {
           items: {
             type: 'object',
             properties: {
-              type: { type: 'string', enum: ['mcq', 'tf', 'numeric', 'short'] },
-              prompt: { type: 'string', description: 'The question. Markdown; maths in $...$.' },
-              choices: { type: 'array', items: { type: 'string' }, description: 'mcq only: 4 options, one correct, plausible distractors.' },
-              answer: { type: 'string', description: 'mcq: 0-based index of the right choice. tf: "true" or "false". numeric: the number only (no units). short: a model answer.' },
+              type: { type: 'string', enum: ['mcq', 'multi', 'tf', 'numeric', 'short', 'blank'] },
+              prompt: { type: 'string', description: 'The question. Markdown; maths in $...$. blank: one sentence with exactly one gap written as _____ (five underscores), outside any $…$.' },
+              choices: { type: 'array', items: { type: 'string' }, description: 'mcq and multi: 4–6 options. Distractors must be plausible and from the same topic as the answer — never obviously silly, never a different kind of thing.' },
+              answer: { type: 'string', description: 'mcq: 0-based index of the right choice. tf: "true" or "false". numeric: the number only (no units). short: a model answer. blank: exactly the word or phrase that fills the gap. Required for every type except multi, which uses answers.' },
+              answers: { type: 'array', items: { type: 'number' }, description: 'multi only: the 0-based indexes of every correct choice (at least two).' },
+              accept: { type: 'array', items: { type: 'string' }, description: 'blank only: other spellings, plurals or equivalent forms that should count as right.' },
+              hint: { type: 'string', description: 'A nudge that helps the student reason or recall: point at the idea, the rule or where to look. It must NOT name the answer, name the correct option, or rule options out one by one. Required for every question.' },
+              difficulty: { type: 'string', enum: ['easy', 'medium', 'hard'], description: 'How hard this question is.' },
               tolerance: { type: 'number', description: 'numeric only: accepted absolute error.' },
               unit: { type: 'string', description: 'numeric only: unit the answer is given in, if any.' },
-              explanation: { type: 'string', description: 'Worked solution shown after answering. Markdown; maths in $...$.' },
+              explanation: { type: 'string', description: 'Worked solution shown after answering. Markdown; maths in $...$. Required for every question.' },
               topic: { type: 'string', description: 'Short topic name.' },
+              importance: { type: 'string', enum: ['core', 'detail'], description: 'core: needed to pass the exam on this material. detail: worth knowing, but supporting.' },
               check_code: {
                 type: 'string',
-                description: 'Python that derives the correct answer independently and prints it as the LAST line: mcq → the 0-based index, tf → True/False, numeric → the number in the stated unit. sympy (sp), numpy (np), scipy, pint (ureg, Q_) are available. Omit only for purely conceptual questions.',
+                description: 'Python that derives the correct answer independently and prints it as the LAST line: mcq → the 0-based index, multi → the indexes separated by commas, tf → True/False, numeric → the number in the stated unit, blank → the word or phrase. sympy (sp), numpy (np), scipy, pint (ureg, Q_) are available. Omit only for purely conceptual questions.',
               },
               figure_code: { type: 'string', description: 'Optional matplotlib code drawing a figure the question needs (graph, diagram). Leave the figure open; it is captured.' },
+              from_source: { type: 'string', description: 'When the question came from a given excerpt or note, the exact source title it was taken from, so the student can trace it back. Leave it out for a question written from general knowledge.' },
+              from_where: { type: 'string', description: 'Where in that source, exactly as the excerpt is labelled (e.g. "page 12", "slide 4").' },
             },
-            required: ['type', 'prompt', 'answer', 'explanation', 'topic'],
+            // Only what every question needs to be a question at all. A
+            // select-all question answers in `answers`, and one question
+            // missing a field is dropped by `normalise` on its own — required
+            // here, it failed the shape check and took the whole pass with it.
+            required: ['type', 'prompt'],
           },
         },
       },
@@ -167,11 +515,34 @@ const QUIZ_TOOL = {
 };
 
 type RawQuestion = {
-  type?: unknown; prompt?: unknown; choices?: unknown; answer?: unknown; tolerance?: unknown; unit?: unknown;
-  explanation?: unknown; topic?: unknown; check_code?: unknown; figure_code?: unknown;
+  /** Flashcards share this shape for the two fields they add. */
+  front?: unknown; back?: unknown;
+  type?: unknown; prompt?: unknown; choices?: unknown; answer?: unknown; answers?: unknown; accept?: unknown;
+  tolerance?: unknown; unit?: unknown; explanation?: unknown; hint?: unknown; difficulty?: unknown;
+  topic?: unknown; check_code?: unknown; figure_code?: unknown; from_source?: unknown; from_where?: unknown;
+  importance?: unknown;
 };
 
-const TYPES: QuestionType[] = ['mcq', 'tf', 'numeric', 'short'];
+/** An item on its way through the walk: what it is, and whether it is core. */
+type Tagged<T> = { item: T; core: boolean };
+const isCoreTag = (raw: RawQuestion) => raw.importance !== 'detail';
+
+/** Which excerpt a question says it came from, matched to a real source. */
+function provenance(raw: RawQuestion, src: GenSource): QuizQuestion['sources'] {
+  const title = String(raw.from_source ?? '').trim();
+  if (!title || src.kind !== 'sources') return undefined;
+  const where = String(raw.from_where ?? '').trim();
+  const norm = (t: string) => t.toLowerCase().replace(/\s+/g, ' ').trim();
+  const hit = src.hits.find((h) => norm(h.sourceTitle) === norm(title))
+    ?? src.hits.find((h) => norm(h.sourceTitle).includes(norm(title)) || norm(title).includes(norm(h.sourceTitle)));
+  if (hit) return [{ sourceId: hit.sourceId, title: hit.sourceTitle, label: where || hit.label, unit: hit.unitFrom }];
+  // A note rather than a source file; negative ids keep the two apart.
+  const note = (src.notes ?? []).find((n) => norm(n.title) === norm(title));
+  return note ? [{ sourceId: -note.id, title: note.title, label: where || 'your notes', unit: 0 }] : undefined;
+}
+
+const TYPES: QuestionType[] = ['mcq', 'multi', 'tf', 'numeric', 'short', 'blank'];
+const LEVELS: Difficulty[] = ['easy', 'medium', 'hard'];
 
 function normalise(q: RawQuestion): (QuizQuestion & { check?: string; figureCode?: string }) | null {
   const type = TYPES.find((t) => t === q.type);
@@ -180,113 +551,296 @@ function normalise(q: RawQuestion): (QuizQuestion & { check?: string; figureCode
   const base = {
     type, prompt,
     explanation: String(q.explanation ?? '').trim(),
+    hint: String(q.hint ?? '').trim(),
+    difficulty: LEVELS.find((l) => l === q.difficulty),
     topic: String(q.topic ?? '').trim() || 'General',
     check: typeof q.check_code === 'string' && q.check_code.trim() ? q.check_code : undefined,
     figureCode: typeof q.figure_code === 'string' && q.figure_code.trim() ? q.figure_code : undefined,
   };
+  const choices = Array.isArray(q.choices) ? q.choices.map((c) => String(c).trim()).filter(Boolean) : [];
   if (type === 'mcq') {
-    const choices = Array.isArray(q.choices) ? q.choices.map((c) => String(c).trim()).filter(Boolean) : [];
     const idx = Number(q.answer);
     if (choices.length < 2 || !Number.isInteger(idx) || idx < 0 || idx >= choices.length) return null;
-    return { ...base, choices, answer: idx };
+    return withHint({ ...base, choices, answer: idx });
+  }
+  if (type === 'multi') {
+    const picked = Array.isArray(q.answers)
+      ? [...new Set(q.answers.map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n < choices.length))].sort((a, b) => a - b)
+      : [];
+    // A "select all that apply" with one answer is a single-select in
+    // disguise, and marking it multi only confuses the student.
+    if (choices.length < 3 || picked.length < 2 || picked.length === choices.length) return null;
+    return withHint({ ...base, choices, answers: picked, answer: picked.join(',') });
+  }
+  if (type === 'blank') {
+    const answer = String(q.answer ?? '').trim();
+    // The prompt has to have a gap in it — one, since there is one box to
+    // type into and one answer to check it against.
+    const gaps = prompt.match(/_{2,}|\[ ?\.{3} ?\]|\u2026/g)?.length ?? 0;
+    if (!answer || gaps !== 1) return null;
+    const accept = Array.isArray(q.accept) ? q.accept.map((a) => String(a).trim()).filter(Boolean).slice(0, 8) : [];
+    return withHint({ ...base, answer, accept });
   }
   if (type === 'tf') {
     const a = String(q.answer).trim().toLowerCase();
     if (a !== 'true' && a !== 'false') return null;
-    return { ...base, answer: a };
+    return withHint({ ...base, answer: a });
   }
   if (type === 'numeric') {
     const n = parseNumber(String(q.answer));
     if (n === null) return null;
     const tol = Number(q.tolerance);
-    return { ...base, answer: n, tolerance: Number.isFinite(tol) && tol > 0 ? tol : defaultTolerance(n), unit: String(q.unit ?? '').trim() || undefined };
+    return withHint({ ...base, answer: n, tolerance: Number.isFinite(tol) && tol > 0 ? tol : defaultTolerance(n), unit: String(q.unit ?? '').trim() || undefined });
   }
   const answer = String(q.answer ?? '').trim();
-  return answer ? { ...base, answer } : null;
+  return answer ? withHint({ ...base, answer }) : null;
 }
 
-export const defaultTolerance = (n: number) => Math.max(Math.abs(n) * 0.01, 1e-6);
+type Normalised = QuizQuestion & { check?: string; figureCode?: string };
 
-/** "3/2", "-0.5", "1.2e3", "2 m/s" → number. */
-export function parseNumber(s: string): number | null {
-  const t = s.trim().replace(/,/g, '').replace(/−/g, '-');
-  const frac = t.match(/^(-?\d+(?:\.\d+)?)\s*\/\s*(-?\d+(?:\.\d+)?)/);
-  if (frac) {
-    const v = Number(frac[1]) / Number(frac[2]);
-    return Number.isFinite(v) ? v : null;
-  }
-  const m = t.match(/^-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?/i);
-  if (!m) return null;
-  const v = Number(m[0]);
-  return Number.isFinite(v) ? v : null;
+/** Keep the hint only if it does not give the answer away. */
+function withHint(q: Normalised): Normalised {
+  const hint = usableHint(q.hint ?? '', q);
+  return hint ? { ...q, hint } : { ...q, hint: undefined };
 }
 
-/** Does the check script's last printed line agree with the stated answer? */
-export function checkAgrees(q: QuizQuestion, stdout: string): boolean {
-  const last = stdout.trim().split('\n').pop()?.trim() ?? '';
-  if (!last) return false;
-  if (q.type === 'mcq') return Number.parseInt(last, 10) === q.answer;
-  if (q.type === 'tf') return last.toLowerCase() === String(q.answer);
-  if (q.type === 'numeric') {
-    const v = parseNumber(last);
-    return v !== null && Math.abs(v - Number(q.answer)) <= Math.max(q.tolerance ?? 0, defaultTolerance(Number(q.answer)));
-  }
-  return true;
-}
+export { MAX_ITEMS };
+export type { CardOptions, CardSize, GenSource };
 
 export type QuizProgress = (text: string) => void;
 
-export async function generateQuiz(ctx: StudyContext, src: GenSource, count: number, notebookId: number, progress: QuizProgress): Promise<{ title: string; questions: QuizQuestion[]; dropped: number }> {
-  let python = false;
-  try { python = (await pythonStatus()).ready; } catch { python = false; }
-  const kept: QuizQuestion[] = [];
-  let title = '';
-  let dropped = 0;
-  const failures: string[] = [];
-
-  for (let round = 0; round < 3 && kept.length < count; round++) {
-    const need = count - kept.length;
-    progress(round === 0 ? `Writing ${need} questions…` : `Replacing ${need} question(s) that failed their check…`);
-    const retry = failures.length ? `\n\nThese questions failed verification (the check did not reproduce the answer); do not repeat them:\n${failures.slice(-10).join('\n')}` : '';
-    const args = await forcedCall(QUIZ_SYSTEM, `${contextBlock(ctx)}\n\n${describeSource(src)}\n\nWrite ${need} questions.${retry}`, QUIZ_TOOL);
-    title ||= String(args.title ?? '').trim();
-    const raw = Array.isArray(args.questions) ? (args.questions as RawQuestion[]) : [];
-    for (const r of raw) {
-      if (kept.length >= count) break;
-      const q = normalise(r);
-      if (!q) { dropped++; continue; }
-      const { check, figureCode, ...question } = q;
-      if (python && check) {
-        progress(`Checking question ${kept.length + 1} in Python…`);
-        const res = await runPython(check, 30).catch(() => null);
-        if (!res?.ok || !checkAgrees(question, res.stdout || res.result || '')) {
-          dropped++;
-          failures.push(`- ${question.prompt.slice(0, 200)}`);
-          continue;
-        }
-        question.verified = true;
-      } else if (python && question.type === 'numeric') {
-        // A calculation without a check cannot be trusted.
-        dropped++;
-        failures.push(`- ${question.prompt.slice(0, 200)} (no check_code)`);
-        continue;
-      } else {
-        question.verified = false;
-      }
-      if (python && figureCode) {
-        progress(`Drawing the figure for question ${kept.length + 1}…`);
-        const res = await runPython(figureCode, 30).catch(() => null);
-        const fig = res?.figures?.[0];
-        if (fig) {
-          const saved = await studyApi.attachmentAdd({ notebookId, kind: 'figure', name: fig.name, mime: 'image/png', data: fig.dataUrl });
-          question.figure = saved.id;
-        }
-      }
-      kept.push(question);
+/**
+ * Re-derive a question's answer in Python and draw its figure.
+ *
+ * Returns `null` when the check disagrees with the answer the model wrote —
+ * a question whose answer key is wrong is worse than no question, so it is
+ * thrown away rather than shown to the student. A calculation that came with
+ * no check at all is refused for the same reason.
+ */
+async function verify(
+  q: Normalised,
+  python: boolean,
+  notebookId: number,
+  progress: QuizProgress,
+  why: (reason: string) => void = () => {},
+): Promise<QuizQuestion | null> {
+  const { check, figureCode, ...question } = q;
+  if (python && check) {
+    progress('Checking question %n in Python…');
+    const res = await runPython(check, 30).catch(() => null);
+    if (!res) { why('the check could not be run at all'); return null; }
+    if (!res.ok) { why(`the check failed to run: ${(res.error || res.stderr || '').slice(0, 200)}`); return null; }
+    const printed = (res.stdout || res.result || '').trim().split('\n').pop()?.trim() ?? '';
+    if (!checkAgrees(question, res.stdout || res.result || '')) {
+      // The model gets the actual disagreement, not just "it failed" — it is
+      // the difference between fixing the answer and writing the same
+      // question again.
+      why(`the answer key says ${JSON.stringify(question.answers ?? question.answer)} but check_code printed ${JSON.stringify(printed)}`);
+      return null;
+    }
+    question.verified = true;
+  } else if (python && question.type === 'numeric') {
+    // A number nobody checked cannot be trusted, whatever the subject.
+    why('it is a numeric question with no check_code, so the answer cannot be trusted');
+    return null;
+  } else {
+    question.verified = false;
+  }
+  if (python && figureCode) {
+    progress('Drawing the figure for question %n…');
+    const res = await runPython(figureCode, 30).catch(() => null);
+    const fig = res?.figures?.[0];
+    if (fig) {
+      const saved = await studyApi.attachmentAdd({ notebookId, kind: 'figure', name: fig.name, mime: 'image/png', data: fig.dataUrl });
+      question.figure = saved.id;
     }
   }
-  if (!kept.length) throw new Error('No question passed its check. Try again or narrow the topic.');
-  return { title: title || 'Practice quiz', questions: kept, dropped };
+  return question;
+}
+
+/**
+ * Rewrite one question, in place.
+ *
+ * For when a generated question is wrong, unclear, or simply not the one the
+ * student wanted. It is told what it is replacing so it does not hand back
+ * the same question again, and it goes through the same Python check as
+ * anything else, so a rewrite cannot smuggle in an unverified answer.
+ */
+export async function rewriteQuestion(
+  ctx: StudyContext,
+  previous: QuizQuestion,
+  notebookId: number,
+  src: GenSource,
+  progress: QuizProgress = () => {},
+  options: QuizOptions = {},
+): Promise<QuizQuestion> {
+  let python = false;
+  try { python = (await pythonStatus()).ready; } catch { python = false; }
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    progress(attempt === 0 ? 'Rewriting the question…' : 'That rewrite failed its check — trying again…');
+    const args = await generated(
+      QUIZ_SYSTEM,
+      `${contextBlock(ctx)}\n\n${describeSource(src)}\n\nWrite exactly 1 question to replace this one:\n\n` +
+      `<replacing type="${previous.type}" topic="${previous.topic}">\n${previous.prompt}\n</replacing>\n\n` +
+      'Cover the same idea, but do not write the same question again — ask it a different way, or from a different angle.\n' +
+      `${describeOptions({ difficulty: previous.difficulty ?? options.difficulty, types: options.types?.length ? options.types : [previous.type] })}`,
+      QUIZ_TOOL,
+    );
+    const raw = Array.isArray(args.questions) ? (args.questions as RawQuestion[]) : [];
+    for (const r of raw) {
+      const q = normalise(r);
+      if (!q) continue;
+      const checked = await verify(q, python, notebookId, progress);
+      if (checked) return checked;
+    }
+  }
+  throw new Error('Could not write a replacement that passed its check. Edit it by hand, or try a different topic.');
+}
+
+export async function generateQuiz(
+  ctx: StudyContext,
+  src: GenSource,
+  notebookId: number,
+  progress: QuizProgress,
+  options: QuizOptions = {},
+): Promise<{ title: string; questions: QuizQuestion[]; dropped: number; skipped: string[] }> {
+  let python = false;
+  try { python = (await pythonStatus()).ready; } catch { python = false; }
+  const gen = (system: string, user: string, tool: GenTool) => generated(system, user, tool, options.meter);
+  const size = options.size ?? 'standard';
+  let max = Math.min(MAX_ITEMS, options.limit ?? CEILING[size]);
+  const seen = new Set<string>();
+  const skipped: string[] = [];
+  let title = '';
+  let dropped = 0;
+
+  /**
+   * Check one pass's questions and keep the ones that hold up.
+   *
+   * A question whose own check disagrees with its answer key is thrown away:
+   * a wrong key is worse than no question. The reasons come back so the pass
+   * can be asked once more for replacements, told exactly what disagreed.
+   */
+  const settle = async (raw: RawQuestion[], ref: (r: RawQuestion) => QuizQuestion['sources'] | null, cap: number) => {
+    const kept: Tagged<QuizQuestion>[] = [];
+    const failed: string[] = [];
+    for (const r of raw) {
+      if (kept.length >= cap) break;
+      // About a page another pass has: not this pass's to write.
+      const from = ref(r);
+      if (from === null) continue;
+      const q = normalise(r);
+      if (!q) { dropped++; continue; }
+      const key = sameCard(q.prompt);
+      if (seen.has(key)) continue;
+      let reason = 'it did not pass its check';
+      const checked = await verify(q, python, notebookId, () => {}, (why) => { reason = why; });
+      if (!checked) {
+        dropped++;
+        failed.push(`- ${q.prompt.slice(0, 200)}\n  (${reason})`);
+        continue;
+      }
+      seen.add(key);
+      // Shuffled after the check, so the check ran against the answer the
+      // model actually wrote.
+      const shuffled = shuffleChoices(checked);
+      kept.push({ item: from ? { ...shuffled, sources: from } : shuffled, core: isCoreTag(r) });
+    }
+    return { kept, failed };
+  };
+
+  const retryNote = (failed: string[]) => failed.length
+    ? '\n\nSome questions you wrote for these pages were thrown away because running their own check_code did not reproduce the answer key. Write replacements for them — different questions on the same material — and make sure each check_code really computes the answer you mark as correct:\n' + failed.join('\n')
+    : '';
+
+  const walk = src.kind === 'sources' ? hitsToWalk(src.hits) : [];
+  /** One list per pass, so going over the ceiling can be trimmed fairly. */
+  const groups: Tagged<QuizQuestion>[][] = [];
+
+  if (walk.length) {
+    const plan = walkPlan(walk, options.fast ?? true);
+    const { windows } = plan;
+    max = budgetFor(windows, size, options.limit);
+    let done = 0;
+    progress(`Reading ${walk.length === 1 ? walk[0].title : `${walk.length} sources`} page by page — ${windows.length} passes`);
+    const results = await inOrder(windows, plan.parallel, async (window) => {
+      const base = passPrompt(
+        ctx, plan.material(window), window, 'questions',
+        size, describeOptions(options), src.kind === 'sources' ? src.focus : '',
+        windows, options.limit, plan.fast,
+      );
+      const ref = (r: RawQuestion) => pageRef(r, window);
+      let why = '';
+      const args = await gen(QUIZ_SYSTEM, base, QUIZ_TOOL).catch((e) => { why = errorText(e); return null; });
+      if (!args) {
+        done += 1;
+        progress(`${window.sourceTitle}, ${pagesLabel(window)}: could not be written — ${why} (${done} of ${windows.length} passes)`);
+        return { window, kept: null as Tagged<QuizQuestion>[] | null, title: '' };
+      }
+      // Checking a question costs a run of its code, so a pass that wrote far
+      // past its share does not get every extra one checked.
+      const room = expectedItems(window, windows, size, options.limit, plan.fast) * 2 + 2;
+      const first = await settle((args.questions as RawQuestion[] | undefined) ?? [], ref, room);
+      let kept = first.kept;
+      // One more go for what failed its check, so a page does not lose its
+      // questions to one bad answer key.
+      if (first.failed.length && kept.length < room) {
+        const again = await gen(QUIZ_SYSTEM, base + retryNote(first.failed), QUIZ_TOOL).catch(() => null);
+        if (again) {
+          const second = await settle((again.questions as RawQuestion[] | undefined) ?? [], ref, room - kept.length);
+          kept = [...kept, ...second.kept];
+        }
+      }
+      // Every page, as promised: what the pass stopped short of gets its own.
+      const gap = uncovered(window, new Set(kept.map((t) => pageKey(t.item))));
+      if (gap) {
+        progress(`${window.sourceTitle}, ${pagesLabel(gap)}: not covered yet, writing them now…`);
+        const prompt = passPrompt(
+          ctx, plan.material(gap), gap, 'questions',
+          size, describeOptions(options) + MISSED_NOTE, src.kind === 'sources' ? src.focus : '',
+          windows, options.limit, plan.fast,
+        );
+        const more = await gen(QUIZ_SYSTEM, prompt, QUIZ_TOOL).catch(() => null);
+        if (more) {
+          const room = expectedItems(gap, windows, size, options.limit, plan.fast) * 2 + 2;
+          kept = [...kept, ...(await settle((more.questions as RawQuestion[] | undefined) ?? [], (r) => pageRef(r, gap), room)).kept];
+        }
+      }
+      done += 1;
+      progress(`${window.sourceTitle}, ${pagesLabel(window)}: ${kept.length} question${kept.length === 1 ? '' : 's'} (${done} of ${windows.length} passes)`);
+      return { window, kept: inPageOrder(kept), title: String(args.title ?? '').trim() };
+    });
+    for (const { window, kept, title: named } of results) {
+      if (!kept) { skipped.push(`${window.sourceTitle}, ${pagesLabel(window)}`); continue; }
+      title ||= named;
+      groups.push(kept);
+    }
+  } else {
+    progress('Writing the questions…');
+    const prompt = `${contextBlock(ctx)}\n\n${describeSource(src)}\n\n${sizeRule(size, 'questions')}\n\nKeep them in the order the material goes. Write as many as it needs, at most ${max}.\n${describeOptions(options)}`;
+    const args = await gen(QUIZ_SYSTEM, prompt, QUIZ_TOOL);
+    title = String(args.title ?? '').trim();
+    const ref = (r: RawQuestion) => provenance(r, src);
+    const first = await settle((args.questions as RawQuestion[] | undefined) ?? [], ref, max);
+    const group = [...first.kept];
+    if (first.failed.length && group.length < max) {
+      progress(`Replacing ${first.failed.length} question${first.failed.length === 1 ? '' : 's'} that failed their check…`);
+      const again = await gen(QUIZ_SYSTEM, prompt + retryNote(first.failed), QUIZ_TOOL).catch(() => null);
+      if (again) group.push(...(await settle((again.questions as RawQuestion[] | undefined) ?? [], ref, max - group.length)).kept);
+    }
+    groups.push(group);
+  }
+
+  if (!groups.some((g) => g.length)) throw new Error('No question passed its check. Try again or narrow the topic.');
+  // Fewer is a complete pass cut down to its core, so this is where it is made.
+  const all = size === 'fewer' ? coreOnly(groups.flat(), (t) => pageKey(t.item), (t) => t.core) : groups.flat();
+  const kept = balancedTrim(all, (t) => pageKey(t.item), max, (t) => t.core).map((t) => t.item);
+  if (walk.length) {
+    progress('Naming the quiz…');
+    title = await nameIt('quiz', walk, kept.map((q) => q.topic), title || 'Practice quiz', options.meter);
+  }
+  return { title: title || 'Practice quiz', questions: kept, dropped, skipped };
 }
 
 // ---------------------------------------------------------------- grading
@@ -308,21 +862,12 @@ const GRADE_TOOL = {
 };
 
 export async function gradeShort(q: QuizQuestion, given: string): Promise<{ correct: boolean; feedback: string }> {
-  const args = await forcedCall(
+  // Marking one written answer is a single judgement, not a task: one pass,
+  // no tools, but still validated against the shape the caller needs.
+  const args = await generated(
     GRADE_SYSTEM,
     `Question: ${q.prompt}\n\nReference answer: ${q.answer}\n\nStudent answer: ${given}`,
     GRADE_TOOL,
   );
   return { correct: args.correct === true, feedback: String(args.feedback ?? '') };
-}
-
-/** Grade anything except short answers locally. */
-export function gradeLocal(q: QuizQuestion, given: string): boolean {
-  if (q.type === 'mcq') return Number(given) === q.answer;
-  if (q.type === 'tf') return given === q.answer;
-  if (q.type === 'numeric') {
-    const v = parseNumber(given);
-    return v !== null && Math.abs(v - Number(q.answer)) <= Math.max(q.tolerance ?? 0, defaultTolerance(Number(q.answer)));
-  }
-  return false;
 }

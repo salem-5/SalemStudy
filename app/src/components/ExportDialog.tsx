@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import type { Assignment } from '../types';
 import { fetchImageData, toPngImage } from '../lib/ai';
-import { assignmentToLatex, type ExportMeta, type LatexExport } from '../lib/latex';
+import type { ExportMeta } from '../lib/latex';
+import { assignmentToWorksheet, worksheetSubtitle, type WorksheetExport } from '../lib/worksheet';
 import { api, errorText } from '../api';
 import { Modal } from './Dialogs';
 
@@ -73,7 +74,7 @@ export function ExportDialog({ entries, meta, onClose }: { entries: ExportEntry[
   // The sheet is rebuilt whenever an option changes, so the preview and the
   // compiled PDF always match what the switches say.
   const docs = useMemo(
-    () => entries.map((e, i) => assignmentToLatex(e.assignment, {
+    () => entries.map((e, i) => assignmentToWorksheet(e.assignment, {
       ...meta, workings, nameFields, transcript, title: titles[i],
     })),
     [entries, meta, workings, nameFields, transcript, titles.join('\n')],
@@ -81,7 +82,7 @@ export function ExportDialog({ entries, meta, onClose }: { entries: ExportEntry[
 
   const patch = (i: number, p: Partial<Item>) => setItems((s) => s.map((x, j) => (j === i ? { ...x, ...p } : x)));
 
-  const prepare = async (d: LatexExport) => {
+  const prepare = async (d: WorksheetExport) => {
     const figures = await Promise.all(d.images.map(async (im) => {
       try {
         const dataUrl = await fetchImageData(im.url);
@@ -92,20 +93,22 @@ export function ExportDialog({ entries, meta, onClose }: { entries: ExportEntry[
       }
     }));
     const ok = figures.filter((x): x is { file: string; data: string } => !!x);
-    let tex = d.tex;
+    let html = d.html;
+    // A figure that would not load is named rather than left as a broken
+    // image: the sheet should say something is missing, not hide it.
     for (const im of d.images) {
       if (ok.some((o) => o.file === im.file)) continue;
-      tex = tex.replace(new RegExp(`\\\\includegraphics\\[[^\\]]*\\]\\{${im.file}\\}`, 'g'), '\\textit{[figure]}');
+      html = html.replace(new RegExp(`<img [^>]*src="${im.file}"[^>]*/?>`, 'g'), '<i>[figure]</i>');
     }
-    return { tex, figures: ok };
+    return { html, figures: ok };
   };
 
-  const exportOne = async (i: number, compile: boolean) => {
+  const exportOne = async (i: number) => {
     const name = items[i].file.trim() || entries[i].name;
     patch(i, { status: 'running', error: undefined, result: undefined });
     try {
-      const { tex, figures } = await prepare(docs[i]);
-      const res = await api.exportLatex(name, tex, compile, figures, name);
+      const { html, figures } = await prepare(docs[i]);
+      const res = await api.exportPdf(name, html, figures, worksheetSubtitle(meta), name);
       patch(i, { status: 'done', result: res });
     } catch (e) {
       patch(i, { status: 'error', error: errorText(e) });
@@ -113,27 +116,21 @@ export function ExportDialog({ entries, meta, onClose }: { entries: ExportEntry[
     setDone((d) => d + 1);
   };
 
-  const run = async (compile: boolean) => {
+  const run = async () => {
     cancelRef.current = false;
     setRunning(true);
     setDone(0);
     setLog([]);
     const todo = entries.map((_, i) => i);
-    // The first document goes alone: MiKTeX and Tectonic fetch the packages a
-    // document needs on first use, and several of them doing that at once is
-    // what breaks. After it, everything the batch needs is already cached.
-    if (compile && todo.length > 1) {
-      await exportOne(todo.shift()!, compile);
-    }
-    // Only compiles run side by side. Saving the source is a file write, so
-    // there is nothing to gain — and the figures of several sheets share the
-    // export folder, which is tidier one document at a time.
-    const width = compile ? lanes(todo.length) : 1;
+    // Each sheet is a short Python run, so a few at a time is the right
+    // trade: enough to keep the machine busy, not so many that a batch of
+    // thirty starts thirty interpreters.
+    const width = lanes(todo.length);
     setWidth(width);
     await Promise.all(
       Array.from({ length: width }, async () => {
         while (todo.length && !cancelRef.current) {
-          await exportOne(todo.shift()!, compile);
+          await exportOne(todo.shift()!);
         }
       }),
     );
@@ -172,10 +169,9 @@ export function ExportDialog({ entries, meta, onClose }: { entries: ExportEntry[
           <span className="spacer" />
           {running
             ? <button type="button" className="btn ghost danger" onClick={() => void cancel()}>Cancel</button>
-            : <>
-              <button type="button" className="btn ghost" onClick={() => void run(false)}>Save .tex</button>
-              <button type="button" className="btn primary" onClick={() => void run(true)}>Compile PDF{total > 1 ? 's' : ''}</button>
-            </>}
+            : <button type="button" className="btn primary" onClick={() => void run()}>
+              Make PDF{total > 1 ? 's' : ''}
+            </button>}
         </div>
 
         <div className="export-opts">
@@ -227,13 +223,13 @@ export function ExportDialog({ entries, meta, onClose }: { entries: ExportEntry[
                 {it.status === 'running' && <span className="export-status">compiling…</span>}
                 {it.status === 'done' && (it.result?.pdf ?? it.result?.tex) && (
                   <button type="button" className="btn ghost" onClick={() => void open((it.result?.pdf ?? it.result?.tex)!)}>
-                    Open {it.result?.pdf ? 'PDF' : '.tex'}
+                    Open PDF
                   </button>
                 )}
               </div>
               {it.error && <div className="ai-settings-err export-err">{it.error}</div>}
               {it.status === 'done' && <div className="export-path"><code>{it.result?.pdf ?? it.result?.tex}</code></div>}
-              {it.showSource && <pre className="code-block export-preview">{docs[i].tex}</pre>}
+              {it.showSource && <pre className="code-block export-preview">{docs[i].html}</pre>}
             </li>
           ))}
         </ul>

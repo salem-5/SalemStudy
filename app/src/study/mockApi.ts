@@ -4,7 +4,7 @@
 import {
   studyApi, type AttachmentInfo, type Attempt, type AttemptAnswer, type Card, type CardResult, type ChatMessage, type ChatThread, type Deck,
   type DeckRun, type MessageMeta, type Note, type NewCard, type NotebookSummary, type Quiz, type QuizQuestion, type Review, type Source, type SourceHit,
-  type SourceUnit, type SubjectNode, type StudyEvent, type EventInput,
+  type ExtractionReport, type SourceUnit, type SubjectNode, type StudyEvent, type EventInput,
 } from './api';
 
 type Db = {
@@ -26,9 +26,10 @@ type Db = {
   usage?: { at: number; model: string; feature: string; tokens: number; cost: number }[];
   images?: { id: number; sourceId: number; unitOrd: number; caption: string; data: string }[];
   units: (SourceUnit & { sourceId: number })[];
+  focus?: { startedAt: number; finishedAt: number; minutes: number; tasksDone: number }[];
 };
 
-const KEY = 'wa.study.mock.v3';
+const KEY = 'wa.study.mock.v4';
 
 function seed(): Db {
   let next = 1;
@@ -43,7 +44,64 @@ function seed(): Db {
     subj('Physics I', ['Kinematics', "Newton's Laws", 'Energy']),
     subj('Linear Algebra', ['Vectors', 'Matrices']),
   ];
-  return { next, subjects, threads: [], messages: [], attachments: [], decks: [], cards: [], reviews: [], runs: [], quizzes: [], attempts: [], sources: [], units: [], notes: [] };
+  // One quiz covering every question type, so the player, the navigator, the
+  // hints and Ask AI can all be exercised in the browser preview.
+  const demoQuiz: Quiz = {
+    id: next++,
+    notebookId: subjects[0].notebooks[0].id,
+    title: 'Convergence tests (demo)',
+    createdAt: Date.now(),
+    questions: [
+      {
+        type: 'mcq', topic: 'Ratio test', difficulty: 'easy',
+        prompt: 'The ratio test gives $L = 1$ for a series. What can you conclude?',
+        choices: ['Nothing — the test is inconclusive', 'It converges', 'It diverges', 'It converges conditionally'],
+        answer: 0,
+        hint: 'Think about $\\sum 1/n$ and $\\sum 1/n^2$ — what does the test give for each?',
+        explanation: 'Both $\\sum 1/n$ (divergent) and $\\sum 1/n^2$ (convergent) give $L = 1$, so the test cannot separate them.',
+        verified: true,
+      },
+      {
+        type: 'multi', topic: 'Comparison', difficulty: 'medium',
+        prompt: 'Which of these series **converge**?',
+        choices: ['$\\sum 1/n^2$', '$\\sum 1/n$', '$\\sum (1/2)^n$', '$\\sum n$'],
+        answers: [0, 2], answer: '0,2',
+        hint: 'One is a $p$-series and one is geometric. Check $p$ and check $|r|$.',
+        explanation: '$\\sum 1/n^2$ is a $p$-series with $p = 2 > 1$, and $\\sum (1/2)^n$ is geometric with $|r| < 1$.',
+      },
+      {
+        type: 'tf', topic: 'p-series', difficulty: 'easy',
+        prompt: 'The harmonic series $\\sum 1/n$ converges.',
+        answer: 'false',
+        hint: 'Compare the partial sums with $\\ln n$.',
+        explanation: 'It is the $p$-series with $p = 1$, which diverges — the partial sums grow like $\\ln n$.',
+      },
+      {
+        type: 'numeric', topic: 'Geometric series', difficulty: 'medium',
+        prompt: 'Evaluate $\\sum_{n=0}^{\\infty} (1/4)^n$.',
+        answer: 1.3333333, tolerance: 0.001,
+        hint: 'The sum of a geometric series is $1/(1-r)$ when $|r| < 1$.',
+        explanation: '$\\frac{1}{1 - 1/4} = \\frac{4}{3} \\approx 1.333$.',
+        verified: true,
+      },
+      {
+        type: 'blank', topic: 'Vocabulary', difficulty: 'easy',
+        prompt: 'A series that converges but whose absolute values do not is called ______ convergent.',
+        answer: 'conditionally', accept: ['conditional'],
+        hint: 'The opposite of absolutely.',
+        explanation: 'Conditional convergence: $\\sum a_n$ converges while $\\sum |a_n|$ does not, as with the alternating harmonic series.',
+      },
+      {
+        type: 'short', topic: 'Integral test', difficulty: 'hard',
+        prompt: 'In a sentence, when may the integral test be used?',
+        answer: 'When the terms come from a function that is positive, continuous and decreasing on the interval.',
+        hint: 'Three conditions on the function the terms come from.',
+        explanation: 'The function must be positive, continuous and eventually decreasing; then the series and the improper integral converge or diverge together.',
+      },
+    ],
+  };
+
+  return { next, subjects, threads: [], messages: [], attachments: [], decks: [], cards: [], reviews: [], runs: [], quizzes: [demoQuiz], attempts: [], sources: [], units: [], notes: [] };
 }
 
 /** As in Rust: a notebook's course wins over the one given. */
@@ -132,7 +190,34 @@ export function installStudyMock() {
     activity: (since: number) => mutate((db) => [
       ...db.reviews.map((r) => r.reviewedAt), ...db.attempts.map((a) => a.finishedAt),
       ...db.messages.filter((m) => m.role === 'user').map((m) => m.createdAt), ...db.notes.map((n) => n.createdAt), ...db.sources.map((x) => x.createdAt),
+      ...(db.focus ?? []).map((f) => f.finishedAt),
     ].filter((t) => t >= since)),
+    activityDetail: (from: number, to: number) => mutate((db) => {
+      const where = (notebookId: number | null) => {
+        const sub = db.subjects.find((x) => x.notebooks.some((n) => n.id === notebookId));
+        const nb = sub?.notebooks.find((n) => n.id === notebookId);
+        return { notebookId, notebook: nb?.name ?? null, subject: sub?.name ?? null };
+      };
+      const rows = [
+        ...db.reviews.map((r) => ({ at: r.reviewedAt, kind: 'card' as const, ...where(r.notebookId) })),
+        ...db.attempts.map((a) => ({ at: a.finishedAt, kind: 'quiz' as const, ...where(a.notebookId) })),
+        ...db.messages.filter((m) => m.role === 'user').map((m) => ({
+          at: m.createdAt, kind: 'chat' as const,
+          ...where(db.threads.find((t) => t.id === m.conversationId)?.notebookId ?? null),
+        })),
+        ...db.notes.map((n) => ({ at: n.createdAt, kind: 'note' as const, ...where(n.notebookId) })),
+        ...db.sources.map((x) => ({ at: x.createdAt, kind: 'source' as const, ...where(x.notebookId) })),
+        ...(db.focus ?? []).map((f) => ({ at: f.finishedAt, kind: 'focus' as const, notebookId: null, notebook: null, subject: null })),
+      ];
+      return rows.filter((r) => r.at >= from && r.at < to).sort((a, b) => a.at - b.at);
+    }),
+    addFocusSession: (phase: string, startedAt: number, finishedAt: number, tasksDone: number) => mutate((db) => {
+      const minutes = Math.floor(Math.max(0, finishedAt - startedAt) / 60_000);
+      if (phase !== 'focus' || minutes < 1) return;
+      db.focus = [...(db.focus ?? []), { startedAt, finishedAt, minutes, tasksDone }];
+    }),
+    focusMinutes: (since: number) => mutate((db) =>
+      (db.focus ?? []).filter((f) => f.finishedAt >= since).map((f) => [f.finishedAt, f.minutes] as [number, number])),
     usage: () => mutate((db) => {
       const rows = db.usage ?? [];
       const sum = (rs: typeof rows, key = '') => ({ key, calls: rs.length, tokens: rs.reduce((a, r) => a + r.tokens, 0), cost: rs.reduce((a, r) => a + r.cost, 0) });
@@ -180,7 +265,13 @@ export function installStudyMock() {
     clearSourceImages: (sourceId: number) => mutate((db) => { db.images = (db.images ?? []).filter((i) => i.sourceId !== sourceId); }),
     sourceImages: (sourceId: number) => mutate((db) => (db.images ?? []).filter((i) => i.sourceId === sourceId).map(({ id, unitOrd, caption }) => ({ id, unitOrd, caption }))),
     sourceImageData: (id: number) => mutate((db) => { const i = (db.images ?? []).find((x) => x.id === id); if (!i) throw 'Image not found.'; return i.data; }),
-    deleteSubject: (id: number) => mutate((db) => { db.subjects = db.subjects.filter((s) => s.id !== id); }),
+    deleteSubject: (id: number) => mutate((db) => {
+      const gone = db.subjects.find((s) => s.id === id);
+      const notebooks = new Set((gone?.notebooks ?? []).map((n) => n.id));
+      db.subjects = db.subjects.filter((s) => s.id !== id);
+      // The calendar goes with the course, as it does in the real database.
+      db.events = (db.events ?? []).filter((e) => e.subjectId !== id && !notebooks.has(e.notebookId as number));
+    }),
     createNotebook: (subjectId: number, name: string, description?: string) => mutate((db) => {
       const s = db.subjects.find((x) => x.id === subjectId);
       if (!s) throw 'Subject not found.';
@@ -299,6 +390,14 @@ export function installStudyMock() {
     }).reverse()),
     quiz: (id: number) => mutate((db) => { const q = db.quizzes.find((x) => x.id === id); if (!q) throw 'Quiz not found.'; return q; }),
     createQuiz: (notebookId: number, title: string, questions: QuizQuestion[]) => mutate((db) => { const id = db.next++; db.quizzes.push({ id, notebookId, title, questions, createdAt: Date.now() }); return id; }),
+    updateQuiz: (id: number, questions: QuizQuestion[]) => mutate((db) => {
+      const q = db.quizzes.find((x) => x.id === id);
+      if (q) q.questions = questions;
+    }),
+    renameQuiz: (id: number, title: string) => mutate((db) => {
+      const q = db.quizzes.find((x) => x.id === id);
+      if (q) q.title = title.trim().slice(0, 200);
+    }),
     deleteQuiz: (id: number) => mutate((db) => { db.quizzes = db.quizzes.filter((q) => q.id !== id); }),
     addAttempt: (quizId: number, startedAt: number, score: number, total: number, answers: AttemptAnswer[]) => mutate((db) => {
       const q = db.quizzes.find((x) => x.id === quizId);
@@ -326,6 +425,10 @@ export function installStudyMock() {
       Object.assign(s, { status: 'ready', error: null, unitCount: units.length, charCount: units.reduce((a, u) => a + u.text.length, 0) });
       const { data: _d, ...out } = s;
       return out;
+    }),
+    setSourceReport: (id: number, report: ExtractionReport) => mutate((db) => {
+      const src = db.sources.find((x) => x.id === id);
+      if (src) src.report = report;
     }),
     setSourceStatus: (id: number, status: Source['status'], error: string | null = null) => mutate((db) => { const s = db.sources.find((x) => x.id === id); if (s) Object.assign(s, { status, error }); }),
     renameSource: (id: number, title: string) => mutate((db) => { const s = db.sources.find((x) => x.id === id); if (s) s.title = clean(title); }),

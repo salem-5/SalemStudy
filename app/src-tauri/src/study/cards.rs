@@ -395,6 +395,32 @@ pub fn quiz_create(app: AppHandle, db: State<'_, StudyDb>, notebook_id: i64, tit
     })
 }
 
+/// Replace a quiz's questions — editing one, or regenerating one in place.
+///
+/// The whole list is written at once so a quiz can never end up half-updated,
+/// and attempts already recorded against it are left alone: a past score is a
+/// fact about what the student answered, not about the current wording.
+#[tauri::command]
+pub fn quiz_update(app: AppHandle, db: State<'_, StudyDb>, id: i64, questions: Value) -> Result<(), String> {
+    if !questions.as_array().is_some_and(|a| !a.is_empty()) {
+        return Err("A quiz needs at least one question.".into());
+    }
+    with_db(&app, &db, |c| {
+        c.execute("UPDATE quiz SET questions_json = ?2 WHERE id = ?1", params![id, questions.to_string()])
+    })
+    .and_then(|n| crate::study::expect_one(n, "quiz"))
+}
+
+#[tauri::command]
+pub fn quiz_rename(app: AppHandle, db: State<'_, StudyDb>, id: i64, title: String) -> Result<(), String> {
+    let title: String = title.trim().chars().take(200).collect();
+    if title.is_empty() {
+        return Err("A quiz needs a name.".into());
+    }
+    with_db(&app, &db, |c| c.execute("UPDATE quiz SET title = ?2 WHERE id = ?1", params![id, title]))
+        .and_then(|n| crate::study::expect_one(n, "quiz"))
+}
+
 #[tauri::command]
 pub fn quiz_delete(app: AppHandle, db: State<'_, StudyDb>, id: i64) -> Result<(), String> {
     let changed = with_db(&app, &db, |c| c.execute("DELETE FROM quiz WHERE id = ?1", [id]))?;

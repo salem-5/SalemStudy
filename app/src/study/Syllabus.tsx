@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { Select } from '../components/Select';
 import { CalendarPlus, FileText, RefreshCw, Trash, Upload } from 'lucide-react';
 import { Modal } from '../components/Dialogs';
 import { Markdown } from '../lib/markdown';
@@ -90,13 +91,12 @@ export function SyllabusDialog({ subject: initial, tree, rescan, onClose, onDone
           {!initial && (
             <label className="field">
               <span>Subject</span>
-              <select className="select" value={subjectId ?? ''} onChange={(e) => {
-                const id = Number(e.target.value);
+              <Select className="select" value={String(subjectId ?? '')} onChange={(v) => {
+                const id = Number(v);
                 setSubjectId(id);
                 try { setNotes(localStorage.getItem(notesKey(id)) ?? ''); } catch { /* ignore */ }
-              }}>
-                {tree.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
+              }}
+                options={tree.map((s) => ({ value: String(s.id), label: s.name }))} />
             </label>
           )}
           <label className="field">

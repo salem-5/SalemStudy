@@ -7,7 +7,10 @@
 mod bridge;
 mod data;
 mod python;
+mod salem;
 mod study;
+mod tabmode;
+mod web;
 
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -24,7 +27,11 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use bridge::Bridge;
 
-const DEFAULT_BASE_URL: &str = "https://api.deepseek.com";
+/// The typesetter, shipped with the binary and written into each job's
+/// folder so an export never depends on anything outside the app.
+const PDF_RENDERER: &str = include_str!("../python/salem_pdf.py");
+
+pub(crate) const DEFAULT_BASE_URL: &str = "https://api.deepseek.com";
 const DEFAULT_FLASH_MODEL: &str = "deepseek-flash";
 const DEFAULT_PRO_MODEL: &str = "deepseek-v4-pro";
 
@@ -39,6 +46,11 @@ pub struct Config {
     base_url: String,
     max_attempts: u32,
     pause_after: u32,
+    /// How hard the model reasons before it answers: "low", "high" or "max".
+    /// The API's own default is "high", which buys little on the short
+    /// tool-choosing steps an agent spends most of its time on and costs real
+    /// seconds on every one of them.
+    effort: String,
     /// Let the solver call the sandboxed `run_python` tool (see python.rs).
     pub python_enabled: bool,
     /// Always reach for Python on a question that involves calculation.
@@ -61,6 +73,7 @@ impl Default for Config {
             base_url: DEFAULT_BASE_URL.into(),
             max_attempts: 4,
             pause_after: 2,
+            effort: "low".into(),
             python_enabled: true,
             python_auto: true,
             python_path: String::new(),
@@ -80,6 +93,7 @@ struct ConfigPatch {
     base_url: Option<String>,
     max_attempts: Option<u32>,
     pause_after: Option<u32>,
+    effort: Option<String>,
     python_enabled: Option<bool>,
     python_auto: Option<bool>,
     python_path: Option<String>,
@@ -108,7 +122,7 @@ pub(crate) fn write_config(app: &AppHandle, cfg: &Config) -> Result<(), String> 
     fs::write(path, body).map_err(|e| format!("cannot write config: {e}"))
 }
 
-struct AppState {
+pub(crate) struct AppState {
     bridge: Bridge,
     http: reqwest::Client,
     /// Separate client: thinking-model replies can take several minutes.
@@ -206,6 +220,7 @@ fn get_config(app: AppHandle) -> Value {
         "baseUrl": c.base_url,
         "maxAttempts": c.max_attempts,
         "pauseAfter": c.pause_after,
+        "effort": c.effort,
         "pythonEnabled": c.python_enabled,
         "pythonAuto": c.python_auto,
         "pythonPath": c.python_path,
@@ -224,6 +239,10 @@ fn set_config(app: AppHandle, patch: ConfigPatch) -> Result<Value, String> {
     if let Some(v) = patch.base_url { if !v.trim().is_empty() { c.base_url = v.trim().to_string(); } }
     if let Some(v) = patch.max_attempts { c.max_attempts = v.clamp(1, 10); }
     if let Some(v) = patch.pause_after { c.pause_after = v.min(10); }
+    if let Some(v) = patch.effort {
+        let v = v.trim().to_lowercase();
+        if ["low", "high", "max"].contains(&v.as_str()) { c.effort = v; }
+    }
     if let Some(v) = patch.python_enabled { c.python_enabled = v; }
     if let Some(v) = patch.python_auto { c.python_auto = v; }
     if let Some(v) = patch.python_path { c.python_path = v.trim().to_string(); }
@@ -299,7 +318,7 @@ async fn deepseek_chat(
         return Err(format!("DeepSeek HTTP {}: {msg}", status.as_u16()));
     }
 
-    record_usage(&app, &db, value.get("model").and_then(Value::as_str).unwrap_or(&model), feature.as_deref(), value.get("usage"));
+    let cost = record_usage(&app, &db, value.get("model").and_then(Value::as_str).unwrap_or(&model), feature.as_deref(), value.get("usage"));
     let message = value.get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("message")).cloned().unwrap_or(Value::Null);
     Ok(json!({
         "content": message.get("content").and_then(Value::as_str).unwrap_or(""),
@@ -307,6 +326,7 @@ async fn deepseek_chat(
         "model": value.get("model").and_then(Value::as_str).unwrap_or(""),
         "usage": value.get("usage").cloned().unwrap_or(Value::Null),
         "tool_calls": message.get("tool_calls").cloned().unwrap_or(Value::Null),
+        "cost": cost,
     }))
 }
 
@@ -400,15 +420,19 @@ async fn deepseek_stream(
         }
     }
     let model_used = if acc.model.is_empty() { model.clone() } else { acc.model.clone() };
-    record_usage(&app, &db, &model_used, feature.as_deref(), Some(&acc.usage));
-    Ok(acc.finish())
+    let cost = record_usage(&app, &db, &model_used, feature.as_deref(), Some(&acc.usage));
+    let mut reply = acc.finish();
+    reply["cost"] = json!(cost);
+    Ok(reply)
 }
 
-/// Log a completion's tokens and cost. Usage is bookkeeping: a failure here
-/// must never fail the request.
-fn record_usage(app: &AppHandle, db: &study::StudyDb, model: &str, feature: Option<&str>, usage: Option<&Value>) {
-    let Some(u) = usage.filter(|u| u.is_object()) else { return };
+/// Log a completion's tokens and cost, and return the cost (USD) so the
+/// caller can show what that piece of work cost. Usage is bookkeeping: a
+/// failure here must never fail the request.
+pub(crate) fn record_usage(app: &AppHandle, db: &study::StudyDb, model: &str, feature: Option<&str>, usage: Option<&Value>) -> f64 {
+    let Some(u) = usage.filter(|u| u.is_object()) else { return 0.0 };
     let _ = study::with_db(app, db, |c| study::usage::record(c, model, feature.unwrap_or("other"), u));
+    study::usage::cost_of(model, u, study::now_ms())
 }
 
 /// Stop a streamed completion; the next chunk boundary ends it.
@@ -421,19 +445,19 @@ fn ai_cancel(state: State<'_, AppState>, id: String) {
 
 /// Pieces of a streamed reply, put back together.
 #[derive(Default)]
-struct StreamAcc {
+pub(crate) struct StreamAcc {
     content: String,
     reasoning: String,
     model: String,
     usage: Value,
     /// Tool calls by index: id, name, argument text so far.
     tools: std::collections::BTreeMap<u64, (String, String, String)>,
-    cancelled: bool,
+    pub(crate) cancelled: bool,
 }
 
 impl StreamAcc {
     /// Fold one SSE chunk in; returns the new content and reasoning text.
-    fn absorb(&mut self, v: &Value) -> (String, String) {
+    pub(crate) fn absorb(&mut self, v: &Value) -> (String, String) {
         if let Some(m) = v.get("model").and_then(Value::as_str) {
             self.model = m.to_string();
         }
@@ -467,7 +491,7 @@ impl StreamAcc {
         (content, reasoning)
     }
 
-    fn finish(self) -> Value {
+    pub(crate) fn finish(self) -> Value {
         let calls: Vec<Value> = self
             .tools
             .into_values()
@@ -519,7 +543,7 @@ async fn deepseek_balance(state: State<'_, AppState>, app: AppHandle) -> Result<
 
 /// Loopback, link-local and RFC1918 addresses that a question should never be
 /// able to make the app fetch.
-fn is_private_host(host: &str) -> bool {
+pub(crate) fn is_private_host(host: &str) -> bool {
     use std::net::IpAddr;
     let h = host.trim_matches(|c| c == '[' || c == ']').to_ascii_lowercase();
     if h == "localhost" || h.ends_with(".localhost") {
@@ -571,8 +595,7 @@ async fn fetch_image_any(state: State<'_, AppState>, url: String) -> Result<Stri
     Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes)))
 }
 
-/// Write a LaTeX document to the Downloads folder; optionally compile it to PDF
-/// with `pdflatex` (set `WA_PDFLATEX` to use a different binary).
+/// A figure that travels with an export, as a data URL.
 #[derive(Deserialize)]
 struct ExportImage {
     file: String,
@@ -584,12 +607,12 @@ struct ExportImage {
 /// names its figures `figure-1.png`, and two jobs sharing a folder would
 /// overwrite each other's.
 #[tauri::command]
-async fn export_latex(
+async fn export_pdf(
     app: AppHandle,
     state: State<'_, AppState>,
     name: String,
-    tex: String,
-    compile: bool,
+    html: String,
+    subtitle: Option<String>,
     images: Vec<ExportImage>,
     job: Option<String>,
 ) -> Result<Value, String> {
@@ -609,9 +632,13 @@ async fn export_latex(
     let cancel = state.export_cancel.clone();
     let active = state.export_active.clone();
     let app2 = app.clone();
+    let cfg = read_config(&app);
+    let python = python::interpreter(&app, &cfg.python_path)
+        .ok_or("Exporting needs Python. Open AI settings and press Install.")?;
+    let subtitle = subtitle.unwrap_or_default();
     let job = job.unwrap_or_else(|| name.clone());
     let out = tauri::async_runtime::spawn_blocking(move || {
-        let r = export_latex_blocking(&app2, &dir, &work, &name, &tex, compile, &images, &pause, &cancel, &job);
+        let r = export_pdf_blocking(&app2, &python, &dir, &work, &name, &html, &subtitle, &images, &pause, &cancel, &job);
         let _ = std::fs::remove_dir_all(&work);
         r
     })
@@ -794,119 +821,6 @@ fn hide_window(cmd: &mut std::process::Command) {
     }
 }
 
-/// The TeX program an export runs: MiKTeX/TeX Live's pdflatex, or Tectonic,
-/// which is a single binary that fetches what a document needs by itself.
-#[derive(Clone, Copy, PartialEq)]
-enum TexEngine {
-    PdfLatex,
-    Tectonic,
-}
-
-impl TexEngine {
-    fn name(self) -> &'static str {
-        match self {
-            TexEngine::PdfLatex => "pdflatex",
-            TexEngine::Tectonic => "tectonic",
-        }
-    }
-}
-
-struct Tex {
-    bin: std::path::PathBuf,
-    engine: TexEngine,
-}
-
-fn exe_in(dir: &std::path::Path, stem: &str) -> Option<std::path::PathBuf> {
-    for name in [format!("{stem}.exe"), stem.to_string()] {
-        let cand = dir.join(name);
-        if cand.is_file() {
-            return Some(cand);
-        }
-    }
-    None
-}
-
-/// Places a TeX binary lives that are not always on a GUI app's PATH.
-fn extra_tex_dirs() -> Vec<std::path::PathBuf> {
-    let mut dirs: Vec<std::path::PathBuf> = Vec::new();
-    let home = std::env::var("HOME").ok().or_else(|| std::env::var("USERPROFILE").ok());
-    if let Some(home) = &home {
-        for rel in [".cargo/bin", ".local/bin"] {
-            dirs.push(std::path::PathBuf::from(home).join(rel));
-        }
-    }
-    #[cfg(windows)]
-    for base in [std::env::var("LOCALAPPDATA").ok(), std::env::var("ProgramFiles").ok()] {
-        if let Some(base) = base {
-            let base = std::path::PathBuf::from(&base);
-            dirs.push(base.join("Programs/MiKTeX/miktex/bin/x64"));
-            dirs.push(base.join("MiKTeX/miktex/bin/x64"));
-            dirs.push(base.join("Programs/Tectonic"));
-        }
-    }
-    #[cfg(target_os = "macos")]
-    {
-        dirs.push(std::path::PathBuf::from("/Library/TeX/texbin"));
-        dirs.push(std::path::PathBuf::from("/opt/homebrew/bin"));
-        dirs.push(std::path::PathBuf::from("/usr/local/bin"));
-        dirs.push(std::path::PathBuf::from("/opt/local/bin"));
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        dirs.push(std::path::PathBuf::from("/usr/local/bin"));
-        dirs.push(std::path::PathBuf::from("/usr/bin"));
-        dirs.push(std::path::PathBuf::from("/var/lib/flatpak/exports/bin"));
-        dirs.push(std::path::PathBuf::from("/snap/bin"));
-        if let Some(home) = &home {
-            dirs.push(std::path::PathBuf::from(home).join(".nix-profile/bin"));
-        }
-    }
-    dirs
-}
-
-fn look_up(stem: &str) -> Option<std::path::PathBuf> {
-    if let Ok(path) = std::env::var("PATH") {
-        for dir in std::env::split_paths(&path) {
-            if let Some(found) = exe_in(&dir, stem) {
-                return Some(found);
-            }
-        }
-    }
-    extra_tex_dirs().iter().find_map(|d| exe_in(d, stem))
-}
-
-/// Windows machines usually have MiKTeX, so pdflatex comes first there;
-/// elsewhere Tectonic is the one binary people can install in a second.
-fn find_tex() -> Option<Tex> {
-    for (var, engine) in [("WA_PDFLATEX", TexEngine::PdfLatex), ("WA_TECTONIC", TexEngine::Tectonic)] {
-        if let Ok(p) = std::env::var(var) {
-            let bin = std::path::PathBuf::from(&p);
-            if bin.is_file() {
-                return Some(Tex { bin, engine });
-            }
-        }
-    }
-    let order = if cfg!(windows) {
-        [TexEngine::PdfLatex, TexEngine::Tectonic]
-    } else {
-        [TexEngine::Tectonic, TexEngine::PdfLatex]
-    };
-    order
-        .into_iter()
-        .find_map(|engine: TexEngine| look_up(engine.name()).map(|bin| Tex { bin, engine }))
-}
-
-/// What to tell someone who has no TeX installed, for their own platform.
-fn install_tex_help() -> &'static str {
-    if cfg!(windows) {
-        "Install MiKTeX (https://miktex.org/download) or Tectonic (https://tectonic-typesetting.github.io/install.html), then try again. You can also point WA_PDFLATEX or WA_TECTONIC at the binary."
-    } else if cfg!(target_os = "macos") {
-        "Install Tectonic with 'brew install tectonic' (or MacTeX for a full TeX Live), then try again. You can also point WA_TECTONIC or WA_PDFLATEX at the binary."
-    } else {
-        "Install Tectonic with your package manager ('sudo apt install tectonic', 'sudo dnf install tectonic', 'sudo pacman -S tectonic') or 'cargo install tectonic'; TeX Live's pdflatex works too. You can also point WA_TECTONIC or WA_PDFLATEX at the binary."
-    }
-}
-
 /// Move a finished file out of the build folder and into the export folder,
 /// across filesystems if that is where Documents lives.
 fn move_out(from: &std::path::Path, to: &std::path::Path) -> Result<(), String> {
@@ -921,13 +835,23 @@ fn move_out(from: &std::path::Path, to: &std::path::Path) -> Result<(), String> 
 #[allow(clippy::too_many_arguments)]
 // Generic over the runtime so the tests can drive it with a mock app; the only
 // thing the handle is used for is the progress event.
-fn export_latex_blocking<R: tauri::Runtime>(
+/// Turn a document into a PDF with the app's own Python.
+///
+/// This used to run pdflatex or Tectonic, which meant asking every student to
+/// install a TeX distribution before they could export anything. PyMuPDF and
+/// matplotlib are already in Salem's environment for reading PDFs and drawing
+/// figures, so the same environment now does the typesetting too — see
+/// `python/salem_pdf.py`.
+fn export_pdf_blocking<R: tauri::Runtime>(
     app: &AppHandle<R>,
+    // The interpreter to render with, resolved by the caller: this stays
+    // generic over the runtime so the tests can drive it.
+    python: &std::path::Path,
     dir: &std::path::Path,
     work: &std::path::Path,
     name: &str,
-    tex: &str,
-    compile: bool,
+    html: &str,
+    subtitle: &str,
     images: &[ExportImage],
     pause: &AtomicBool,
     cancel: &AtomicBool,
@@ -935,183 +859,72 @@ fn export_latex_blocking<R: tauri::Runtime>(
 ) -> Result<Value, String> {
     let emit = |stage: &str, line: &str| {
         // `job` tells the dialog which document a line belongs to when several
-        // are compiling at once.
+        // are being written at once.
         let _ = app.emit("export://progress", json!({ "job": job, "stage": stage, "line": line }));
     };
-    emit("stage", "Writing files…");
+    emit("stage", "Laying out the pages…");
     std::fs::create_dir_all(dir).ok();
     let base = safe_name(name);
-    // Everything is written into this job's own folder; only the finished
-    // files move to `dir`.
-    let tex_path = work.join(format!("{base}.tex"));
-    std::fs::write(&tex_path, tex).map_err(|e| format!("could not write the .tex file: {e}"))?;
-    let out_tex = dir.join(format!("{base}.tex"));
-
-    // Figures, written next to the .tex so \includegraphics finds them.
-    let mut figures: Vec<std::path::PathBuf> = Vec::new();
-    for img in images {
-        let file = safe_name(&img.file);
-        let b64 = img.data.split_once(',').map(|(_, b)| b).unwrap_or(&img.data);
-        match base64::engine::general_purpose::STANDARD.decode(b64) {
-            Ok(bytes) => {
-                let path = work.join(&file);
-                if std::fs::write(&path, bytes).is_ok() {
-                    figures.push(path);
-                }
-            }
-            Err(e) => eprintln!("skipping image {}: {e}", img.file),
-        }
-    }
-
-    // The saved source is only useful with its figures beside it.
-    let save_source = |figs: &[std::path::PathBuf]| -> Result<String, String> {
-        move_out(&tex_path, &out_tex)?;
-        for f in figs {
-            if let Some(n) = f.file_name() {
-                let _ = move_out(f, &dir.join(n));
-            }
-        }
-        Ok(out_tex.to_string_lossy().to_string())
-    };
-
-    if !compile {
-        let saved = save_source(&figures)?;
-        emit("stage", "Saved LaTeX source.");
-        return Ok(json!({ "tex": saved, "pdf": Value::Null }));
-    }
-
-    let tex_bin = match find_tex() {
-        Some(t) => t,
-        None => {
-            let _ = save_source(&figures);
-            return Err(format!(
-                "Could not find a TeX engine to build the PDF. {} The .tex file was saved to {}.",
-                install_tex_help(),
-                dir.display()
-            ));
-        }
-    };
-    let bin = tex_bin.bin.clone();
-    let engine = tex_bin.engine;
-
-    // MiKTeX aborts on malformed PATH entries, so give the child a clean one
-    // built from the binary's own directory plus the system essentials.
-    let mut paths = Vec::new();
-    if let Some(bd) = bin.parent() {
-        paths.push(bd.to_path_buf());
-    }
-    #[cfg(windows)]
-    if let Ok(sys) = std::env::var("SystemRoot") {
-        paths.push(std::path::PathBuf::from(&sys).join("System32"));
-        paths.push(std::path::PathBuf::from(&sys));
-    }
-    #[cfg(not(windows))]
-    for d in ["/usr/bin", "/bin", "/usr/local/bin"] {
-        paths.push(std::path::PathBuf::from(d));
-    }
-    let clean_path = std::env::join_paths(paths).unwrap_or_default();
-
-    let mut tail: Vec<String> = Vec::new();
-    // pdflatex needs two passes for hyperref to settle; Tectonic reruns itself.
-    let passes = if engine == TexEngine::Tectonic { 1 } else { 2 };
-    for pass in 0..passes {
-        if cancel.load(Ordering::Relaxed) {
-            return Err("Export cancelled.".into());
-        }
-        emit("pass", &format!("{} pass {}/{}", engine.name(), pass + 1, passes));
-        let mut cmd = std::process::Command::new(&bin);
-        match engine {
-            TexEngine::PdfLatex => {
-                cmd.arg("-interaction=nonstopmode")
-                    .arg("-halt-on-error")
-                    .arg("-output-directory")
-                    .arg(work)
-                    .arg(&tex_path);
-            }
-            TexEngine::Tectonic => {
-                // Tectonic downloads what the document needs on first use, so
-                // the first export on a new machine wants a network connection.
-                cmd.arg("--outdir").arg(work).arg("--chatter").arg("minimal").arg(&tex_path);
-            }
-        }
-        // The build happens entirely inside this job's folder: the .aux, .log
-        // and figures belong to it alone, so parallel exports cannot collide.
-        cmd.current_dir(work).env("PATH", &clean_path);
-        // pdflatex reports on stdout, Tectonic on stderr.
-        if engine == TexEngine::Tectonic {
-            cmd.stdout(Stdio::null()).stderr(Stdio::piped());
-        } else {
-            cmd.stdout(Stdio::piped()).stderr(Stdio::null());
-        }
-        hide_window(&mut cmd);
-        let child = cmd.spawn();
-        let mut child = match child {
-            Ok(c) => c,
-            Err(e) => {
-                let _ = save_source(&figures);
-                return Err(format!(
-                    "Could not run '{}' ({e}). {} The .tex file was saved.",
-                    bin.display(),
-                    install_tex_help()
-                ));
-            }
-        };
-
-        let out: Option<Box<dyn std::io::Read + Send>> = if engine == TexEngine::Tectonic {
-            child.stderr.take().map(|p| Box::new(p) as Box<dyn std::io::Read + Send>)
-        } else {
-            child.stdout.take().map(|p| Box::new(p) as Box<dyn std::io::Read + Send>)
-        };
-        if let Some(out) = out {
-            let mut reader = BufReader::new(out);
-            let mut buf = String::new();
-            loop {
-                if cancel.load(Ordering::Relaxed) {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err("Export cancelled.".into());
-                }
-                while pause.load(Ordering::Relaxed) && !cancel.load(Ordering::Relaxed) {
-                    std::thread::sleep(Duration::from_millis(120));
-                }
-                buf.clear();
-                match reader.read_line(&mut buf) {
-                    Ok(0) | Err(_) => break,
-                    Ok(_) => {
-                        let line = buf.trim_end().to_string();
-                        tail.push(line.clone());
-                        if tail.len() > 500 {
-                            tail.remove(0);
-                        }
-                        emit("log", &line);
-                    }
-                }
-            }
-        }
-        let _ = child.wait();
-    }
-
+    let out_pdf = dir.join(format!("{base}.pdf"));
     let built = work.join(format!("{base}.pdf"));
-    if built.exists() {
-        // Only the PDF leaves the build folder, under exactly the name the
-        // export dialog asked for; the source and the figures go with the
-        // folder when it is deleted.
-        let pdf = dir.join(format!("{base}.pdf"));
-        move_out(&built, &pdf)?;
-        emit("stage", "PDF built.");
-        Ok(json!({ "tex": Value::Null, "pdf": pdf.to_string_lossy() }))
-    } else {
-        // Nothing to open, so leave the user the source to look at.
-        let saved = save_source(&figures).unwrap_or_default();
-        let last: Vec<&str> = tail.iter().rev().take(25).map(|s| s.as_str()).collect();
-        let last: Vec<&str> = last.into_iter().rev().collect();
-        Err(format!(
-            "{} could not build the PDF (the .tex was saved to {saved}):\n{}",
-            engine.name(),
-            last.join("\n")
-        ))
+
+    // The renderer reads one file and writes one file, so a job is a folder.
+    let job_file = work.join("job.json");
+    let payload = json!({
+        "title": name,
+        "subtitle": subtitle,
+        "html": html,
+        "out": built.to_string_lossy(),
+        "images": images.iter().map(|i| json!({ "file": safe_name(&i.file), "data": i.data })).collect::<Vec<_>>(),
+    });
+    std::fs::write(&job_file, payload.to_string()).map_err(|e| format!("could not stage the export: {e}"))?;
+
+    let script = work.join("salem_pdf.py");
+    std::fs::write(&script, PDF_RENDERER).map_err(|e| format!("could not stage the renderer: {e}"))?;
+
+    wait_while_paused(pause, cancel)?;
+    emit("stage", "Rendering…");
+    let mut cmd = std::process::Command::new(python);
+    cmd.arg(&script).arg(&job_file).current_dir(work);
+    hide_window(&mut cmd);
+    let out = cmd.output().map_err(|e| format!("could not run the renderer: {e}"))?;
+    for line in String::from_utf8_lossy(&out.stderr).lines() {
+        if !line.trim().is_empty() {
+            emit("log", line);
+        }
     }
+    if !out.status.success() || !built.exists() {
+        let why: String = String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .rev()
+            .take(8)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(if why.trim().is_empty() { "the PDF could not be made".into() } else { why });
+    }
+
+    move_out(&built, &out_pdf)?;
+    emit("done", "Saved.");
+    Ok(json!({ "pdf": out_pdf.to_string_lossy(), "tex": Value::Null }))
 }
+
+/// Block while the export dialog's Pause is held, and give up on Cancel.
+fn wait_while_paused(pause: &AtomicBool, cancel: &AtomicBool) -> Result<(), String> {
+    while pause.load(Ordering::Relaxed) {
+        if cancel.load(Ordering::Relaxed) {
+            return Err("stopped".into());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(120));
+    }
+    if cancel.load(Ordering::Relaxed) {
+        return Err("stopped".into());
+    }
+    Ok(())
+}
+
 
 #[tauri::command]
 fn bridge_info(state: State<'_, AppState>) -> Value {
@@ -1181,6 +994,8 @@ pub fn run() {
             cancelled_streams: std::sync::Mutex::new(std::collections::HashSet::new()),
         })
         .manage(study::StudyDb(std::sync::Mutex::new(None)))
+        .manage(salem::Salem::default())
+        .manage(tabmode::TabMode::default())
         .setup(move |app| {
             start_server(bridge.clone());
             bridge::spawn_logger(bridge.clone());
@@ -1201,7 +1016,7 @@ pub fn run() {
             deepseek_stream,
             ai_cancel,
             deepseek_balance,
-            export_latex,
+            export_pdf,
             export_pause,
             export_cancel,
             export_dir,
@@ -1225,6 +1040,9 @@ pub fn run() {
             study::chat::chat_truncate,
             study::notebook_set_overview,
             study::activity,
+            study::activity_detail,
+            study::focus_session_add,
+            study::focus_minutes,
             study::usage::usage_summary,
             data::data_export,
             data::data_inspect,
@@ -1275,6 +1093,7 @@ pub fn run() {
             study::sources::source_add,
             study::sources::source_set_content,
             study::sources::source_set_status,
+            study::sources::source_set_report,
             study::sources::source_rename,
             study::sources::source_delete,
             study::sources::source_units,
@@ -1282,10 +1101,25 @@ pub fn run() {
             study::sources::sources_search,
             study::sources::sources_sample,
             python::youtube_transcript,
+            web::web_search,
+            web::web_fetch,
+            salem::salem_run,
+            salem::salem_cancel,
+            salem::salem_tool_result,
+            salem::salem_status,
+            salem::salem_restart,
+            salem::salem_telemetry,
+            salem::salem_task_clear,
+            tabmode::tab_mode_status,
+            tabmode::tab_mode_start,
+            tabmode::tab_mode_stop,
+            tabmode::tab_mode_reply,
             open_url,
             study::cards::quizzes_list,
             study::cards::quiz_get,
             study::cards::quiz_create,
+            study::cards::quiz_update,
+            study::cards::quiz_rename,
             study::cards::quiz_delete,
             study::cards::quiz_attempt_add,
             study::cards::attempts_list
@@ -1342,14 +1176,26 @@ mod export_tests {
         vec![ExportImage { file: "figure-1.png".into(), data: format!("data:image/png;base64,{PNG}") }]
     }
 
-    /// Three documents compiled at once land as three PDFs, and nothing else
+    /// Where the renderer lives on this machine, or `None` if Python is not
+    /// set up here. The export tests are about the pipeline, not about
+    /// whether a particular laptop has an environment.
+    fn renderer() -> Option<std::path::PathBuf> {
+        let venv = dirs_next_data()?.join("net.serverside.webassign-desk/python/venv/bin/python3");
+        venv.is_file().then_some(venv)
+    }
+
+    fn dirs_next_data() -> Option<std::path::PathBuf> {
+        std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("Library/Application Support"))
+    }
+
+    /// Three documents rendered at once land as three PDFs, and nothing else
     /// is left in the export folder.
     #[test]
     fn parallel_exports_do_not_collide() {
-        if find_tex().is_none() {
-            eprintln!("skipped: no TeX engine on this machine");
+        let Some(python) = renderer() else {
+            eprintln!("skipped: no Salem Python environment on this machine");
             return;
-        }
+        };
         let app = tauri::test::mock_app();
         let root = std::env::temp_dir().join(format!(
             "wa-export-test-{}",
@@ -1367,13 +1213,14 @@ mod export_tests {
                 let out = out.clone();
                 let work = root.join(format!("work-{i}"));
                 let name = name.to_string();
-                let tex = doc(&name);
+                let python = python.clone();
                 std::thread::spawn(move || {
                     fs::create_dir_all(&work).unwrap();
                     let pause = AtomicBool::new(false);
                     let cancel = AtomicBool::new(false);
-                    let r = export_latex_blocking(
-                        &handle, &out, &work, &name, &tex, true, &figures(), &pause, &cancel, &name,
+                    let html = format!("<p>{name}, with a formula \\(x^2 + 1\\).</p><img src=\"figure-1.png\" />");
+                    let r = export_pdf_blocking(
+                        &handle, &python, &out, &work, &name, &html, "", &figures(), &pause, &cancel, &name,
                     );
                     let _ = fs::remove_dir_all(&work);
                     r
@@ -1398,27 +1245,22 @@ mod export_tests {
         let _ = fs::remove_dir_all(&root);
     }
 
-    /// Saving the source keeps the figures beside it, so it still compiles.
+    /// Cancelling stops the export rather than letting it finish quietly.
     #[test]
-    fn saving_source_keeps_the_figures() {
+    fn a_cancelled_export_stops() {
+        let Some(python) = renderer() else { return };
         let app = tauri::test::mock_app();
-        let root = std::env::temp_dir().join(format!(
-            "wa-export-src-{}",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-        ));
+        let root = std::env::temp_dir().join("wa-export-cancel");
         let out = root.join("out");
         let work = root.join("work");
         fs::create_dir_all(&out).unwrap();
         fs::create_dir_all(&work).unwrap();
         let pause = AtomicBool::new(false);
-        let cancel = AtomicBool::new(false);
-        let v = export_latex_blocking(
-            &app.handle().clone(), &out, &work, "Delta sheet", &doc("Delta"), false, &figures(), &pause, &cancel, "Delta",
-        )
-        .unwrap();
-        assert!(v["pdf"].is_null());
-        assert!(std::path::Path::new(v["tex"].as_str().unwrap()).exists());
-        assert!(out.join("figure-1.png").exists(), "the figure should sit next to the .tex");
+        let cancel = AtomicBool::new(true);
+        let r = export_pdf_blocking(
+            &app.handle().clone(), &python, &out, &work, "Stopped", "<p>x</p>", "", &[], &pause, &cancel, "Stopped",
+        );
+        assert_eq!(r.unwrap_err(), "stopped");
         let _ = fs::remove_dir_all(&root);
     }
 }
