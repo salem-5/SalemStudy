@@ -92,6 +92,22 @@ impl Feed {
         }
     }
 
+    /// What a tab's poll gets. A tab asking for the first time (`since` 0)
+    /// starts from now: it is handed the current sequence number and nothing
+    /// else. Replaying the backlog gave a new tab the last session's
+    /// "tab mode was turned off", and it shut itself the moment it opened.
+    fn poll(&self, since: u64) -> (Vec<Value>, u64, bool) {
+        if since == 0 {
+            return (Vec::new(), self.next_seq, false);
+        }
+        self.since(since)
+    }
+
+    /// Forget everything: a new tab-mode session starts with an empty feed.
+    fn clear(&mut self) {
+        self.events.clear();
+    }
+
     /// Everything after `since`, and the sequence number to ask from next.
     ///
     /// A tab that has been away longer than the backlog is told where the
@@ -231,12 +247,13 @@ async fn events(
 
     let answer = |state: &TabMode| {
         let feed = state.feed.lock().unwrap();
-        let (events, seq, missed) = feed.since(since);
+        let (events, seq, missed) = feed.poll(since);
         (events, seq, missed)
     };
 
     let (mut events, mut seq, missed) = answer(&state);
-    if events.is_empty() && !missed {
+    // A first poll answers at once, so the tab knows where "now" is.
+    if events.is_empty() && !missed && since > 0 {
         // Nothing yet: park until something happens or the poll ages out.
         let _ = tokio::time::timeout(POLL_TIMEOUT, arrived.notified()).await;
         let fresh = answer(&state);
@@ -337,6 +354,8 @@ pub fn tab_mode_start(app: AppHandle) -> Result<Value, String> {
 
     {
         let state = app.state::<TabMode>();
+        // Nothing from a previous session reaches this one's tabs.
+        if let Ok(mut feed) = state.feed.lock() { feed.clear(); }
         *state.running.lock().unwrap() = Some(Running { port, token, shutdown: Some(stop_tx) });
     }
     Ok(tab_mode_status(app))
@@ -346,17 +365,22 @@ pub fn tab_mode_start(app: AppHandle) -> Result<Value, String> {
 pub fn tab_mode_stop(app: AppHandle) -> Value {
     {
         let state = app.state::<TabMode>();
-        if let Some(mut running) = state.running.lock().unwrap().take() {
-            if let Some(stop) = running.shutdown.take() {
-                let _ = stop.send(());
-            }
-        }
-        // Open tabs are told the app has gone, rather than polling a port
-        // that will never answer again.
+        // Open tabs are told first, while the server can still answer their
+        // poll, and the server goes a moment later — stopping it at once cut
+        // the poll that was carrying the news, and the tab never heard.
         if let Ok(mut feed) = state.feed.lock() {
             feed.push(json!({ "event": "tabmode://closed", "payload": {} }));
         }
         state.arrived.notify_waiters();
+        let taken = state.running.lock().unwrap().take();
+        if let Some(mut running) = taken {
+            if let Some(stop) = running.shutdown.take() {
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(1500)).await;
+                    let _ = stop.send(());
+                });
+            }
+        }
     }
     tab_mode_status(app)
 }
@@ -436,6 +460,24 @@ mod tests {
         assert_eq!(rest[0]["payload"]["n"], 2);
 
         assert!(feed.since(3).0.is_empty(), "a tab that is up to date gets nothing");
+    }
+
+    #[test]
+    fn a_new_session_does_not_hand_its_tabs_the_last_ones_goodbye() {
+        let mut feed = Feed::default();
+        feed.push(json!({ "event": "ai://stream", "payload": {} }));
+        feed.push(json!({ "event": "tabmode://closed", "payload": {} }));
+        // Tab mode on again: the feed is cleared, and a tab opening now
+        // starts from the current sequence with nothing to replay.
+        feed.clear();
+        let (first, seq, missed) = feed.poll(0);
+        assert!(first.is_empty(), "a new tab must not be told the old session closed");
+        assert_eq!(seq, 2, "sequence numbers keep counting up");
+        assert!(!missed);
+        feed.push(json!({ "event": "prefs://changed", "payload": {} }));
+        let (next, _, _) = feed.poll(seq);
+        assert_eq!(next.len(), 1);
+        assert_eq!(next[0]["event"], "prefs://changed");
     }
 
     #[test]

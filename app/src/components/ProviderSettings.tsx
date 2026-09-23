@@ -6,7 +6,7 @@ import {
   priceLabel, providersCatalog, type CatalogModel, type CatalogProvider, type OllamaStatus,
 } from '../lib/providers';
 import { studyApi } from '../study/api';
-import { POPOVER_OPEN } from './Select';
+import { POPOVER_OPEN, Select } from './Select';
 
 /** While a picker is open, Esc is its to close, not the dialog's. */
 function useHoldsEscape(open: boolean) {
@@ -48,6 +48,16 @@ export function ProviderSettings({ solverOn, onChanged }: { solverOn: boolean; o
   useEffect(refreshOllama, [refreshOllama]);
 
   const providers = useMemo(() => (catalog ? orderedProviders(catalog) : []), [catalog]);
+
+  // On Ollama with a model that is not installed (or none), move onto one
+  // that is, as soon as Ollama says what it has.
+  useEffect(() => {
+    if (!cfg || cfg.provider !== OLLAMA || !ollama?.models.length) return;
+    const ids = ollama.models.map((m) => m.id);
+    if (ids.includes(cfg.flashModel)) return;
+    const first = ids[0];
+    void setAiConfig({ flashModel: first, proModel: ids.includes(cfg.proModel) ? cfg.proModel : first }).then(apply).catch(() => {});
+  }, [cfg, ollama, apply]);
   const current = cfg?.provider ?? 'deepseek';
   const provider: CatalogProvider | null = current === OLLAMA ? ollamaProvider(ollama) : catalog?.[current] ?? null;
   const models = useMemo(() => (provider ? orderedModels(provider.models) : []), [provider]);
@@ -72,7 +82,11 @@ export function ProviderSettings({ solverOn, onChanged }: { solverOn: boolean; o
     return setAiConfig({
       provider: p.id,
       baseUrl: p.id === OLLAMA ? '' : p.base ?? '',
-      ...(first ? { flashModel: first.id, proModel: first.id, modelsInfo: { [first.id]: infoOf(first) } } : {}),
+      // Never keep the last provider's model: with nothing to pick yet (Ollama
+      // with no models pulled) the choice is cleared, and asking for one says so.
+      ...(first
+        ? { flashModel: first.id, proModel: first.id, modelsInfo: { [first.id]: infoOf(first) } }
+        : { flashModel: '', proModel: '' }),
     });
   });
 
@@ -117,7 +131,8 @@ export function ProviderSettings({ solverOn, onChanged }: { solverOn: boolean; o
       )}
 
       {current === OLLAMA ? (
-        <OllamaPanel status={ollama} onStatus={setOllama} onRefresh={refreshOllama} />
+        <OllamaPanel status={ollama} onStatus={setOllama} onRefresh={refreshOllama}
+          ctx={cfg.ollamaCtx} onCtx={(n) => void run('ctx', () => setAiConfig({ ollamaCtx: n }))} />
       ) : (
         <div className="provider-key">
           <label>
@@ -304,7 +319,15 @@ function ModelLine({ m }: { m: CatalogModel }) {
   );
 }
 
-function OllamaPanel({ status, onStatus, onRefresh }: { status: OllamaStatus | null; onStatus: (s: OllamaStatus) => void; onRefresh: () => void }) {
+const CONTEXTS = [8_192, 16_384, 32_768, 65_536, 131_072];
+
+function OllamaPanel({ status, onStatus, onRefresh, ctx, onCtx }: {
+  status: OllamaStatus | null;
+  onStatus: (s: OllamaStatus) => void;
+  onRefresh: () => void;
+  ctx: number;
+  onCtx: (n: number) => void;
+}) {
   const [busy, setBusy] = useState<'start' | 'stop' | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const gb = (n: number | null) => (n ? `${(n / 1e9).toFixed(1)} GB` : '');
@@ -346,6 +369,12 @@ function OllamaPanel({ status, onStatus, onRefresh }: { status: OllamaStatus | n
         )}
         <button type="button" className="icon-btn ghost-icon" onClick={onRefresh} title="Check again"><RefreshCw /></button>
       </div>
+      <label className="ollama-ctx">
+        <span>Context length</span>
+        <Select className="field-input" value={String(ctx || 16_384)} onChange={(v) => onCtx(Number(v))}
+          options={CONTEXTS.map((n) => ({ value: String(n), label: `${n / 1024}k tokens`, hint: n <= 8_192 ? 'short chats only' : n <= 16_384 ? 'decks, quizzes and chats' : n <= 32_768 ? 'long sources' : 'needs a lot of memory' }))} />
+        <small className="muted">How much of your material the model can read at once. More needs more memory (VRAM); if replies fail or slow to a crawl, lower it.</small>
+      </label>
       <p className="muted small">
         When Salem quits, whatever model Ollama has in memory is unloaded and Ollama is stopped. It starts again, and loads
         the model again, the next time a local model is asked for.

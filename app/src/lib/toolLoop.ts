@@ -81,7 +81,7 @@ export async function toolLoop(options: LoopOptions): Promise<LoopResult> {
 
     const id = crypto.randomUUID();
     options.onStream?.(id);
-    let streamed = false;
+    let streamed = '';
     const reply = await aiStream(
       {
         id,
@@ -99,14 +99,19 @@ export async function toolLoop(options: LoopOptions): Promise<LoopResult> {
           reasoning += thought;
         }
         if (content && thinkStart && !thoughtMs) thoughtMs = Date.now() - thinkStart;
-        if (content) { streamed = true; say({ kind: 'text', text: content }); }
+        if (content) { streamed += content; say({ kind: 'text', text: content }); }
       },
     );
     options.onStream?.(null);
     // The words arrive as stream events, and the reply is built from those.
-    // If none arrived (a window that missed them), the finished reply still
-    // has the text — show that rather than an empty answer.
-    if (!streamed && reply.content?.trim()) say({ kind: 'text', text: reply.content });
+    // A browser tab gets them by polling, a beat behind: the finished reply
+    // can come back before the last of them, and they are dropped when the
+    // stream is closed. Whatever the stream did not bring — all of it, or the
+    // tail — is taken from the finished reply, so no answer is cut short.
+    const full = reply.content ?? '';
+    if (full.length > streamed.length && full.startsWith(streamed)) {
+      say({ kind: 'text', text: full.slice(streamed.length) });
+    }
     if (thinkStart && !thoughtMs) thoughtMs = Date.now() - thinkStart;
     model = reply.model || model;
     if (reply.cancelled || stopped()) {

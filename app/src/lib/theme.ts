@@ -107,9 +107,20 @@ export function setAccentPref(color: string) { write(ACCENT_KEY, color); changed
 export function setThemePref(p: ThemePref) { write(KEY, p); changed(); }
 export function setShapePref(s: ShapePref) { write(SHAPE_KEY, s); changed(); }
 
+
+/** Re-read `keys` when the window or a tab changes them (lib/prefSync). */
+const onShared = (keys: string[], fn: () => void) => {
+  if (typeof window === 'undefined') return;
+  window.addEventListener('wa:prefs', (e) => {
+    if (keys.includes((e as CustomEvent<{ key: string }>).detail?.key)) fn();
+  });
+};
+
 /** Call once at boot, before the first render. */
 export function initTheme() {
   apply();
+  // The same theme, accent and shape in the window and every tab.
+  onShared([KEY, ACCENT_KEY, SHAPE_KEY], changed);
   media?.addEventListener('change', () => { if (themePref() === 'system') changed(); });
 }
 

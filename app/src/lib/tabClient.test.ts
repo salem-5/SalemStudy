@@ -75,4 +75,22 @@ describe('deciding whether this is a tab', () => {
     const { inTabMode } = await load();
     assert.equal(inTabMode(), false);
   });
+
+  it('is still a tab once it has put its own stand-in for Tauri in place', async () => {
+    // The tab's transport defines __TAURI_INTERNALS__ too. Asked after boot,
+    // the old check said "desktop", and the tab showed the desktop's lock screen.
+    install('http://127.0.0.1:8790/?t=abc123');
+    const g = globalThis as Record<string, unknown>;
+    let ping = 0;
+    g.fetch = async (url: string) => {
+      if (String(url).includes('/salem/ping')) { ping++; return { ok: true, status: 200, json: async () => ({}) }; }
+      return new Promise(() => {}); // the event poll: never answers in a test
+    };
+    (g.window as Record<string, unknown>).addEventListener = () => {};
+    const { inTabMode, installTabTransport } = await load();
+    await installTabTransport('abc123');
+    assert.equal(ping, 1);
+    assert.ok('__TAURI_INTERNALS__' in (g.window as object));
+    assert.equal(inTabMode(), true);
+  });
 });

@@ -32,13 +32,58 @@ export function tabToken(): string | null {
   }
 }
 
-/** Is this page being served by the app's own tab-mode server? */
+/** Set once this page has put its HTTP stand-in for Tauri in place. */
+const TAB_FLAG = '__SALEM_TAB__';
+
+/**
+ * Is this page being served by the app's own tab-mode server?
+ *
+ * Once the tab installs its stand-in, `__TAURI_INTERNALS__` exists here too,
+ * so that alone cannot tell the tab from the desktop window — asked after
+ * boot it said "desktop", and the tab put up the desktop's lock screen.
+ */
 export function inTabMode(): boolean {
+  if ((window as unknown as Record<string, unknown>)[TAB_FLAG]) return true;
   if ('__TAURI_INTERNALS__' in window) return false;
   return !!tabToken();
 }
 
 type Listener = (event: { event: string; id: number; payload: unknown }) => void;
+
+/**
+ * Tab mode is over: say so, and close the tab.
+ *
+ * A browser only lets a page close a tab a script opened, and this one was
+ * opened by the app from outside the browser, so the close may be refused.
+ * Either way nothing in the tab works any more, so it is covered with a plain
+ * page saying why — drawn without React, which may be what just lost its
+ * connection.
+ */
+export function showTabClosed(reason: 'off' | 'gone') {
+  if (typeof document === 'undefined' || document.getElementById('salem-tab-closed')) return;
+  const cover = document.createElement('div');
+  cover.id = 'salem-tab-closed';
+  cover.className = 'tab-closed';
+  cover.setAttribute('role', 'alert');
+  const card = document.createElement('div');
+  card.className = 'tab-closed-card';
+  const title = document.createElement('h1');
+  title.textContent = reason === 'off' ? 'Tab mode was turned off' : 'Salem is not running';
+  const text = document.createElement('p');
+  text.textContent = reason === 'off'
+    ? 'Salem is back in its own window. You can close this tab.'
+    : 'The Salem app was closed, so this tab has nothing to talk to. Open Salem and turn tab mode on again to use it here.';
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'btn primary';
+  close.textContent = 'Close this tab';
+  close.onclick = () => window.close();
+  card.append(title, text, close);
+  cover.append(card);
+  document.body.append(cover);
+  // Try straight away; where the browser allows it, the tab just goes.
+  window.setTimeout(() => window.close(), 400);
+}
 
 /**
  * Stand in for Tauri, so the rest of the app carries on unchanged.
@@ -79,20 +124,25 @@ export async function installTabTransport(token: string): Promise<void> {
   const poll = async () => {
     let since = 0;
     let backoff = 500;
+    let failures = 0;
     while (!closed) {
       try {
         const res = await fetch(`/salem/events?since=${since}`, { headers });
-        if (res.status === 401) { closed = true; break; }
+        if (res.status === 401) { closed = true; showTabClosed('off'); break; }
         if (!res.ok) throw new Error(String(res.status));
         const body = (await res.json()) as { events: { event: string; payload: unknown }[]; seq: number; missed?: boolean };
         since = body.seq;
         backoff = 500;
+        failures = 0;
         for (const entry of body.events) {
-          if (entry.event === 'tabmode://closed') closed = true;
+          if (entry.event === 'tabmode://closed') { closed = true; showTabClosed('off'); }
           deliver(entry.event, entry.payload);
         }
       } catch {
-        // The window may be restarting. Back off rather than hammering it.
+        // The window may be restarting: back off rather than hammering it.
+        // Still unreachable after a few tries, the app has gone.
+        failures += 1;
+        if (failures >= 4) { closed = true; showTabClosed('gone'); break; }
         await new Promise((r) => setTimeout(r, backoff));
         backoff = Math.min(backoff * 2, 10_000);
       }
@@ -123,6 +173,7 @@ export async function installTabTransport(token: string): Promise<void> {
     unregisterCallback: (n: number) => { callbacks.delete(n); },
   };
 
+  (window as unknown as Record<string, unknown>)[TAB_FLAG] = true;
   (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = internals;
   (window as unknown as { __TAURI_EVENT_PLUGIN_INTERNALS__: unknown }).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
     unregisterListener: (_event: string, id: number) => { listeners.delete(id); },

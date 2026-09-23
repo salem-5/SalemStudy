@@ -53,6 +53,16 @@ let state: PomodoroState = initial();
 const listeners = new Set<() => void>();
 let ticker: number | null = null;
 
+/** Re-read `keys` when the window or a tab changes them (lib/prefSync). */
+const onShared = (keys: string[], fn: () => void) => {
+  if (typeof window === 'undefined') return;
+  window.addEventListener('wa:prefs', (e) => {
+    if (keys.includes((e as CustomEvent<{ key: string }>).detail?.key)) fn();
+  });
+};
+// The timer, its settings and its tasks as the other side left them.
+onShared([KEY], () => { state = initial(); listeners.forEach((l) => l()); syncTicker(); });
+
 function persist() {
   try { localStorage.setItem(KEY, JSON.stringify({ ...state, alarm: null, history: state.history.slice(-500) })); } catch { /* ignore */ }
 }
@@ -79,6 +89,9 @@ export const remainingOf = (s: PomodoroState, now = Date.now()) =>
 
 let lastSecond = -1;
 function tick() {
+  // While tab mode has the window locked, the tab runs the timer. Both
+  // ticking would finish the same session twice.
+  if (document.documentElement.hasAttribute('data-tab-locked')) return;
   const left = remainingOf(state);
   if (left <= 0) { finish(true); return; }
   const sec = Math.ceil(left / 1000);

@@ -36,6 +36,8 @@ export type AiConfig = {
   provider: string;
   /** Providers with a key saved. */
   keyed: string[];
+  /** Tokens of context Ollama gives a local model. */
+  ollamaCtx: number;
 };
 
 export type ConfigPatch = {
@@ -43,6 +45,7 @@ export type ConfigPatch = {
   /** Which provider `apiKey` is for; the current one when left out. */
   keyProvider?: string;
   provider?: string;
+  ollamaCtx?: number;
   /** Price and limits of chosen models, from the catalogue. */
   modelsInfo?: Record<string, { input: number; output: number; cacheRead: number; effort: boolean; maxOutput: number; vision: boolean; tools: boolean }>;
   flashModel?: string;

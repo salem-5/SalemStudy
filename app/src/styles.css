@@ -3721,3 +3721,12 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 :root[data-shape='rounded'] .prov-logo.big { border-radius: var(--r); }
 :root[data-shape='rounded'] :is(.provider-picker, .model-current, .model-list-wrap) { border-radius: var(--r); }
 :root[data-shape='rounded'] :is(.provider-picker, .model-list-wrap) { overflow: hidden; }
+.ollama-ctx { display: flex; flex-direction: column; gap: 5px; max-width: 360px; }
+.ollama-ctx > span { font-size: 12.5px; color: var(--text-2); }
+
+/* Tab mode ended: the tab says so, over everything. */
+.tab-closed { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 24px; background: var(--bg); animation: fade-in var(--dur-2) var(--ease); }
+.tab-closed-card { display: flex; flex-direction: column; align-items: center; gap: 12px; max-width: 460px; padding: 32px 28px; text-align: center; background: var(--panel); border: 1px solid var(--line-2); }
+.tab-closed-card h1 { margin: 0; font: 600 20px var(--sans); color: var(--text-strong); }
+.tab-closed-card p { margin: 0; color: var(--text-2); line-height: 1.55; }
+:root[data-shape='rounded'] .tab-closed-card { border-radius: var(--r-lg); }

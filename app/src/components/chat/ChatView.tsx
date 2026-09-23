@@ -30,7 +30,7 @@ import { runChatTurn } from '../../lib/chatTurn';
 import { formatCost } from '../../lib/meter';
 import type { ToolEnv } from '../../lib/salem/tools';
 import type { AgentKind, ExecState } from '../../lib/salem/types';
-import { toSupportedImage } from '../../lib/ai';
+import { toSupportedImage, getAiConfig } from '../../lib/ai';
 import { loadPosition, restoreWhenReady, watch } from '../../lib/scrollMemory';
 import { markFresh } from '../../lib/chatThreads';
 import { focusPrompt, memoryPrompt, nowPrompt, personalPrompt, spacePrompt, setPersonal, usePersonal } from '../../lib/personal';
@@ -680,6 +680,9 @@ export function ChatView({ threadId, notebookId, system, retrieve, onCite, toolE
         if (found?.context) { prompt += `\n\n${found.context}`; citations = found.citations; }
       }
       updateRun(conversationId, { citations });
+      // The model as it is now, not as it was when this chat was opened: a
+      // provider switched since then must not get the old one's model.
+      const live = await getAiConfig().catch(() => setup.config);
       const r = await runChatTurn({
         agent,
         system: prompt,
@@ -689,7 +692,7 @@ export function ChatView({ threadId, notebookId, system, retrieve, onCite, toolE
         sources: sourceIds ?? [],
         allow: allowTools,
         thinking: think,
-        model: setup.config.flashModel,
+        model: live.flashModel,
         feature: notebookId === null ? 'chat' : 'notebook',
         // One task id per chat, so a long conversation keeps its objective,
         // its constraints and what has already been done.
@@ -706,7 +709,7 @@ export function ChatView({ threadId, notebookId, system, retrieve, onCite, toolE
       content = r.text;
       meta = {
         ...(r.runs.length || r.actions.length ? { runs: r.runs, actions: r.actions, steps: r.steps } : {}),
-        model: setup.config.flashModel,
+        model: live.flashModel,
         ...(citations.length ? { citations } : {}),
         ...(r.cost > 0 ? { cost: r.cost } : {}),
       };

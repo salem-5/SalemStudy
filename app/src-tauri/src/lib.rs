@@ -9,6 +9,7 @@ mod data;
 mod python;
 mod salem;
 mod study;
+mod prefs;
 mod providers;
 mod tabmode;
 mod tray;
@@ -74,6 +75,8 @@ pub struct Config {
     pub(crate) keys: std::collections::HashMap<String, String>,
     /// Price and limits of the chosen models, from the catalogue.
     pub(crate) models_info: std::collections::HashMap<String, providers::ModelInfo>,
+    /// How much context Ollama gives a local model (tokens).
+    pub(crate) ollama_ctx: u32,
 }
 
 impl Default for Config {
@@ -96,6 +99,7 @@ impl Default for Config {
             provider: providers::DEEPSEEK.into(),
             keys: Default::default(),
             models_info: Default::default(),
+            ollama_ctx: providers::OLLAMA_CTX,
         }
     }
 }
@@ -121,6 +125,7 @@ struct ConfigPatch {
     /// Which provider `api_key` is for; the current one when left out.
     key_provider: Option<String>,
     models_info: Option<std::collections::HashMap<String, providers::ModelInfo>>,
+    ollama_ctx: Option<u32>,
 }
 
 fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -255,6 +260,7 @@ fn get_config(app: AppHandle) -> Value {
         "pythonMemoryMb": c.python_memory_mb,
         "pythonMaxCalls": c.python_max_calls,
         "closeToTray": c.close_to_tray,
+        "ollamaCtx": c.ollama_ctx,
     })
 }
 
@@ -276,8 +282,11 @@ fn set_config(app: AppHandle, patch: ConfigPatch) -> Result<Value, String> {
         if v.is_empty() { c.keys.remove(&for_provider); } else { c.keys.insert(for_provider, v); }
     }
     if let Some(m) = patch.models_info { c.models_info.extend(m); }
-    if let Some(v) = patch.flash_model { if !v.trim().is_empty() { c.flash_model = v.trim().to_string(); } }
-    if let Some(v) = patch.pro_model { if !v.trim().is_empty() { c.pro_model = v.trim().to_string(); } }
+    if let Some(n) = patch.ollama_ctx { c.ollama_ctx = n.clamp(2048, 262_144); }
+    // Empty clears it: a provider with nothing to pick yet (Ollama with no
+    // models pulled) must not keep the last provider's model.
+    if let Some(v) = patch.flash_model { c.flash_model = v.trim().to_string(); }
+    if let Some(v) = patch.pro_model { c.pro_model = v.trim().to_string(); }
     // Empty means "the provider's own endpoint".
     if let Some(v) = patch.base_url { c.base_url = v.trim().to_string(); }
     if let Some(v) = patch.max_attempts { c.max_attempts = v.clamp(1, 10); }
@@ -316,7 +325,11 @@ async fn deepseek_chat(
 ) -> Result<Value, String> {
     let c = read_config(&app);
     let ep = providers::endpoint(&c)?;
-    if ep.is_local() { providers::ensure_ollama(&app).await?; }
+    let model = providers::resolve_model(&c, &model)?;
+    if ep.is_local() {
+        providers::ensure_ollama(&app).await?;
+        providers::check_ollama_model(&model).await?;
+    }
     let url = ep.url("chat/completions");
 
     let mut body = json!({ "model": model, "messages": messages, "stream": false, "max_tokens": 16384 });
@@ -336,6 +349,14 @@ async fn deepseek_chat(
         if !ch.is_null() { body["tool_choice"] = ch; }
     }
     providers::shape(&ep, &c, &mut body);
+
+    if ep.is_local() {
+        let mut reply = providers::ollama_chat(&state.deepseek, &c, &body, |_, _| {}, || false).await?;
+        let used = reply["model"].as_str().unwrap_or(&model).to_string();
+        let cost = record_usage(&app, &db, &used, feature.as_deref(), reply.get("usage"));
+        reply["cost"] = json!(cost);
+        return Ok(reply);
+    }
 
     let resp = providers::send(|| ep.authorise(state.deepseek.post(&url)).json(&body))
         .await
@@ -382,7 +403,11 @@ async fn deepseek_stream(
 ) -> Result<Value, String> {
     let c = read_config(&app);
     let ep = providers::endpoint(&c)?;
-    if ep.is_local() { providers::ensure_ollama(&app).await?; }
+    let model = providers::resolve_model(&c, &model)?;
+    if ep.is_local() {
+        providers::ensure_ollama(&app).await?;
+        providers::check_ollama_model(&model).await?;
+    }
     let url = ep.url("chat/completions");
     let mut body = json!({
         "model": model, "messages": messages, "stream": true, "max_tokens": 16384,
@@ -401,6 +426,18 @@ async fn deepseek_stream(
         if !ch.is_null() { body["tool_choice"] = ch; }
     }
     providers::shape(&ep, &c, &mut body);
+
+    if ep.is_local() {
+        let emit = |content: &str, reasoning: &str| {
+            tabmode::notify(&app, "ai://stream", json!({ "id": id, "content": content, "reasoning": reasoning }));
+        };
+        let stop = || state.cancelled_streams.lock().map(|mut s| s.remove(&id)).unwrap_or(false);
+        let mut reply = providers::ollama_chat(&state.deepseek, &c, &body, emit, stop).await?;
+        let used = reply["model"].as_str().unwrap_or(&model).to_string();
+        let cost = record_usage(&app, &db, &used, feature.as_deref(), reply.get("usage"));
+        reply["cost"] = json!(cost);
+        return Ok(reply);
+    }
 
     let mut resp = providers::send(|| ep.authorise(state.deepseek.post(&url)).json(&body))
         .await
@@ -1043,6 +1080,7 @@ pub fn run() {
         .manage(salem::Salem::default())
         .manage(tabmode::TabMode::default())
         .manage(providers::OllamaProc::default())
+        .manage(prefs::PrefsLock::default())
         .setup(move |app| {
             start_server(bridge.clone());
             bridge::spawn_logger(bridge.clone());
@@ -1083,6 +1121,9 @@ pub fn run() {
             export_dir,
             open_path,
             reveal_path,
+            prefs::prefs_all,
+            prefs::prefs_set,
+            prefs::prefs_seed,
             providers::providers_catalog,
             providers::ollama_status,
             providers::ollama_start,

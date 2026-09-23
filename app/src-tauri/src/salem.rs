@@ -350,9 +350,12 @@ async fn dispatch(app: &AppHandle, method: &str, args: Value, cancel: Arc<Atomic
 async fn complete(app: &AppHandle, args: Value, cancel: Arc<AtomicBool>) -> Result<Value, String> {
     let cfg = read_config(app);
     let ep = crate::providers::endpoint(&cfg)?;
-    if ep.is_local() { crate::providers::ensure_ollama(app).await?; }
+    let model = crate::providers::resolve_model(&cfg, args.get("model").and_then(Value::as_str).unwrap_or(""))?;
+    if ep.is_local() {
+        crate::providers::ensure_ollama(app).await?;
+        crate::providers::check_ollama_model(&model).await?;
+    }
     let url = ep.url("chat/completions");
-    let model = args.get("model").and_then(Value::as_str).unwrap_or(&cfg.flash_model).to_string();
     let run = args.get("run").and_then(Value::as_str).unwrap_or("").to_string();
     let stream = args.get("stream").and_then(Value::as_bool).unwrap_or(false);
     let feature = args.get("feature").and_then(Value::as_str).unwrap_or("chat").to_string();
@@ -391,6 +394,17 @@ async fn complete(app: &AppHandle, args: Value, cancel: Arc<AtomicBool>) -> Resu
 
     crate::providers::shape(&ep, &cfg, &mut body);
     let state = app.state::<crate::AppState>();
+    if ep.is_local() {
+        let emit = |content: &str, _reasoning: &str| {
+            if stream && !content.is_empty() {
+                crate::tabmode::notify(app, "salem://event", json!({ "run": run, "event": { "kind": "text", "text": content } }));
+            }
+        };
+        let value = crate::providers::ollama_chat(&state.deepseek, &cfg, &body, emit, || cancel.load(Ordering::SeqCst)).await?;
+        let used = value.get("model").and_then(Value::as_str).filter(|m| !m.is_empty()).unwrap_or(&model).to_string();
+        crate::record_usage(app, &app.state::<StudyDb>(), &used, Some(&feature), value.get("usage"));
+        return Ok(shape(value, cancel.load(Ordering::SeqCst)));
+    }
     let mut resp = crate::providers::send(|| ep.authorise(state.deepseek.post(&url)).json(&body))
         .await
         .map_err(|e| format!("The {} request failed: {e}", ep.provider))?;

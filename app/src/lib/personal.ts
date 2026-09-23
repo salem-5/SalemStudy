@@ -46,6 +46,15 @@ export function setPersonal(patch: Partial<Personal>) {
   listeners.forEach((l) => l());
 }
 
+/** Re-read `keys` when the window or a tab changes them (lib/prefSync). */
+const onShared = (keys: string[], fn: () => void) => {
+  if (typeof window === 'undefined') return;
+  window.addEventListener('wa:prefs', (e) => {
+    if (keys.includes((e as CustomEvent<{ key: string }>).detail?.key)) fn();
+  });
+};
+onShared([KEY], () => { cache = null; listeners.forEach((l) => l()); });
+
 export const usePersonal = () => useSyncExternalStore((l) => { listeners.add(l); return () => listeners.delete(l); }, personal);
 
 /** The prompt section for this student, or '' when nothing is set. */

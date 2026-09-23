@@ -11,7 +11,6 @@
 //! unloaded and Ollama is stopped, so a closed Salem is not still holding
 //! gigabytes of a model in memory.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
@@ -117,6 +116,44 @@ pub fn endpoint(cfg: &Config) -> Result<Endpoint, String> {
         return Err(format!("No API key for {provider} yet. Add one in Settings → Model."));
     }
     Ok(Endpoint { provider, base, key })
+}
+
+/// The model a request actually goes to.
+///
+/// The window names a model with every call, but a view that has been open
+/// since before the student switched provider still names the old one — a
+/// chat asking Ollama for `deepseek-flash`. So this side decides: a request
+/// may name the chosen model or the solver's retry model, and anything else
+/// is taken to mean the chosen one.
+pub fn resolve_model(cfg: &Config, requested: &str) -> Result<String, String> {
+    let requested = requested.trim();
+    let chosen = if !requested.is_empty() && (requested == cfg.flash_model || requested == cfg.pro_model) {
+        requested.to_string()
+    } else {
+        cfg.flash_model.trim().to_string()
+    };
+    if chosen.is_empty() {
+        return Err(format!("No model is chosen for {}. Pick one in Settings → Model.", provider_of(cfg)));
+    }
+    Ok(chosen)
+}
+
+/// For Ollama, check the model is installed before asking for it, so the
+/// student is told which ones are rather than getting Ollama's "not found".
+pub async fn check_ollama_model(model: &str) -> Result<(), String> {
+    let Ok(resp) = http().get(format!("{OLLAMA_HOST}/api/tags")).send().await else { return Ok(()) };
+    let Ok(tags) = resp.json::<Value>().await else { return Ok(()) };
+    let names: Vec<String> = tags.get("models").and_then(Value::as_array).cloned().unwrap_or_default()
+        .iter().filter_map(|m| m.get("name").and_then(Value::as_str).map(str::to_string)).collect();
+    let bare = |n: &str| n.strip_suffix(":latest").unwrap_or(n).to_string();
+    if names.iter().any(|n| n == model || bare(n) == bare(model)) {
+        return Ok(());
+    }
+    Err(if names.is_empty() {
+        format!("Ollama has no models installed. Pull one first (e.g. `ollama pull {model}`), then pick it in Settings → Model.")
+    } else {
+        format!("“{model}” is not installed in Ollama. Pick one of {} in Settings → Model.", names.join(", "))
+    })
 }
 
 /// Fit a request to what this provider and model accept.
@@ -402,6 +439,172 @@ fn kill_ollama() {
     run("pkill", &["-x", "ollama"]);
 }
 
+// ------------------------------------------------------- ollama, natively
+
+/// Context Ollama gives a model when nothing says otherwise.
+pub const OLLAMA_CTX: u32 = 16_384;
+
+/// OpenAI-shaped messages as Ollama's own `/api/chat` wants them: text as a
+/// string, images as bare base64, a tool call's arguments as an object.
+fn to_ollama_messages(messages: &Value) -> Value {
+    let list = messages.as_array().cloned().unwrap_or_default();
+    Value::Array(list.iter().map(|m| {
+        let role = m.get("role").and_then(Value::as_str).unwrap_or("user");
+        let mut text = String::new();
+        let mut images = Vec::new();
+        match m.get("content") {
+            Some(Value::String(t)) => text.push_str(t),
+            Some(Value::Array(parts)) => {
+                for p in parts {
+                    if let Some(t) = p.get("text").and_then(Value::as_str) {
+                        if !text.is_empty() { text.push('\n'); }
+                        text.push_str(t);
+                    }
+                    if let Some(url) = p.pointer("/image_url/url").and_then(Value::as_str) {
+                        if let Some((_, b64)) = url.split_once("base64,") { images.push(json!(b64)); }
+                    }
+                }
+            }
+            _ => {}
+        }
+        let mut out = json!({ "role": role, "content": text });
+        if !images.is_empty() { out["images"] = Value::Array(images); }
+        if let Some(calls) = m.get("tool_calls").and_then(Value::as_array) {
+            out["tool_calls"] = Value::Array(calls.iter().map(|c| {
+                let args = c.pointer("/function/arguments");
+                let args = match args {
+                    Some(Value::String(a)) => serde_json::from_str::<Value>(a).unwrap_or_else(|_| json!({})),
+                    Some(v) => v.clone(),
+                    None => json!({}),
+                };
+                json!({ "function": { "name": c.pointer("/function/name").cloned().unwrap_or(json!("")), "arguments": args } })
+            }).collect());
+        }
+        if role == "tool" {
+            if let Some(name) = m.get("name") { out["tool_name"] = name.clone(); }
+        }
+        out
+    }).collect())
+}
+
+/// Ollama's tool calls in the OpenAI shape the rest of the app reads.
+fn from_ollama_calls(calls: &[Value], start: usize) -> Vec<Value> {
+    calls.iter().enumerate().map(|(i, c)| {
+        let args = c.pointer("/function/arguments").cloned().unwrap_or(json!({}));
+        json!({
+            "id": format!("call_{}", start + i),
+            "type": "function",
+            "function": {
+                "name": c.pointer("/function/name").cloned().unwrap_or(json!("")),
+                "arguments": if args.is_string() { args } else { json!(args.to_string()) },
+            },
+        })
+    }).collect()
+}
+
+/// A chat completion through Ollama's native API.
+///
+/// Its OpenAI-compatible endpoint cannot be told how much context to use, so
+/// every request gets the model's small default and a long prompt — the
+/// material a deck is written from, a chat with its sources — is quietly cut
+/// off at the front. The native API takes `num_ctx`. It also says plainly
+/// when a model cannot use tools, and the request is then made again without
+/// them rather than failing.
+///
+/// Returns the same shape the other paths do: content, reasoning, model,
+/// usage (OpenAI's field names), tool_calls, cancelled.
+pub async fn ollama_chat(
+    client: &reqwest::Client,
+    cfg: &Config,
+    body: &Value,
+    on_delta: impl Fn(&str, &str),
+    cancelled: impl Fn() -> bool,
+) -> Result<Value, String> {
+    let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
+    let ctx = if cfg.ollama_ctx > 0 { cfg.ollama_ctx } else { OLLAMA_CTX };
+    let mut native = json!({
+        "model": body.get("model").cloned().unwrap_or(Value::Null),
+        "messages": to_ollama_messages(body.get("messages").unwrap_or(&Value::Null)),
+        "stream": stream,
+        "options": { "num_ctx": ctx },
+    });
+    if let Some(n) = body.get("max_tokens").and_then(Value::as_u64) { native["options"]["num_predict"] = json!(n); }
+    if let Some(t) = body.get("tools").filter(|t| !t.is_null()) { native["tools"] = t.clone(); }
+    if body.pointer("/response_format/type").and_then(Value::as_str) == Some("json_object") { native["format"] = json!("json"); }
+
+    let url = format!("{OLLAMA_HOST}/api/chat");
+    let mut resp = client.post(&url).json(&native).send().await.map_err(|e| format!("Ollama did not answer: {e}"))?;
+    if resp.status().as_u16() == 400 {
+        let text = resp.text().await.unwrap_or_default();
+        let msg = error_text(&text);
+        // A model without tool support is still a model that can answer.
+        if msg.contains("does not support tools") && native.get("tools").is_some() {
+            native.as_object_mut().map(|o| o.remove("tools"));
+            resp = client.post(&url).json(&native).send().await.map_err(|e| format!("Ollama did not answer: {e}"))?;
+        } else {
+            return Err(format!("ollama: {msg}"));
+        }
+    }
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("ollama HTTP {status}: {}", error_text(&text)));
+    }
+
+    let mut content = String::new();
+    let mut reasoning = String::new();
+    let mut calls: Vec<Value> = Vec::new();
+    let mut model = native["model"].as_str().unwrap_or("").to_string();
+    let (mut prompt_tokens, mut completion_tokens) = (0u64, 0u64);
+    let mut was_cancelled = false;
+    let mut take = |v: &Value, content: &mut String, reasoning: &mut String, calls: &mut Vec<Value>| {
+        let c = v.pointer("/message/content").and_then(Value::as_str).unwrap_or("");
+        let r = v.pointer("/message/thinking").and_then(Value::as_str).unwrap_or("");
+        content.push_str(c);
+        reasoning.push_str(r);
+        if let Some(tc) = v.pointer("/message/tool_calls").and_then(Value::as_array) {
+            let start = calls.len();
+            calls.extend(from_ollama_calls(tc, start));
+        }
+        if let Some(m) = v.get("model").and_then(Value::as_str) { model = m.to_string(); }
+        if let Some(n) = v.get("prompt_eval_count").and_then(Value::as_u64) { prompt_tokens = n; }
+        if let Some(n) = v.get("eval_count").and_then(Value::as_u64) { completion_tokens = n; }
+        (c.to_string(), r.to_string())
+    };
+    if stream {
+        let mut buf = String::new();
+        loop {
+            if cancelled() { was_cancelled = true; break; }
+            let chunk = match resp.chunk().await {
+                Ok(Some(c)) => c,
+                Ok(None) => break,
+                Err(e) => return Err(format!("Ollama's stream broke off: {e}")),
+            };
+            buf.push_str(&String::from_utf8_lossy(&chunk));
+            while let Some(nl) = buf.find('\n') {
+                let line = buf[..nl].trim().to_string();
+                buf.drain(..=nl);
+                if line.is_empty() { continue; }
+                let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+                if let Some(e) = v.get("error").and_then(Value::as_str) { return Err(format!("ollama: {e}")); }
+                let (c, r) = take(&v, &mut content, &mut reasoning, &mut calls);
+                if !c.is_empty() || !r.is_empty() { on_delta(&c, &r); }
+            }
+        }
+    } else {
+        let v: Value = resp.json().await.map_err(|e| format!("Ollama sent something that is not JSON: {e}"))?;
+        take(&v, &mut content, &mut reasoning, &mut calls);
+    }
+    Ok(json!({
+        "content": content,
+        "reasoning": reasoning,
+        "model": model,
+        "usage": { "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens },
+        "tool_calls": if calls.is_empty() { Value::Null } else { Value::Array(calls) },
+        "cancelled": was_cancelled,
+    }))
+}
+
 #[tauri::command]
 pub async fn ollama_status() -> Value {
     let installed = ollama_binary().is_some();
@@ -505,6 +708,36 @@ mod tests {
         assert_eq!(error_text(r#"[{"error":{"code":429,"message":"You exceeded your quota\nmore"}}]"#), "You exceeded your quota");
         assert_eq!(error_text(r#"{"error":{"message":"bad key"}}"#), "bad key");
         assert_eq!(error_text("plain"), "plain");
+    }
+
+    #[test]
+    fn a_stale_model_name_goes_to_the_chosen_model() {
+        let mut c = cfg("ollama");
+        c.flash_model = "gemma4:12b".into();
+        c.pro_model = "gemma4:12b".into();
+        assert_eq!(resolve_model(&c, "deepseek-flash").unwrap(), "gemma4:12b");
+        assert_eq!(resolve_model(&c, "").unwrap(), "gemma4:12b");
+        c.pro_model = "qwen3:14b".into();
+        assert_eq!(resolve_model(&c, "qwen3:14b").unwrap(), "qwen3:14b", "the retry model is honoured");
+        c.flash_model = String::new();
+        assert!(resolve_model(&c, "deepseek-flash").is_err());
+    }
+
+    #[test]
+    fn messages_go_to_ollama_in_its_own_shape() {
+        let msgs = json!([
+            { "role": "user", "content": [{ "type": "text", "text": "what is this" }, { "type": "image_url", "image_url": { "url": "data:image/png;base64,AAAA" } }] },
+            { "role": "assistant", "content": "", "tool_calls": [{ "id": "c1", "type": "function", "function": { "name": "list_study", "arguments": "{\"q\":1}" } }] },
+            { "role": "tool", "tool_call_id": "c1", "name": "list_study", "content": "[]" },
+        ]);
+        let out = to_ollama_messages(&msgs);
+        assert_eq!(out[0]["content"], "what is this");
+        assert_eq!(out[0]["images"][0], "AAAA");
+        assert_eq!(out[1]["tool_calls"][0]["function"]["arguments"]["q"], 1, "arguments are an object, not a string");
+        assert_eq!(out[2]["tool_name"], "list_study");
+        let back = from_ollama_calls(&[json!({ "function": { "name": "x", "arguments": { "a": 2 } } })], 0);
+        assert_eq!(back[0]["function"]["arguments"], "{\"a\":2}");
+        assert_eq!(back[0]["id"], "call_0");
     }
 
     #[test]

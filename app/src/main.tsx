@@ -9,6 +9,7 @@ import { initTheme } from './lib/theme';
 import { inTabMode, installTabTransport, tabToken } from './lib/tabClient';
 import { installTabHost } from './lib/tabHost';
 import { TabModeGate } from './components/TabMode';
+import { startPrefSync } from './lib/prefSync';
 
 initTheme();
 
@@ -24,15 +25,23 @@ function fatal(message: string) {
 }
 
 async function boot() {
+  // Decided once, before the tab's stand-in for Tauri exists.
+  const isTab = inTabMode();
+  const isDesktop = '__TAURI_INTERNALS__' in window && !isTab;
   // Served by the app's own tab-mode server: talk to it over HTTP instead of
   // through Tauri. Everything above this line is the same app.
-  if (inTabMode()) {
+  if (isTab) {
     try {
       await installTabTransport(tabToken()!);
     } catch (e) {
       fatal(String(e instanceof Error ? e.message : e));
       return;
     }
+  }
+  // One set of preferences for the window and every tab: taken before the
+  // first render, so a tab opens in the window's theme rather than its own.
+  if (isDesktop || isTab) {
+    await startPrefSync(isTab ? 'tab' : 'window').catch(() => {});
   }
   // No native WebView context menu in the app chrome; the app supplies its own
   // menus. Text fields keep theirs so paste still works.
@@ -58,7 +67,7 @@ async function boot() {
     installStudyMock();
   }
   // In the desktop app, stand ready to answer for any browser tabs.
-  if ('__TAURI_INTERNALS__' in window && !inTabMode()) {
+  if (isDesktop) {
     void installTabHost().catch(() => {});
   }
   // Dev-only: VITE_SELFTEST=1 runs the in-app AI smoke test (src/devSelfTest.ts).
@@ -71,7 +80,7 @@ async function boot() {
   }
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
-      {'__TAURI_INTERNALS__' in window && !inTabMode()
+      {isDesktop
         ? <TabModeGate><Shell /></TabModeGate>
         : <Shell />}
     </StrictMode>,

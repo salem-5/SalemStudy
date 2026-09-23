@@ -41,6 +41,12 @@ export function useTabModeStatus(): TabModeStatus | null {
  */
 export function TabModeGate({ children }: { children: ReactNode }) {
   const status = useTabModeStatus();
+  const locked = !!status?.running;
+  // Marked on the page, for what runs outside React (the focus timer).
+  useEffect(() => {
+    if (locked) document.documentElement.setAttribute('data-tab-locked', '');
+    else document.documentElement.removeAttribute('data-tab-locked');
+  }, [locked]);
   if (status?.running) return <TabModeLock status={status} />;
   return <>{children}</>;
 }
