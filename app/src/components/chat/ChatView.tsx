@@ -827,7 +827,7 @@ export function ChatView({ threadId, notebookId, system, retrieve, onCite, toolE
                   <p className="chat-empty-title">{emptyTitle}</p>
                   <p className="muted">{emptyHint}</p>
                   {setup && !setup.python && <p className="muted small">Python is not set up, so no code or graphs. Settings → Python → Install.</p>}
-                  {setup && !setup.config.hasKey && <p className="warn small">No DeepSeek API key yet. Add one in Settings.</p>}
+                  {setup && !setup.config.hasKey && <p className="warn small">No API key for the chosen provider yet. Add one in Settings → Model.</p>}
                   {!!suggestions?.length && (
                     <div className="chat-suggest stagger">
                       {suggestions.map((p, i) => (

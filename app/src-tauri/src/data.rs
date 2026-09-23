@@ -88,6 +88,7 @@ pub fn stamp(conn: &Connection, config: Option<&Config>, local: Option<&str>) ->
     if let Some(cfg) = config {
         let mut cfg = cfg.clone();
         cfg.api_key = String::new();
+        cfg.keys.clear();
         put("config", &serde_json::to_string(&cfg).unwrap_or_default())?;
     }
     if let Some(local) = local {
@@ -226,7 +227,9 @@ pub fn data_import(app: AppHandle, db: State<'_, StudyDb>, path: String) -> Resu
     with_db(&app, &db, |_| Ok(()))?;
 
     if let Some(mut cfg) = config.clone() {
-        cfg.api_key = read_config(&app).api_key;
+        let here = read_config(&app);
+        cfg.api_key = here.api_key;
+        cfg.keys = here.keys;
         write_config(&app, &cfg)?;
     }
     Ok(ImportResult { settings: config.is_some() || local.is_some(), local })

@@ -81,6 +81,7 @@ export async function toolLoop(options: LoopOptions): Promise<LoopResult> {
 
     const id = crypto.randomUUID();
     options.onStream?.(id);
+    let streamed = false;
     const reply = await aiStream(
       {
         id,
@@ -98,10 +99,14 @@ export async function toolLoop(options: LoopOptions): Promise<LoopResult> {
           reasoning += thought;
         }
         if (content && thinkStart && !thoughtMs) thoughtMs = Date.now() - thinkStart;
-        if (content) say({ kind: 'text', text: content });
+        if (content) { streamed = true; say({ kind: 'text', text: content }); }
       },
     );
     options.onStream?.(null);
+    // The words arrive as stream events, and the reply is built from those.
+    // If none arrived (a window that missed them), the finished reply still
+    // has the text — show that rather than an empty answer.
+    if (!streamed && reply.content?.trim()) say({ kind: 'text', text: reply.content });
     if (thinkStart && !thoughtMs) thoughtMs = Date.now() - thinkStart;
     model = reply.model || model;
     if (reply.cancelled || stopped()) {

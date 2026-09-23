@@ -8,7 +8,7 @@ import { AskableArea, AskAboutCard, ChatButton, deckBriefing } from './StudyChat
 import { clearDeckSession, deckSessionFits, loadDeckSession, pruneDeckSession, saveDeckSession } from '../lib/studySession';
 import {studyApi, type Card, type CardResult, type ChatThread, type Deck, type Source, type Difficulty, type QuestionType, type Note } from './api';
 import { wholeSources } from '../lib/material';
-import { applyOrder, CEILING } from '../lib/deckPlan';
+import { applyOrder, CARD_BANDS, QUIZ_COUNT } from '../lib/deckPlan';
 import { SetItem, SetPage } from './StudySets';
 import { KindIcon } from './Sources';
 import { NOTE_PRESETS } from '../lib/prompts';
@@ -182,13 +182,15 @@ export function savePrefs(key: string, value: unknown) {
 }
 
 /** What each setting does, in the student's terms. */
-const sizeNote = (size: CardSize, one: 'card' | 'question') => (
-  size === 'fewer'
-    ? `Page by page, but only what you have to know — the definitions, the key numbers, the classic features. Always fewer than Standard, at most ${CEILING.fewer}.`
+const sizeNote = (size: CardSize, one: 'card' | 'question') => {
+  const [lo, hi] = CARD_BANDS[size];
+  const range = one === 'card' ? `${size === 'fewer' ? `up to ${hi}` : `${lo}–${hi}`} cards, by how long your material is` : `exactly ${QUIZ_COUNT[size]} questions`;
+  return size === 'fewer'
+    ? `Page by page, only what you have to know — the definitions, the key numbers, the classic features. ${range[0].toUpperCase()}${range.slice(1)}.`
     : size === 'standard'
-      ? `A ${one} for every point worth knowing, page by page in the order of your material — as many as it takes, at most ${CEILING.standard}.`
-      : `Everything Standard covers, plus ${one}s that compare, connect and apply, still in page order. Always more than Standard, at most ${CEILING.more}.`
-);
+      ? `The points worth knowing, page by page in the order of your material. ${range[0].toUpperCase()}${range.slice(1)}.`
+      : `Everything Standard covers, plus ${one}s that compare, connect and apply, still in page order. ${range[0].toUpperCase()}${range.slice(1)}.`;
+};
 
 /** Shared by decks, quizzes and notes: pick what to build from, and how thoroughly (or, for notes, how). */
 export function GenerateDialog({ kind, notebookId, sources, onClose, run, initialThread }: {

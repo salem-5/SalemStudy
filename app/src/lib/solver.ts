@@ -414,7 +414,7 @@ export function useSolver(deps: SolverDeps) {
     const cfg = configRef.current ?? (await reloadConfig());
     if (!cfg) { push({ role: 'system', kind: 'error', tone: 'bad', text: 'Could not read AI settings.' }); setStat('idle'); return 'idle'; }
     if (!cfg.hasKey) {
-      push({ role: 'system', kind: 'error', tone: 'bad', text: 'No DeepSeek API key set. Open AI settings and paste one.' });
+      push({ role: 'system', kind: 'error', tone: 'bad', text: 'No API key for the chosen provider. Add one in Settings → Model.' });
       setStat('idle');
       return 'idle';
     }
@@ -549,7 +549,7 @@ export function useSolver(deps: SolverDeps) {
     if (statusRef.current === 'running') return; // folded into the next attempt
 
     const cfg = configRef.current;
-    if (!cfg?.hasKey) { push({ role: 'system', kind: 'error', tone: 'bad', text: 'No DeepSeek API key set.' }); return; }
+    if (!cfg?.hasKey) { push({ role: 'system', kind: 'error', tone: 'bad', text: 'No API key for the chosen provider.' }); return; }
     const q = qnumRef.current != null ? depsRef.current.questionOf(qnumRef.current) : undefined;
     const py = pythonOn();
     const budget = py ? Math.max(1, cfg.pythonMaxCalls || 6) : 0;

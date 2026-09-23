@@ -8,6 +8,7 @@ import './styles.css';
 import { initTheme } from './lib/theme';
 import { inTabMode, installTabTransport, tabToken } from './lib/tabClient';
 import { installTabHost } from './lib/tabHost';
+import { TabModeGate } from './components/TabMode';
 
 initTheme();
 
@@ -70,7 +71,9 @@ async function boot() {
   }
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
-      <Shell />
+      {'__TAURI_INTERNALS__' in window && !inTabMode()
+        ? <TabModeGate><Shell /></TabModeGate>
+        : <Shell />}
     </StrictMode>,
   );
 }

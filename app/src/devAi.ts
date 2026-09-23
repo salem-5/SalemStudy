@@ -154,13 +154,60 @@ function python(a: Args) {
   return { ok: true, stdout: out ? `${out}\n` : '', stderr: '', result: null, error: null, figures, duration_ms: 42 };
 }
 
+/** Preview only: a few providers, the shape models.dev's list comes in. */
+const model = (id: string, name: string, o: Partial<Record<string, unknown>> = {}) => ({
+  id, name, reasoning: false, effort: false, tools: true, vision: false, input: 0.5, output: 1.5, cacheRead: 0.05,
+  context: 128_000, maxOutput: 16_384, status: '', released: '2026-01-01', ...o,
+});
+const MOCK_CATALOG = {
+  deepseek: { id: 'deepseek', name: 'DeepSeek', base: 'https://api.deepseek.com', doc: 'https://platform.deepseek.com', env: ['DEEPSEEK_API_KEY'], models: [
+    model('deepseek-flash', 'DeepSeek Flash', { reasoning: true, effort: true, input: 0.15, output: 0.6, cacheRead: 0.003, context: 1_000_000, released: '2026-08-01', vision: true }),
+    model('deepseek-v4-pro', 'DeepSeek V4 Pro', { reasoning: true, effort: true, input: 0.66, output: 1.98, released: '2026-07-01' }),
+  ] },
+  openai: { id: 'openai', name: 'OpenAI', base: 'https://api.openai.com/v1', doc: 'https://platform.openai.com/api-keys', env: ['OPENAI_API_KEY'], models: [
+    model('gpt-5.2', 'GPT-5.2', { reasoning: true, effort: true, vision: true, input: 1.25, output: 10, context: 400_000, released: '2026-06-01' }),
+    model('gpt-5.2-mini', 'GPT-5.2 mini', { reasoning: true, effort: true, vision: true, input: 0.25, output: 2, context: 400_000, released: '2026-06-01' }),
+    model('gpt-4o', 'GPT-4o', { vision: true, input: 2.5, output: 10, status: 'deprecated', released: '2024-05-13' }),
+  ] },
+  anthropic: { id: 'anthropic', name: 'Anthropic', base: 'https://api.anthropic.com/v1', doc: 'https://console.anthropic.com', env: ['ANTHROPIC_API_KEY'], models: [
+    model('claude-sonnet-5', 'Claude Sonnet 5', { reasoning: true, vision: true, input: 3, output: 15, context: 1_000_000, released: '2026-05-01' }),
+  ] },
+  google: { id: 'google', name: 'Google', base: 'https://generativelanguage.googleapis.com/v1beta/openai', doc: 'https://aistudio.google.com', env: ['GEMINI_API_KEY'], models: [
+    model('gemini-3-flash', 'Gemini 3 Flash', { reasoning: true, vision: true, input: 0.3, output: 2.5, context: 1_000_000, released: '2026-04-01' }),
+  ] },
+  openrouter: { id: 'openrouter', name: 'OpenRouter', base: 'https://openrouter.ai/api/v1', doc: 'https://openrouter.ai/keys', env: ['OPENROUTER_API_KEY'], models: [
+    model('qwen/qwen3-235b', 'Qwen3 235B'), model('meta-llama/llama-4-maverick', 'Llama 4 Maverick'),
+  ] },
+  groq: { id: 'groq', name: 'Groq', base: 'https://api.groq.com/openai/v1', doc: 'https://console.groq.com', env: ['GROQ_API_KEY'], models: [model('llama-3.3-70b', 'Llama 3.3 70B', { maxOutput: 8192 })] },
+};
+const mockCfg = { provider: 'deepseek', flashModel: 'deepseek-flash', proModel: 'deepseek-v4-pro', keyed: ['deepseek'] as string[] };
+
 export function installDevAi() {
   const handlers: Record<string, (a: Args) => unknown> = {
     get_config: () => ({
-      hasKey: true, keyHint: 'mock', flashModel: 'mock-flash', proModel: 'mock-pro', baseUrl: 'mock', maxAttempts: 4, pauseAfter: 2, effort: 'low',
+      hasKey: mockCfg.provider === 'ollama' || mockCfg.keyed.includes(mockCfg.provider), keyHint: 'sk-moc…k123',
+      flashModel: mockCfg.flashModel, proModel: mockCfg.proModel, baseUrl: 'mock', maxAttempts: 4, pauseAfter: 2, effort: 'low',
       pythonEnabled: true, pythonAuto: true, pythonPath: '', pythonTimeout: 25, pythonMemoryMb: 4096, pythonMaxCalls: 6,
+      closeToTray: true, provider: mockCfg.provider, keyed: mockCfg.keyed,
     }),
-    set_config: () => handlers.get_config({}),
+    set_config: (a) => {
+      const patch = (a.patch ?? {}) as Record<string, unknown>;
+      if (typeof patch.provider === 'string') mockCfg.provider = patch.provider;
+      if (typeof patch.flashModel === 'string') mockCfg.flashModel = patch.flashModel;
+      if (typeof patch.proModel === 'string') mockCfg.proModel = patch.proModel;
+      if (typeof patch.apiKey === 'string') {
+        const who = (patch.keyProvider as string) || mockCfg.provider;
+        mockCfg.keyed = patch.apiKey ? [...new Set([...mockCfg.keyed, who])] : mockCfg.keyed.filter((k) => k !== who);
+      }
+      return handlers.get_config({});
+    },
+    providers_catalog: async () => { await wait(300); return MOCK_CATALOG; },
+    ollama_status: () => ({ installed: true, running: true, version: '0.12.3', models: [
+      { id: 'llama3.1:8b', size: 4.9e9, family: 'llama', parameters: '8B' },
+      { id: 'qwen3:14b', size: 9.3e9, family: 'qwen3', parameters: '14B' },
+    ], loaded: [{ id: 'llama3.1:8b', vram: 5.6e9 }] }),
+    ollama_start: () => handlers.ollama_status({}),
+    ollama_stop: () => ({ unloaded: ['llama3.1:8b'] }),
     python_status: () => ({
       ready: !localStorage.getItem('wa.preview.noPython'), source: 'venv', interpreter: '/mock/python', version: '3.13', missing: [], error: null, help: '', canInstall: true,
       packages: ['sympy', 'numpy', 'mpmath', 'scipy', 'matplotlib', 'pint', 'pymupdf'].map((name) => ({ name, version: 'mock' })),

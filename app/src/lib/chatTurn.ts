@@ -167,7 +167,7 @@ async function runPythonTool(
 
 export async function runChatTurn(options: ChatTurnOptions): Promise<TurnResult> {
   const config = await getAiConfig();
-  if (!config.hasKey) throw new Error('No DeepSeek API key yet. Add one in Settings.');
+  if (!config.hasKey) throw new Error('No API key for the chosen provider yet. Add one in Settings → Model.');
 
   const all = registry(options.env);
   const tools = permitted(all, options);

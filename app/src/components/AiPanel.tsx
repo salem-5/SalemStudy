@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ProviderSettings } from './ProviderSettings';
 import { Select } from './Select';
 import { Download, Monitor, Moon, RectangleHorizontal, Search, Settings as SettingsIcon, Square, Sun, TriangleAlert, Upload, X } from 'lucide-react';
 import type { Box, Question } from '../types';
@@ -201,7 +202,7 @@ export function AiPanel({ solver, question, questions, open, onOpenSettings, onC
 
       {!cfg?.hasKey && (
         <div className="ai-warn">
-          No DeepSeek API key yet. <button type="button" className="link" onClick={onOpenSettings}>Add one</button>
+          No API key yet. <button type="button" className="link" onClick={onOpenSettings}>Add one</button>
         </div>
       )}
 
@@ -439,10 +440,6 @@ export function AiSettingsDialog({ onClose, onSaved, onClearCache, onPythonChang
   onPythonChanged: () => void;
 }) {
   const [cfg, setCfg] = useState<AiConfig | null>(null);
-  const [key, setKey] = useState('');
-  const [flash, setFlash] = useState('');
-  const [pro, setPro] = useState('');
-  const [base, setBase] = useState('');
   const [maxA, setMaxA] = useState(4);
   const [pause, setPause] = useState(2);
   const [effort, setEffort] = useState<Effort>('low');
@@ -453,9 +450,6 @@ export function AiSettingsDialog({ onClose, onSaved, onClearCache, onPythonChang
 
   const apply = (c: AiConfig) => {
     setCfg(c);
-    setFlash(c.flashModel);
-    setPro(c.proModel);
-    setBase(c.baseUrl);
     setMaxA(c.maxAttempts);
     setPause(c.pauseAfter);
     setEffort(c.effort ?? 'low');
@@ -477,29 +471,13 @@ export function AiSettingsDialog({ onClose, onSaved, onClearCache, onPythonChang
     setErr(null);
     try {
       const patch: ConfigPatch = {
-        flashModel: flash, proModel: pro, baseUrl: base, maxAttempts: maxA, pauseAfter: pause, effort,
+        maxAttempts: maxA, pauseAfter: pause, effort,
         pythonEnabled: py.enabled, pythonAuto: py.auto, pythonPath: py.path,
         pythonTimeout: py.timeout, pythonMaxCalls: py.maxCalls,
       };
-      if (key.trim()) patch.apiKey = key.trim();
       const next = await setAiConfig(patch);
       onSaved(next);
       onClose();
-    } catch (e) {
-      setErr(errText(e));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const removeKey = async () => {
-    setSaving(true);
-    setErr(null);
-    try {
-      const next = await setAiConfig({ apiKey: '' });
-      apply(next);
-      onSaved(next);
-      setKey('');
     } catch (e) {
       setErr(errText(e));
     } finally {
@@ -511,31 +489,25 @@ export function AiSettingsDialog({ onClose, onSaved, onClearCache, onPythonChang
     <Modal title="SETTINGS" onClose={onClose} wide>
       <div className="ai-settings">
         <section>
-          <h4>API KEY</h4>
-          <div className="account-row">
-            <input
-              type="password"
-              value={key}
-              spellCheck={false}
-              placeholder={cfg?.hasKey ? `saved: ${cfg.keyHint} — type a new key to replace` : 'sk-…'}
-              onChange={(e) => setKey(e.target.value)}
-            />
-            <button type="button" className="btn ghost" disabled={saving || !key.trim()} onClick={save}>Save key</button>
-            <button type="button" className="btn ghost danger" disabled={saving || !cfg?.hasKey} onClick={removeKey}>Remove key</button>
-          </div>
-          <p className="muted">
-            Stored on this machine only, under the app config folder. Nothing is written to the project.
-          </p>
+          <h4>MODEL</h4>
+          <ProviderSettings solverOn={solverOn} onChanged={(c) => { setCfg(c); onSaved(c); }} />
         </section>
 
-        <section>
-          <h4>BALANCE</h4>
-          <BalanceRow />
-        </section>
+        {cfg?.provider === 'deepseek' && (
+          <section>
+            <h4>BALANCE</h4>
+            <BalanceRow />
+          </section>
+        )}
 
         <section>
           <h4>APPEARANCE</h4>
           <ThemePicker />
+        </section>
+
+        <section>
+          <h4>WINDOW</h4>
+          <TrayToggle />
         </section>
 
         <PersonalSection />
@@ -575,23 +547,7 @@ export function AiSettingsDialog({ onClose, onSaved, onClearCache, onPythonChang
         </section>}
 
         <section>
-          <h4>MODEL</h4>
-          <div className="ai-settings-row">
-            <label>
-              <span>{solverOn ? 'Main model (vision, used everywhere)' : 'Model'}</span>
-              <input value={flash} spellCheck={false} onChange={(e) => setFlash(e.target.value)} />
-            </label>
-            {solverOn && (
-              <label>
-                <span>Solver retry model (no vision)</span>
-                <input value={pro} spellCheck={false} onChange={(e) => setPro(e.target.value)} />
-              </label>
-            )}
-          </div>
-          <label>
-            <span>API base URL</span>
-            <input value={base} spellCheck={false} onChange={(e) => setBase(e.target.value)} />
-          </label>
+          <h4>REASONING</h4>
           <label>
             <span>How hard to think</span>
             <Select className="field-input" value={effort} onChange={(v) => setEffort(v as Effort)}
@@ -631,6 +587,21 @@ const FEATURE_LABEL: Record<string, string> = {
   solver: 'Assignment solver', chat: 'Assistant chat', notebook: 'Notebook chat', notes: 'Notes', flashcards: 'Flashcards',
   quiz: 'Quizzes', sources: 'Reading sources', overview: 'Notebook overviews', other: 'Other',
 };
+
+/** Closing the window hides Salem to the tray (on by default), so tab mode
+ *  and anything still being written keep running. */
+function TrayToggle() {
+  const [on, setOn] = useState<boolean | null>(null);
+  useEffect(() => { getAiConfig().then((c) => setOn(c.closeToTray)).catch(() => {}); }, []);
+  if (on === null) return null;
+  return (
+    <label className="toggle">
+      <input type="checkbox" checked={on}
+        onChange={async (e) => { const v = e.target.checked; setOn(v); await setAiConfig({ closeToTray: v }).catch(() => setOn(!v)); }} />
+      <span>Keep running in the tray when the window is closed <span className="muted">— tab mode and anything being written carry on; quit from the tray icon</span></span>
+    </label>
+  );
+}
 
 function ThemePicker() {
   const pref = useThemePref();
@@ -1028,7 +999,7 @@ function DataSection() {
           <p>It cannot be undone. <b>Export first</b> if you might want any of it back.</p>
           <label className="account-check">
             <input type="checkbox" checked={forgetKey} onChange={(e) => setForgetKey(e.target.checked)} />
-            <span>Also remove my DeepSeek API key and AI settings</span>
+            <span>Also remove my API keys and AI settings</span>
           </label>
           <label className="danger-confirm">
             <span>Type <b>RESET</b> to confirm</span>

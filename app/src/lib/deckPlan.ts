@@ -42,7 +42,7 @@ export type GenSource =
   | { kind: 'sources'; hits: SourceHit[]; notes?: { id: number; title: string; content: string }[]; focus: string };
 
 /** Past this a deck stops being something anyone sits down and reviews. */
-export const MAX_ITEMS = 128;
+export const MAX_ITEMS = 96;
 
 // ------------------------------------------------------------ reading order
 
@@ -188,57 +188,78 @@ const pageChars = (p: Page) => Math.max(40, p.text.trim().length);
  */
 const CHARS_PER_ITEM = 275;
 
+/** What is being written: a deck's cards or a quiz's questions. */
+export type SetOf = 'cards' | 'questions';
+
 /**
- * The most each setting ever comes to.
- *
- * Standard stops at 86: past that a deck is more than a student sits down
- * with. More may go to `MAX_ITEMS`, Fewer stays well under Standard. These
- * are ceilings, not targets — a short lecture comes to what it holds.
+ * How many cards each setting may come to: a band from the setting below's
+ * ceiling up to its own. Where a deck lands in its band follows the length of
+ * the material — a full lecture near the top, a short one near the bottom —
+ * so the count is not the same number every time.
  */
-export const CEILING: Record<CardSize, number> = { fewer: 52, standard: 86, more: MAX_ITEMS };
+export const CARD_BANDS: Record<CardSize, [number, number]> = { fewer: [8, 32], standard: [32, 64], more: [64, 96] };
+
+/** A quiz is exactly this long: a quiz is sat, and its length is a promise. */
+export const QUIZ_COUNT: Record<CardSize, number> = { fewer: 8, standard: 16, more: 28 };
+
+/** The most each setting ever comes to, for decks. */
+export const CEILING: Record<CardSize, number> = { fewer: CARD_BANDS.fewer[1], standard: CARD_BANDS.standard[1], more: CARD_BANDS.more[1] };
+
+/** The ceiling for either: a deck's band top, or a quiz's exact length. */
+export const ceilingOf = (size: CardSize, of: SetOf): number => (of === 'questions' ? QUIZ_COUNT[size] : CEILING[size]);
 
 /** How each setting scales what a complete pass would write. */
 const FACTOR: Record<CardSize, number> = { fewer: 0.55, standard: 1, more: 1.5 };
 
 /**
+ * How long a lecture is "full" for placing a deck in its band: about 150
+ * cards' worth of text (roughly 40,000 characters, a long lecture).
+ */
+const FULL = 150;
+
+/**
  * How many items a deck or quiz of this material comes to, at each setting.
  *
- * Worked out from the length of the material — the reference deck's density
- * applied to these pages — so a short lecture gets a short deck and nothing
- * is padded to reach a ceiling. The three are always in order: Fewer below
- * Standard below More, however little there is. A number the student asked
- * for replaces the setting's own, within `MAX_ITEMS` and within what the
- * material could fill at its most thorough.
+ * A quiz is its setting's exact length. A deck lands in its band by how long
+ * the material is, and never past what the material could fill at that
+ * setting — a two-page handout is not padded out to thirty-two cards. The
+ * three are always in order: Fewer below Standard below More. A number the
+ * student asked for replaces the setting's own, within `MAX_ITEMS`.
  */
-export function budgets(chars: number, limit?: number): Record<CardSize, number> {
-  const natural = chars / CHARS_PER_ITEM;
-  const at = (size: CardSize) => Math.max(1, Math.min(CEILING[size], Math.round(natural * FACTOR[size])));
-  const standard = at('standard');
-  const out = {
-    fewer: standard > 1 ? Math.min(at('fewer'), standard - 1) : 1,
-    standard,
-    more: Math.min(MAX_ITEMS, Math.max(at('more'), standard + 1)),
-  };
+export function budgets(chars: number, limit?: number, of: SetOf = 'cards'): Record<CardSize, number> {
   if (limit && limit > 0) {
-    const asked = Math.max(1, Math.min(Math.round(limit), out.more));
+    const asked = Math.max(1, Math.min(Math.round(limit), MAX_ITEMS));
     return { fewer: asked, standard: asked, more: asked };
   }
-  return out;
+  if (of === 'questions') return { ...QUIZ_COUNT };
+  const natural = chars / CHARS_PER_ITEM;
+  const f = Math.max(0, Math.min(1, natural / FULL));
+  const at = (size: CardSize) => {
+    const [lo, hi] = CARD_BANDS[size];
+    const inBand = Math.round(lo + (hi - lo) * f);
+    return Math.max(1, Math.min(inBand, Math.round(natural * FACTOR[size]) || 1));
+  };
+  const standard = at('standard');
+  return {
+    fewer: standard > 1 ? Math.min(at('fewer'), standard - 1) : 1,
+    standard,
+    more: Math.min(CEILING.more, Math.max(at('more'), standard + 1)),
+  };
 }
 
-export const budgetFor = (windows: Pick<Window, 'chars'>[], size: CardSize, limit?: number): number =>
-  budgets(windows.reduce((n, w) => n + w.chars, 0), limit)[size];
+export const budgetFor = (windows: Pick<Window, 'chars'>[], size: CardSize, limit?: number, of: SetOf = 'cards'): number =>
+  budgets(windows.reduce((n, w) => n + w.chars, 0), limit, of)[size];
 
 /**
  * Whether the setting's ceiling holds the deck below what a complete pass
- * would write — a long lecture on Standard, a whole course on anything. Then
- * each pass is told to spend its share on what matters most rather than to
- * write up every fact.
+ * would write — a long lecture on Standard, a whole course on anything, and
+ * nearly every quiz. Then each pass is told to spend its share on what
+ * matters most rather than to write up every fact.
  */
-export const isShrunk = (windows: Pick<Window, 'chars'>[], size: CardSize, limit?: number, fast = false): boolean => {
+export const isShrunk = (windows: Pick<Window, 'chars'>[], size: CardSize, limit?: number, fast = false, of: SetOf = 'cards'): boolean => {
   const natural = windows.reduce((n, w) => n + w.chars, 0) / CHARS_PER_ITEM;
   const as = writtenAs(size, fast);
-  return budgetFor(windows, as, limit) < Math.round(natural * FACTOR[as]) - 1;
+  return budgetFor(windows, as, limit, of) < Math.round(natural * FACTOR[as]) - 1;
 };
 
 /**
@@ -261,9 +282,9 @@ export const writtenAs = (size: CardSize, fast = false): CardSize => (size === '
  * length it still comes from the material — a pass over three title slides is
  * told a small number, a pass over a dense page of lists a larger one.
  */
-export const expectedItems = (w: Pick<Window, 'chars'>, all: Pick<Window, 'chars'>[], size: CardSize, limit?: number, fast = false): number => {
+export const expectedItems = (w: Pick<Window, 'chars'>, all: Pick<Window, 'chars'>[], size: CardSize, limit?: number, fast = false, of: SetOf = 'cards'): number => {
   const total = all.reduce((n, x) => n + x.chars, 0) || 1;
-  return Math.max(1, Math.round((w.chars / total) * budgetFor(all, writtenAs(size, fast), limit)));
+  return Math.max(1, Math.round((w.chars / total) * budgetFor(all, writtenAs(size, fast), limit, of)));
 };
 
 /**

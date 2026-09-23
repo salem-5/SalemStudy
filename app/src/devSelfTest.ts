@@ -221,8 +221,7 @@ export async function runWalkBenchmark(sourceTitle: string) {
 
   // Fast (the default) and thorough, side by side, with what each cost.
   const decks: { size: 'standard' | 'fewer' | 'more'; fast: boolean }[] = [
-    { size: 'standard', fast: true }, { size: 'standard', fast: false },
-    { size: 'fewer', fast: true }, { size: 'more', fast: true },
+    { size: 'fewer', fast: true }, { size: 'standard', fast: true }, { size: 'more', fast: true },
   ];
   for (const { size, fast } of decks) {
     await attempt(`walk: deck, ${size}, ${fast ? 'fast' : 'thorough'}`, async () => {
@@ -243,16 +242,16 @@ export async function runWalkBenchmark(sourceTitle: string) {
     });
   }
 
-  for (const fast of [true, false]) {
-    await attempt(`walk: quiz, standard, ${fast ? 'fast' : 'thorough'}`, async () => {
+  for (const [size, fast] of [['fewer', true], ['standard', true], ['more', true]] as const) {
+    await attempt(`walk: quiz, ${size}, ${fast ? 'fast' : 'thorough'}`, async () => {
       const steps: string[] = [];
       const started = Date.now();
       const meter = createMeter();
-      const q = await generateQuiz(ctx, src, nb.id, (t) => steps.push(t), { size: 'standard', fast, meter });
+      const q = await generateQuiz(ctx, src, nb.id, (t) => steps.push(t), { size, fast, meter });
       const types: Record<string, number> = {};
       for (const x of q.questions) types[x.type] = (types[x.type] ?? 0) + 1;
       return {
-        fast, title: q.title, questions: q.questions.length, dropped: q.dropped, skipped: q.skipped,
+        size, fast, title: q.title, questions: q.questions.length, dropped: q.dropped, skipped: q.skipped,
         seconds: Math.round((Date.now() - started) / 1000), cost: meter.total, types, steps,
         all: q.questions.map((x) => ({ page: x.sources?.[0]?.label, type: x.type, prompt: x.prompt, answer: x.answer, choices: x.choices })),
       };

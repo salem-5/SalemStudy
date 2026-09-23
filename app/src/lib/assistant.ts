@@ -130,7 +130,7 @@ async function sourceMaterial(notebookId: number, topic: string, walk = false): 
 /** A number of items the assistant was asked for, if it was asked for one. */
 const countOf = (value: unknown): number | undefined => {
   const n = Math.round(Number(value));
-  return Number.isFinite(n) && n > 0 ? Math.min(128, n) : undefined;
+  return Number.isFinite(n) && n > 0 ? Math.min(96, n) : undefined; // MAX_ITEMS
 };
 
 export function appTools(env: Env): AppTools {

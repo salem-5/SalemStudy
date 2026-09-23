@@ -180,12 +180,23 @@ describe('how many a deck comes to', () => {
   const lecture = planWalk([source(1, 49)]);
   const chars = lecture.reduce((n, w) => n + w.chars, 0);
 
-  it('keeps Standard to 86 and lets More reach 128 on a long lecture', () => {
+  it('puts a long lecture near the top of each band: fewer ≤32, standard 32–64, more 64–96', () => {
     const b = budgets(chars);
-    assert.equal(b.standard, CEILING.standard);
-    assert.equal(CEILING.standard, 86);
-    assert.equal(b.more, MAX_ITEMS);
-    assert.ok(b.fewer < b.standard);
+    assert.ok(b.fewer > 8 && b.fewer <= 32, `fewer ${b.fewer}`);
+    assert.ok(b.standard >= 32 && b.standard <= 64, `standard ${b.standard}`);
+    assert.ok(b.more >= 64 && b.more <= 96, `more ${b.more}`);
+    assert.equal(MAX_ITEMS, 96);
+  });
+
+  it('lands lower in the band for a shorter lecture — it is not always the same number', () => {
+    const half = budgets(chars / 2);
+    const full = budgets(chars);
+    assert.ok(half.standard < full.standard && half.standard >= 32, `${half.standard} vs ${full.standard}`);
+    assert.ok(half.more < full.more && half.more >= 64, `${half.more} vs ${full.more}`);
+  });
+
+  it('makes a quiz exactly 8, 16 or 28, whatever the material', () => {
+    for (const c of [2_000, chars, 400_000]) assert.deepEqual(budgets(c, undefined, 'questions'), { fewer: 8, standard: 16, more: 28 });
   });
 
   it('does not pad a short lecture up to the ceiling', () => {
@@ -203,11 +214,10 @@ describe('how many a deck comes to', () => {
     }
   });
 
-  it('takes a number the student asked for, within what the material could fill', () => {
+  it('takes a number the student asked for, within MAX_ITEMS', () => {
     assert.equal(budgets(chars, 20).standard, 20);
     assert.equal(budgets(chars, 500).more, MAX_ITEMS);
-    const small = budgets(2_000);
-    assert.equal(budgets(2_000, 100).standard, small.more);
+    assert.equal(budgets(chars, 12, 'questions').standard, 12);
   });
 
   it('shares the deck across the passes by length, so the last pages get theirs', () => {

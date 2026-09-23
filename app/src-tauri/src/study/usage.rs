@@ -23,35 +23,45 @@ fn is_peak(at_ms: i64) -> bool {
     (1..=5).contains(&weekday) && ((1..4).contains(&hour) || (6..10).contains(&hour))
 }
 
-pub fn cost(model: &str, hit: i64, miss: i64, completion: i64, at_ms: i64) -> f64 {
-    let (h, m, o) = rates(model);
-    let mult = if is_peak(at_ms) { 2.0 } else { 1.0 };
+pub fn cost(model: &str, hit: i64, miss: i64, completion: i64, at_ms: i64, price: Option<(f64, f64, f64)>) -> f64 {
+    // The chosen model's own price from the catalogue; without one, the
+    // DeepSeek rates the app has always used (with DeepSeek's peak hours).
+    let ((h, m, o), mult) = match price {
+        Some(p) => (p, 1.0),
+        None => (rates(model), if is_peak(at_ms) { 2.0 } else { 1.0 }),
+    };
     (hit as f64 * h + miss as f64 * m + completion as f64 * o) / 1e6 * mult
 }
 
-/// What one completion cost, from its `usage` object, in USD.
-pub fn cost_of(model: &str, usage: &Value, at_ms: i64) -> f64 {
+/// Token counts from a `usage` object: cache hits, misses, output. DeepSeek
+/// reports cache hits in its own field; OpenAI-style providers under
+/// `prompt_tokens_details.cached_tokens`.
+fn counts(usage: &Value) -> (i64, i64, i64) {
     let n = |k: &str| usage.get(k).and_then(Value::as_i64).unwrap_or(0);
     let prompt = n("prompt_tokens");
-    let hit = n("prompt_cache_hit_tokens");
+    let hit = usage.get("prompt_cache_hit_tokens").and_then(Value::as_i64)
+        .or_else(|| usage.pointer("/prompt_tokens_details/cached_tokens").and_then(Value::as_i64))
+        .unwrap_or(0);
     let miss = usage.get("prompt_cache_miss_tokens").and_then(Value::as_i64).unwrap_or((prompt - hit).max(0));
-    cost(model, hit, miss, n("completion_tokens"), at_ms)
+    (hit, miss, n("completion_tokens"))
+}
+
+/// What one completion cost, from its `usage` object, in USD.
+pub fn cost_of(model: &str, usage: &Value, at_ms: i64, price: Option<(f64, f64, f64)>) -> f64 {
+    let (hit, miss, out) = counts(usage);
+    cost(model, hit, miss, out, at_ms, price)
 }
 
 /// Log one completion from its `usage` object. Missing fields count as zero.
-pub fn record(conn: &Connection, model: &str, feature: &str, usage: &Value) -> rusqlite::Result<()> {
-    let n = |k: &str| usage.get(k).and_then(Value::as_i64).unwrap_or(0);
-    let prompt = n("prompt_tokens");
-    let hit = n("prompt_cache_hit_tokens");
-    let miss = usage.get("prompt_cache_miss_tokens").and_then(Value::as_i64).unwrap_or((prompt - hit).max(0));
-    let completion = n("completion_tokens");
-    if prompt == 0 && completion == 0 {
+pub fn record(conn: &Connection, model: &str, feature: &str, usage: &Value, price: Option<(f64, f64, f64)>) -> rusqlite::Result<()> {
+    let (hit, miss, completion) = counts(usage);
+    if hit + miss == 0 && completion == 0 {
         return Ok(());
     }
     let at = now_ms();
     conn.execute(
         "INSERT INTO ai_usage (at, model, feature, prompt_hit, prompt_miss, completion, cost) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![at, model, feature, hit, miss, completion, cost(model, hit, miss, completion, at)],
+        params![at, model, feature, hit, miss, completion, cost(model, hit, miss, completion, at, price)],
     )?;
     Ok(())
 }
@@ -130,9 +140,9 @@ mod tests {
         assert!(is_peak(monday + 2 * 3_600_000));
         assert!(!is_peak(monday + 12 * 3_600_000));
         assert!(!is_peak(monday - 2 * 86_400_000 + 2 * 3_600_000));
-        let off = cost("deepseek-flash", 1_000_000, 1_000_000, 1_000_000, monday + 12 * 3_600_000);
+        let off = cost("deepseek-flash", 1_000_000, 1_000_000, 1_000_000, monday + 12 * 3_600_000, None);
         assert!((off - 0.753).abs() < 1e-9);
-        assert!((cost("deepseek-flash", 0, 0, 1_000_000, monday + 2 * 3_600_000) - 1.2).abs() < 1e-9);
+        assert!((cost("deepseek-flash", 0, 0, 1_000_000, monday + 2 * 3_600_000, None) - 1.2).abs() < 1e-9);
     }
 
     #[test]
@@ -140,14 +150,21 @@ mod tests {
         let c = Connection::open_in_memory().unwrap();
         super::super::prepare(&c).unwrap();
         let u = serde_json::json!({"prompt_tokens": 1000, "prompt_cache_hit_tokens": 400, "completion_tokens": 200});
-        record(&c, "deepseek-flash", "chat", &u).unwrap();
-        record(&c, "deepseek-flash", "chat", &u).unwrap();
-        record(&c, "deepseek-v4-pro", "solver", &u).unwrap();
-        record(&c, "deepseek-flash", "chat", &serde_json::json!({})).unwrap();
+        record(&c, "deepseek-flash", "chat", &u, None).unwrap();
+        record(&c, "deepseek-flash", "chat", &u, None).unwrap();
+        record(&c, "deepseek-v4-pro", "solver", &u, None).unwrap();
+        record(&c, "deepseek-flash", "chat", &serde_json::json!({}), None).unwrap();
         let s = summary(&c).unwrap();
         assert_eq!((s.total.calls, s.total.tokens), (3, 3600));
         assert_eq!(s.by_feature[0].key, "solver", "pro costs more, so it sorts first");
         assert_eq!(s.by_feature.iter().find(|b| b.key == "chat").unwrap().calls, 2);
         assert_eq!(s.by_day.len(), 1);
+    }
+
+    #[test]
+    fn a_catalogue_price_and_openai_style_cache_counts() {
+        // 1M cached at 0.1, 1M fresh at 1, 1M out at 2 → 3.1 USD, no peak doubling.
+        let u = serde_json::json!({ "prompt_tokens": 2_000_000, "completion_tokens": 1_000_000, "prompt_tokens_details": { "cached_tokens": 1_000_000 } });
+        assert!((cost_of("gpt-x", &u, 0, Some((0.1, 1.0, 2.0))) - 3.1).abs() < 1e-9);
     }
 }

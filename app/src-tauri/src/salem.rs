@@ -29,7 +29,7 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Manager, State};
 
 use crate::study::StudyDb;
-use crate::{python, read_config, web, StreamAcc, DEFAULT_BASE_URL};
+use crate::{python, read_config, web, StreamAcc};
 
 /// The runtime's own source, shipped with the binary and written out next to
 /// the virtualenv on startup. Keeping it in the binary means the two halves of
@@ -349,11 +349,9 @@ async fn dispatch(app: &AppHandle, method: &str, args: Value, cancel: Arc<Atomic
 /// arrives, so a plain chat answer still appears word by word.
 async fn complete(app: &AppHandle, args: Value, cancel: Arc<AtomicBool>) -> Result<Value, String> {
     let cfg = read_config(app);
-    if cfg.api_key.is_empty() {
-        return Err("No DeepSeek API key set. Open AI settings and paste your key.".into());
-    }
-    let base = if cfg.base_url.trim().is_empty() { DEFAULT_BASE_URL } else { cfg.base_url.trim() };
-    let url = format!("{}/chat/completions", base.trim_end_matches('/'));
+    let ep = crate::providers::endpoint(&cfg)?;
+    if ep.is_local() { crate::providers::ensure_ollama(app).await?; }
+    let url = ep.url("chat/completions");
     let model = args.get("model").and_then(Value::as_str).unwrap_or(&cfg.flash_model).to_string();
     let run = args.get("run").and_then(Value::as_str).unwrap_or("").to_string();
     let stream = args.get("stream").and_then(Value::as_bool).unwrap_or(false);
@@ -391,30 +389,22 @@ async fn complete(app: &AppHandle, args: Value, cancel: Arc<AtomicBool>) -> Resu
         body["reasoning_effort"] = json!(effort);
     }
 
+    crate::providers::shape(&ep, &cfg, &mut body);
     let state = app.state::<crate::AppState>();
-    let mut resp = state
-        .deepseek
-        .post(&url)
-        .header("Authorization", format!("Bearer {}", cfg.api_key))
-        .json(&body)
-        .send()
+    let mut resp = crate::providers::send(|| ep.authorise(state.deepseek.post(&url)).json(&body))
         .await
-        .map_err(|e| format!("DeepSeek request failed: {e}"))?;
+        .map_err(|e| format!("The {} request failed: {e}", ep.provider))?;
     let status = resp.status();
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
-        let detail = serde_json::from_str::<Value>(&text)
-            .ok()
-            .and_then(|v| v.get("error").and_then(|e| e.get("message")).and_then(Value::as_str).map(str::to_string))
-            .unwrap_or_else(|| text.chars().take(300).collect());
-        return Err(format!("DeepSeek HTTP {}: {detail}", status.as_u16()));
+        return Err(format!("{} HTTP {}: {}", ep.provider, status.as_u16(), crate::providers::error_text(&text)));
     }
 
     let value = if stream {
         stream_reply(app, &mut resp, &run, &cancel).await?
     } else {
         let text = resp.text().await.map_err(|e| e.to_string())?;
-        let parsed: Value = serde_json::from_str(&text).map_err(|_| "DeepSeek sent something that is not JSON".to_string())?;
+        let parsed: Value = serde_json::from_str(&text).map_err(|_| "The model sent something that is not JSON".to_string())?;
         let message = parsed.get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("message")).cloned().unwrap_or(Value::Null);
         json!({
             "content": message.get("content").cloned().unwrap_or(Value::Null),

@@ -761,3 +761,56 @@ the moment of playing (`study/StudySets.tsx`).
       through, and the reader drops them one item at a time
 - [x] Verified in the app against the live API: a chat reply, a demanding one
       handed to the agent, and a saved quiz all came back with a price
+
+## 37. Set sizes, tab mode, the tray, rounded everything, and any provider
+
+- [x] **Sizes.** Decks sit in a band that depends on how long the material
+      is: Fewer up to 32, Standard 32–64, More 64–96. They are never padded
+      past what the material holds. Quizzes are exactly 8, 16 or 28: passes
+      aim a quarter over, the quiz is cut to length, and if checks leave it
+      short, a top-up pass fills in the least-covered pages
+      (`deckPlan.budgets`, `CARD_BANDS`, `QUIZ_COUNT`)
+- [x] **Tab mode.** While it is on, the desktop window shows only a lock
+      screen (address, open, copy, turn off). The window still runs
+      underneath, because it relays the tab's commands. Turning tab mode on
+      opens the tab
+- [x] **Chat in a tab.** Reply text streamed through `ai://stream` with a
+      plain `emit`, which only the desktop window hears, so a tab got the
+      price but no words. It now goes through `tabmode::notify`, as does
+      Python setup progress. The tool loop also falls back to the finished
+      reply's text if no stream event arrived
+- [x] **Tray.** Closing the window hides it to the tray (on by default,
+      Settings → Window), so tab mode and running work carry on. The menu
+      has Open Salem, Open in browser tab and Quit. On macOS the Dock icon
+      reopens the window
+- [x] **Rounded, everywhere.** A detector listed every visible box still
+      square on each page. Selected rows (sidebar, threads, sources,
+      palette) are soft pills instead of left stripes. Tab underlines are
+      short rounded bars, and segmented switches have a sliding pill.
+      Switches, checkboxes, sliders, scrollbars, usage and chart bars,
+      heatmap cells, the calendar (frame, pills, today, selection) and
+      pictures are rounded too. Settings sections become cards instead of
+      rows ruled apart
+- [x] **Providers** (`providers.rs`, `lib/providers.ts`,
+      `ProviderSettings.tsx`). As in opencode: pick a provider (with its
+      logo), give its key, pick a model from its list.
+  - The catalogue is models.dev, fetched and trimmed by the Rust side and
+    cached for a day.
+  - Keys are kept per provider; the old DeepSeek key still counts.
+  - Requests are fitted to the provider: `thinking` only to DeepSeek,
+    `reasoning_effort` only to models that take it, and `max_tokens` within
+    the model's limit.
+  - Prices come from the catalogue, so the cost display is right for any
+    model; cache hits are read in both DeepSeek's and OpenAI's shapes.
+  - A 429 or 503 is retried after the wait the provider asks for, so free
+    tiers slow a deck down rather than failing it.
+  - Every provider's error shape is read, including Google's array.
+- [x] **Ollama** is the local provider, listing the models installed here.
+      It is started when needed; on quit, and from the Settings button, the
+      loaded models are unloaded and Ollama is stopped. It comes back on the
+      next local request
+- [ ] Not verified live: Ollama is not installed on this machine, and the
+      new set sizes were not benchmarked against a model, because the saved
+      provider (Google) was on retired or quota-limited models while this
+      was written. The Google path itself was verified: requests reach it
+      with the saved key and its errors come back readable

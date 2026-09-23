@@ -95,7 +95,7 @@ function pythonTool(
 
 export async function generate<T>(options: GenerateOptions): Promise<T> {
   const config = await getAiConfig();
-  if (!config.hasKey) throw new Error('No DeepSeek API key yet. Add one in Settings.');
+  if (!config.hasKey) throw new Error('No API key for the chosen provider yet. Add one in Settings → Model.');
 
   const instruction: ApiContent = typeof options.instruction === 'string'
     ? options.instruction
@@ -179,7 +179,7 @@ export const generateQuick = <T>(options: GenerateOptions) => generate<T>(option
  */
 export async function generateText(options: Omit<GenerateOptions, 'schema'> & { stream?: boolean }): Promise<string> {
   const config = await getAiConfig();
-  if (!config.hasKey) throw new Error('No DeepSeek API key yet. Add one in Settings.');
+  if (!config.hasKey) throw new Error('No API key for the chosen provider yet. Add one in Settings → Model.');
 
   const instruction: ApiContent = typeof options.instruction === 'string'
     ? options.instruction
@@ -239,7 +239,7 @@ export async function generateVision(options: {
   notebookId?: number | null;
 }): Promise<string> {
   const config = await getAiConfig();
-  if (!config.hasKey) throw new Error('Reading images needs a DeepSeek API key (Settings).');
+  if (!config.hasKey) throw new Error('Reading images needs an API key (Settings → Model).');
 
   const reply = await aiChat({
     feature: feature(options.feature),

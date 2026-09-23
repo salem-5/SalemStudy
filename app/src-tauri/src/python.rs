@@ -513,7 +513,7 @@ pub async fn python_status(app: AppHandle) -> Result<Value, String> {
 
 fn setup_blocking(app: &AppHandle, configured: &str, repair: bool) -> Result<Value, String> {
     let emit = |stage: &str, line: &str| {
-        let _ = app.emit("python://progress", json!({ "stage": stage, "line": line }));
+        crate::tabmode::notify(&app, "python://progress", json!({ "stage": stage, "line": line }));
     };
     forget_ready();
     let root = venv_root(app)?;

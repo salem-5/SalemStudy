@@ -9,7 +9,9 @@ mod data;
 mod python;
 mod salem;
 mod study;
+mod providers;
 mod tabmode;
+mod tray;
 mod web;
 
 use std::fs;
@@ -62,6 +64,16 @@ pub struct Config {
     pub python_memory_mb: u32,
     /// Snippets the model may run per solve attempt.
     python_max_calls: u32,
+    /// Closing the window hides it to the tray instead of quitting, so tab
+    /// mode (and anything running) carries on.
+    pub(crate) close_to_tray: bool,
+    /// Which provider answers (a models.dev id, or "ollama"). DeepSeek by
+    /// default, which is what the app spoke before there were others.
+    pub(crate) provider: String,
+    /// An API key per provider, so switching back and forth keeps them.
+    pub(crate) keys: std::collections::HashMap<String, String>,
+    /// Price and limits of the chosen models, from the catalogue.
+    pub(crate) models_info: std::collections::HashMap<String, providers::ModelInfo>,
 }
 
 impl Default for Config {
@@ -80,6 +92,10 @@ impl Default for Config {
             python_timeout: 25,
             python_memory_mb: 4096,
             python_max_calls: 6,
+            close_to_tray: true,
+            provider: providers::DEEPSEEK.into(),
+            keys: Default::default(),
+            models_info: Default::default(),
         }
     }
 }
@@ -100,6 +116,11 @@ struct ConfigPatch {
     python_timeout: Option<u32>,
     python_memory_mb: Option<u32>,
     python_max_calls: Option<u32>,
+    close_to_tray: Option<bool>,
+    provider: Option<String>,
+    /// Which provider `api_key` is for; the current one when left out.
+    key_provider: Option<String>,
+    models_info: Option<std::collections::HashMap<String, providers::ModelInfo>>,
 }
 
 fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -202,7 +223,9 @@ async fn fetch_image(state: State<'_, AppState>, url: String) -> Result<String, 
 #[tauri::command]
 fn get_config(app: AppHandle) -> Value {
     let c = read_config(&app);
-    let chars: Vec<char> = c.api_key.chars().collect();
+    let provider = providers::provider_of(&c);
+    let key = providers::key_for(&c, &provider);
+    let chars: Vec<char> = key.chars().collect();
     let hint = if chars.len() > 10 {
         let head: String = chars[..6].iter().collect();
         let tail: String = chars[chars.len() - 4..].iter().collect();
@@ -213,7 +236,11 @@ fn get_config(app: AppHandle) -> Value {
         "set".into()
     };
     json!({
-        "hasKey": !c.api_key.is_empty(),
+        "provider": provider,
+        "hasKey": !key.is_empty() || provider == providers::OLLAMA,
+        "keyed": c.keys.iter().filter(|(_, v)| !v.is_empty()).map(|(k, _)| k.clone())
+            .chain((!c.api_key.is_empty()).then(|| providers::DEEPSEEK.to_string()))
+            .collect::<std::collections::BTreeSet<_>>(),
         "keyHint": hint,
         "flashModel": c.flash_model,
         "proModel": c.pro_model,
@@ -227,16 +254,32 @@ fn get_config(app: AppHandle) -> Value {
         "pythonTimeout": c.python_timeout,
         "pythonMemoryMb": c.python_memory_mb,
         "pythonMaxCalls": c.python_max_calls,
+        "closeToTray": c.close_to_tray,
     })
 }
 
 #[tauri::command]
 fn set_config(app: AppHandle, patch: ConfigPatch) -> Result<Value, String> {
     let mut c = read_config(&app);
-    if let Some(v) = patch.api_key { c.api_key = v.trim().to_string(); }
+    if let Some(v) = patch.provider {
+        let v = v.trim().to_string();
+        if !v.is_empty() && v != providers::provider_of(&c) {
+            c.provider = v;
+            // A new provider brings its own endpoint unless one is given.
+            if patch.base_url.is_none() { c.base_url = String::new(); }
+        }
+    }
+    if let Some(v) = patch.api_key {
+        let for_provider = patch.key_provider.filter(|p| !p.trim().is_empty()).unwrap_or_else(|| providers::provider_of(&c));
+        let v = v.trim().to_string();
+        if for_provider == providers::DEEPSEEK { c.api_key = v.clone(); }
+        if v.is_empty() { c.keys.remove(&for_provider); } else { c.keys.insert(for_provider, v); }
+    }
+    if let Some(m) = patch.models_info { c.models_info.extend(m); }
     if let Some(v) = patch.flash_model { if !v.trim().is_empty() { c.flash_model = v.trim().to_string(); } }
     if let Some(v) = patch.pro_model { if !v.trim().is_empty() { c.pro_model = v.trim().to_string(); } }
-    if let Some(v) = patch.base_url { if !v.trim().is_empty() { c.base_url = v.trim().to_string(); } }
+    // Empty means "the provider's own endpoint".
+    if let Some(v) = patch.base_url { c.base_url = v.trim().to_string(); }
     if let Some(v) = patch.max_attempts { c.max_attempts = v.clamp(1, 10); }
     if let Some(v) = patch.pause_after { c.pause_after = v.min(10); }
     if let Some(v) = patch.effort {
@@ -249,6 +292,7 @@ fn set_config(app: AppHandle, patch: ConfigPatch) -> Result<Value, String> {
     if let Some(v) = patch.python_timeout { c.python_timeout = v.clamp(1, 180); }
     if let Some(v) = patch.python_memory_mb { c.python_memory_mb = v.clamp(256, 16384); }
     if let Some(v) = patch.python_max_calls { c.python_max_calls = v.clamp(1, 20); }
+    if let Some(v) = patch.close_to_tray { c.close_to_tray = v; }
     write_config(&app, &c)?;
     Ok(get_config(app))
 }
@@ -271,11 +315,9 @@ async fn deepseek_chat(
     choice: Option<Value>,
 ) -> Result<Value, String> {
     let c = read_config(&app);
-    if c.api_key.is_empty() {
-        return Err("No DeepSeek API key set. Open AI settings and paste your key.".into());
-    }
-    let base = if c.base_url.trim().is_empty() { DEFAULT_BASE_URL } else { c.base_url.trim() };
-    let url = format!("{}/chat/completions", base.trim_end_matches('/'));
+    let ep = providers::endpoint(&c)?;
+    if ep.is_local() { providers::ensure_ollama(&app).await?; }
+    let url = ep.url("chat/completions");
 
     let mut body = json!({ "model": model, "messages": messages, "stream": false, "max_tokens": 16384 });
     if let Some(t) = thinking {
@@ -293,30 +335,18 @@ async fn deepseek_chat(
     if let Some(ch) = choice {
         if !ch.is_null() { body["tool_choice"] = ch; }
     }
+    providers::shape(&ep, &c, &mut body);
 
-    let resp = state
-        .deepseek
-        .post(&url)
-        .header("Authorization", format!("Bearer {}", c.api_key))
-        .json(&body)
-        .send()
+    let resp = providers::send(|| ep.authorise(state.deepseek.post(&url)).json(&body))
         .await
-        .map_err(|e| format!("DeepSeek request failed: {e}"))?;
+        .map_err(|e| format!("The {} request failed: {e}", ep.provider))?;
     let status = resp.status();
     let text = resp.text().await.map_err(|e| e.to_string())?;
-    let value: Value = serde_json::from_str(&text)
-        .map_err(|_| format!("DeepSeek returned HTTP {status}: {}", text.chars().take(600).collect::<String>()))?;
-
     if !status.is_success() {
-        let msg = value
-            .get("error")
-            .and_then(|e| e.get("message"))
-            .and_then(Value::as_str)
-            .or_else(|| value.get("error").and_then(Value::as_str))
-            .or_else(|| value.get("message").and_then(Value::as_str))
-            .unwrap_or("request failed");
-        return Err(format!("DeepSeek HTTP {}: {msg}", status.as_u16()));
+        return Err(format!("{} HTTP {}: {}", ep.provider, status.as_u16(), providers::error_text(&text)));
     }
+    let value: Value = serde_json::from_str(&text)
+        .map_err(|_| format!("{} returned HTTP {status}: {}", ep.provider, text.chars().take(600).collect::<String>()))?;
 
     let cost = record_usage(&app, &db, value.get("model").and_then(Value::as_str).unwrap_or(&model), feature.as_deref(), value.get("usage"));
     let message = value.get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("message")).cloned().unwrap_or(Value::Null);
@@ -351,11 +381,9 @@ async fn deepseek_stream(
     choice: Option<Value>,
 ) -> Result<Value, String> {
     let c = read_config(&app);
-    if c.api_key.is_empty() {
-        return Err("No DeepSeek API key set. Open AI settings and paste your key.".into());
-    }
-    let base = if c.base_url.trim().is_empty() { DEFAULT_BASE_URL } else { c.base_url.trim() };
-    let url = format!("{}/chat/completions", base.trim_end_matches('/'));
+    let ep = providers::endpoint(&c)?;
+    if ep.is_local() { providers::ensure_ollama(&app).await?; }
+    let url = ep.url("chat/completions");
     let mut body = json!({
         "model": model, "messages": messages, "stream": true, "max_tokens": 16384,
         "stream_options": { "include_usage": true },
@@ -372,23 +400,15 @@ async fn deepseek_stream(
     if let Some(ch) = choice {
         if !ch.is_null() { body["tool_choice"] = ch; }
     }
+    providers::shape(&ep, &c, &mut body);
 
-    let mut resp = state
-        .deepseek
-        .post(&url)
-        .header("Authorization", format!("Bearer {}", c.api_key))
-        .json(&body)
-        .send()
+    let mut resp = providers::send(|| ep.authorise(state.deepseek.post(&url)).json(&body))
         .await
-        .map_err(|e| format!("DeepSeek request failed: {e}"))?;
+        .map_err(|e| format!("The {} request failed: {e}", ep.provider))?;
     let status = resp.status();
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
-        let msg = serde_json::from_str::<Value>(&text)
-            .ok()
-            .and_then(|v| v.get("error").and_then(|e| e.get("message")).and_then(Value::as_str).map(str::to_string))
-            .unwrap_or_else(|| text.chars().take(400).collect());
-        return Err(format!("DeepSeek HTTP {}: {msg}", status.as_u16()));
+        return Err(format!("{} HTTP {}: {}", ep.provider, status.as_u16(), providers::error_text(&text)));
     }
 
     let mut acc = StreamAcc::default();
@@ -415,7 +435,9 @@ async fn deepseek_stream(
             let Ok(v) = serde_json::from_str::<Value>(data) else { continue };
             let (content, reasoning) = acc.absorb(&v);
             if !content.is_empty() || !reasoning.is_empty() {
-                let _ = app.emit("ai://stream", json!({ "id": id, "content": content, "reasoning": reasoning }));
+                // Through tab mode too: a chat in a browser tab reads its reply from
+                // these, and without them it got the price and no words.
+                tabmode::notify(&app, "ai://stream", json!({ "id": id, "content": content, "reasoning": reasoning }));
             }
         }
     }
@@ -431,8 +453,9 @@ async fn deepseek_stream(
 /// failure here must never fail the request.
 pub(crate) fn record_usage(app: &AppHandle, db: &study::StudyDb, model: &str, feature: Option<&str>, usage: Option<&Value>) -> f64 {
     let Some(u) = usage.filter(|u| u.is_object()) else { return 0.0 };
-    let _ = study::with_db(app, db, |c| study::usage::record(c, model, feature.unwrap_or("other"), u));
-    study::usage::cost_of(model, u, study::now_ms())
+    let price = providers::price(&read_config(app), model);
+    let _ = study::with_db(app, db, |c| study::usage::record(c, model, feature.unwrap_or("other"), u, price));
+    study::usage::cost_of(model, u, study::now_ms(), price)
 }
 
 /// Stop a streamed completion; the next chunk boundary ends it.
@@ -451,8 +474,20 @@ pub(crate) struct StreamAcc {
     model: String,
     usage: Value,
     /// Tool calls by index: id, name, argument text so far.
-    tools: std::collections::BTreeMap<u64, (String, String, String)>,
+    tools: std::collections::BTreeMap<u64, StreamCall>,
     pub(crate) cancelled: bool,
+}
+
+/// One tool call as it streams in: its pieces, plus anything else the
+/// provider hangs on it. Gemini 3 puts a `thought_signature` in
+/// `extra_content`, and refuses the next request (HTTP 400) unless it comes
+/// back with the call exactly as it was sent.
+#[derive(Default)]
+pub(crate) struct StreamCall {
+    id: String,
+    name: String,
+    args: String,
+    extra: serde_json::Map<String, Value>,
 }
 
 impl StreamAcc {
@@ -468,7 +503,8 @@ impl StreamAcc {
             return (String::new(), String::new());
         };
         let content = delta.get("content").and_then(Value::as_str).unwrap_or("").to_string();
-        let reasoning = delta.get("reasoning_content").and_then(Value::as_str).unwrap_or("").to_string();
+        // DeepSeek calls it reasoning_content; OpenRouter, Ollama and others, reasoning.
+        let reasoning = delta.get("reasoning_content").or_else(|| delta.get("reasoning")).and_then(Value::as_str).unwrap_or("").to_string();
         self.content.push_str(&content);
         self.reasoning.push_str(&reasoning);
         if let Some(calls) = delta.get("tool_calls").and_then(Value::as_array) {
@@ -476,14 +512,22 @@ impl StreamAcc {
                 let index = call.get("index").and_then(Value::as_u64).unwrap_or(pos as u64);
                 let entry = self.tools.entry(index).or_default();
                 if let Some(id) = call.get("id").and_then(Value::as_str) {
-                    if !id.is_empty() { entry.0 = id.to_string(); }
+                    if !id.is_empty() { entry.id = id.to_string(); }
                 }
                 if let Some(f) = call.get("function") {
                     if let Some(n) = f.get("name").and_then(Value::as_str) {
-                        entry.1.push_str(n);
+                        entry.name.push_str(n);
                     }
                     if let Some(a) = f.get("arguments").and_then(Value::as_str) {
-                        entry.2.push_str(a);
+                        entry.args.push_str(a);
+                    }
+                }
+                // Everything else on the call is kept as it came.
+                if let Some(obj) = call.as_object() {
+                    for (k, v) in obj {
+                        if !matches!(k.as_str(), "index" | "id" | "type" | "function") && !v.is_null() {
+                            entry.extra.insert(k.clone(), v.clone());
+                        }
                     }
                 }
             }
@@ -495,8 +539,12 @@ impl StreamAcc {
         let calls: Vec<Value> = self
             .tools
             .into_values()
-            .filter(|(_, name, _)| !name.is_empty())
-            .map(|(id, name, args)| json!({ "id": id, "type": "function", "function": { "name": name, "arguments": args } }))
+            .filter(|c| !c.name.is_empty())
+            .map(|c| {
+                let mut call = json!({ "id": c.id, "type": "function", "function": { "name": c.name, "arguments": c.args } });
+                if let Some(obj) = call.as_object_mut() { obj.extend(c.extra); }
+                call
+            })
             .collect();
         json!({
             "content": self.content,
@@ -513,15 +561,13 @@ impl StreamAcc {
 #[tauri::command]
 async fn deepseek_balance(state: State<'_, AppState>, app: AppHandle) -> Result<Value, String> {
     let c = read_config(&app);
-    if c.api_key.is_empty() {
-        return Err("No DeepSeek API key set.".into());
+    let ep = providers::endpoint(&c)?;
+    if ep.provider != providers::DEEPSEEK {
+        return Err("Only DeepSeek reports a balance.".into());
     }
-    let base = if c.base_url.trim().is_empty() { DEFAULT_BASE_URL } else { c.base_url.trim() };
-    let url = format!("{}/user/balance", base.trim_end_matches('/'));
-    let resp = state
-        .deepseek
-        .get(&url)
-        .header("Authorization", format!("Bearer {}", c.api_key))
+    let url = ep.url("user/balance");
+    let resp = ep
+        .authorise(state.deepseek.get(&url))
         .send()
         .await
         .map_err(|e| format!("DeepSeek request failed: {e}"))?;
@@ -536,7 +582,7 @@ async fn deepseek_balance(state: State<'_, AppState>, app: AppHandle) -> Result<
             .and_then(Value::as_str)
             .or_else(|| value.get("error").and_then(Value::as_str))
             .unwrap_or("request failed");
-        return Err(format!("DeepSeek HTTP {}: {msg}", status.as_u16()));
+        return Err(format!("{} HTTP {}: {msg}", ep.provider, status.as_u16()));
     }
     Ok(value)
 }
@@ -812,7 +858,7 @@ fn safe_name(s: &str) -> String {
 }
 
 /// Keep a spawned console program (pdflatex) from flashing a terminal window.
-fn hide_window(cmd: &mut std::process::Command) {
+pub(crate) fn hide_window(cmd: &mut std::process::Command) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -996,13 +1042,28 @@ pub fn run() {
         .manage(study::StudyDb(std::sync::Mutex::new(None)))
         .manage(salem::Salem::default())
         .manage(tabmode::TabMode::default())
+        .manage(providers::OllamaProc::default())
         .setup(move |app| {
             start_server(bridge.clone());
             bridge::spawn_logger(bridge.clone());
             // Sandbox folders only ever outlive a run after a crash.
             python::sweep_sandboxes(&app.handle().clone());
             sweep_exports(&app.handle().clone());
+            if let Err(e) = tray::install(app.handle()) {
+                eprintln!("[tray] could not add the tray icon: {e}");
+            }
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Closing hides to the tray (the default), so tab mode keeps
+            // serving and anything running keeps running. Quit is in the
+            // tray's menu.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" && read_config(window.app_handle()).close_to_tray {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             api,
@@ -1022,6 +1083,10 @@ pub fn run() {
             export_dir,
             open_path,
             reveal_path,
+            providers::providers_catalog,
+            providers::ollama_status,
+            providers::ollama_start,
+            providers::ollama_stop,
             python::python_status,
             python::python_setup,
             python::run_python,
@@ -1127,7 +1192,21 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building WebAssign Desk");
 
-    app.run(|_, _| {});
+    app.run(|app, event| {
+        // macOS: clicking the Dock icon with the window hidden brings it back.
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { .. } = event {
+            tray::show_main(app);
+        }
+        // Quitting: a local model is gigabytes of memory, and Ollama keeps it
+        // loaded for minutes after the last request. Unload it and stop Ollama.
+        if let tauri::RunEvent::Exit = event {
+            if providers::provider_of(&read_config(app)) == providers::OLLAMA {
+                tauri::async_runtime::block_on(providers::stop_ollama(app));
+            }
+        }
+        let _ = (app, event);
+    });
 }
 
 #[cfg(test)]
@@ -1153,6 +1232,19 @@ mod stream_tests {
         assert_eq!(v["tool_calls"][0]["function"]["name"], "run_python");
         assert_eq!(v["tool_calls"][0]["function"]["arguments"], "{\"code\": \"print(1)\"}");
         assert_eq!(v["tool_calls"][0]["id"], "call_1");
+    }
+
+    #[test]
+    fn keeps_what_the_provider_hangs_on_a_tool_call() {
+        // Gemini 3: the call's thought_signature must go back with it, or the
+        // next request is refused.
+        let mut acc = StreamAcc::default();
+        acc.absorb(&json!({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c1", "type": "function",
+            "function": {"name": "create_subject", "arguments": "{}"},
+            "extra_content": {"google": {"thought_signature": "sig=="}}}]}}]}));
+        let v = acc.finish();
+        assert_eq!(v["tool_calls"][0]["extra_content"]["google"]["thought_signature"], "sig==");
+        assert_eq!(v["tool_calls"][0]["function"]["name"], "create_subject");
     }
 }
 

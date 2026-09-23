@@ -3576,3 +3576,148 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 :root[data-shape='rounded'] .progress, :root[data-shape='rounded'] .progress > i { border-radius: 999px; }
 :root[data-shape='rounded'] :is(input[type='checkbox'], input[type='radio']) { border-radius: 4px; }
 :root[data-shape='rounded'] input[type='radio'] { border-radius: 50%; }
+
+/* Tab mode is on: this window only says so. */
+.tab-lock { display: grid; place-items: center; height: 100vh; padding: 24px; background: var(--bg); }
+.tab-lock-card { display: flex; flex-direction: column; align-items: center; gap: 14px; width: min(520px, 100%); padding: 32px 28px; text-align: center; background: var(--panel); border: 1px solid var(--line-2); animation: rise-in var(--dur-3) var(--ease); }
+.tab-lock-card h1 { margin: 0; font: 600 20px var(--sans); color: var(--text-strong); }
+.tab-lock-card p { margin: 0; line-height: 1.55; }
+.tab-lock-card .field-input { width: 100%; font-size: 12px; text-align: center; }
+.tab-lock-icon { display: grid; place-items: center; width: 52px; height: 52px; color: var(--accent); background: var(--accent-wash); border: 1px solid var(--accent-dim); }
+.tab-lock-icon .lucide { width: 24px; height: 24px; }
+.tab-lock-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.tab-lock-tray { justify-content: center; margin-top: 4px; }
+:root[data-shape='rounded'] .tab-lock-card { border-radius: var(--r-lg); }
+:root[data-shape='rounded'] .tab-lock-icon { border-radius: 50%; }
+
+/* ---- rounded, everything else ------------------------------------------
+   Selection markers: a square stripe down the left edge does not round, so
+   in the rounded shape a selected row is a soft pill instead — inset from
+   the pane's edge, with the accent carried by its icon and a faint wash. */
+:root[data-shape='rounded'] :is(.nav-item, .nav-row, .thread-row, .source-row, .pick-row, .cmdk-row, .ctx-item, .select-option, .pick) {
+  border-left-color: transparent !important;
+  border-radius: var(--r-sm);
+}
+:root[data-shape='rounded'] :is(.nav-item, .nav-row) { width: calc(100% - 12px); margin-left: 6px; margin-right: 6px; }
+:root[data-shape='rounded'] :is(.thread-row, .source-row, .cmdk-row) { width: calc(100% - 8px); margin-left: 4px; }
+:root[data-shape='rounded'] :is(.nav-item.on, .nav-row.on, .thread-row.on, .cmdk-row.on) {
+  background: color-mix(in srgb, var(--accent) 11%, var(--panel));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+:root[data-shape='rounded'] :is(.ctx-item:hover:not(:disabled), .select-option.active) { background: color-mix(in srgb, var(--accent) 13%, transparent); }
+
+/* Tabs: the underline becomes a short rounded bar under the label; the
+   segmented switches get a pill that slides. */
+:root[data-shape='rounded'] .tabs-glider { height: 3px; bottom: -1px; border-radius: 3px 3px 0 0; clip-path: inset(0 18% 0 18% round 3px 3px 0 0); }
+:root[data-shape='rounded'] .tab:hover { color: var(--text); }
+:root[data-shape='rounded'] .seg { padding: 2px; background: var(--bg); }
+:root[data-shape='rounded'] .seg-glider { top: 2px; bottom: 2px; left: 2px; width: calc((100% - 4px) / var(--n, 3)); border-radius: calc(var(--r) - 2px); }
+
+/* Controls. */
+:root[data-shape='rounded'] .switch-track { border-radius: 999px; }
+:root[data-shape='rounded'] .switch-thumb { border-radius: 50%; }
+:root[data-shape='rounded'] input[type='checkbox'] { border-radius: 4px; }
+:root[data-shape='rounded'] input[type='checkbox']::before { border-radius: 2px; }
+:root[data-shape='rounded'] input[type='range']::-webkit-slider-runnable-track { border-radius: 999px; }
+:root[data-shape='rounded'] input[type='range']::-webkit-slider-thumb { border-radius: 50%; }
+:root[data-shape='rounded'] input[type='range']::-moz-range-thumb { border-radius: 50%; }
+:root[data-shape='rounded'] ::-webkit-scrollbar-thumb { border-radius: 999px; }
+:root[data-shape='rounded'] :is(input[type='date'], input[type='datetime-local'], input[type='time'], input[type='number'], input[type='text'], input[type='search'], input:not([type])) { border-radius: var(--r); }
+:root[data-shape='rounded'] :is(.accent-dot, .swatch, .kind-dot, .viz-dot, .export-dot) { border-radius: 50%; }
+
+/* Graphs and meters: rounded tracks and fills. */
+:root[data-shape='rounded'] :is(.usage-bar, .usage-bar > span, .chart-track, .chart-track i, .meter-track, .meter-track i, .export-bar, .export-progress, .memory-bar, .pomo-ring-track) { border-radius: 999px; }
+:root[data-shape='rounded'] :is(.chart-track, .meter-track, .usage-bar) { overflow: hidden; }
+:root[data-shape='rounded'] .heat { border-radius: 3px; }
+:root[data-shape='rounded'] .heatmap-legend .heat { border-radius: 2px; }
+
+/* Groups of cells drawn with 1px gaps: round the group, clip the cells. */
+:root[data-shape='rounded'] :is(.home-stats, .usage-totals, .cal-scroll, .stats-row) { border-radius: var(--r); overflow: hidden; }
+:root[data-shape='rounded'] .home-stats { flex-shrink: 0; }
+:root[data-shape='rounded'] .cal-pill { border-radius: 4px; border-left-width: 3px; }
+:root[data-shape='rounded'] .cal-num { border-radius: 5px; }
+:root[data-shape='rounded'] .cal-day.on { box-shadow: inset 0 0 0 1.5px var(--accent); }
+
+/* Settings: sections are soft cards rather than rows ruled apart. */
+:root[data-shape='rounded'] .ai-settings section {
+  padding: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+}
+:root[data-shape='rounded'] .ai-settings section + section { border-top: 1px solid var(--line-2); padding-top: 14px; }
+
+/* Rules between things: rounded ends and a little inset, not edge to edge. */
+:root[data-shape='rounded'] :is(hr, .md hr) { border: 0; height: 1px; background: var(--line-2); border-radius: 1px; margin-left: 4px; margin-right: 4px; }
+:root[data-shape='rounded'] :is(.ctx-sep) { border-radius: 1px; }
+
+/* Pictures and embeds. */
+:root[data-shape='rounded'] :is(.md img, .note-paper img, .msg-body img, .qfig img, .viewer-picture img, iframe) { border-radius: var(--r); }
+:root[data-shape='rounded'] :is(.tab-count, .set-new) { border-radius: 999px; }
+:root[data-shape='rounded'] .cal-day.on { border-radius: 5px; }
+
+/* ---------------------------------------------------------- model provider
+   Settings → Model: provider (with its logo), its key, then a model from its
+   list — the way opencode lays it out. */
+.provider-settings { display: flex; flex-direction: column; gap: 14px; }
+.provider-current { display: flex; align-items: center; gap: 12px; }
+.provider-current-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.provider-current-text b { font: 600 14px var(--sans); color: var(--text-strong); }
+.provider-current-text .muted { font: 11.5px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.provider-current .btn .lucide.flip, .model-caret.flip { transform: rotate(180deg); }
+.provider-current .btn .lucide { margin: 0 0 0 6px; transition: transform var(--dur-1) var(--ease); }
+
+/* A provider's logo: models.dev's monochrome SVG as a mask, in the text colour. */
+.prov-logo { display: inline-grid; place-items: center; flex: none; width: 26px; height: 26px; background: var(--bg-2); border: 1px solid var(--line-2); color: var(--text-2); font: 600 12px var(--sans); position: relative; }
+.prov-logo.big { width: 38px; height: 38px; font-size: 16px; }
+.prov-logo.has::after { content: ''; position: absolute; inset: 5px; background: var(--text); -webkit-mask: var(--logo) center / contain no-repeat; mask: var(--logo) center / contain no-repeat; }
+.prov-logo.big.has::after { inset: 8px; }
+.prov-logo .lucide { width: 60%; height: 60%; }
+
+.provider-picker { display: flex; flex-direction: column; background: var(--bg); border: 1px solid var(--line-2); animation: select-in var(--dur-1) var(--ease); }
+.provider-search { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.provider-search > .lucide { width: 14px; height: 14px; color: var(--muted); flex: none; }
+.provider-search input { flex: 1; min-width: 0; background: none !important; border: 0 !important; padding: 4px 0 !important; outline: none; font: 13px var(--sans); color: var(--text); }
+.provider-list, .model-list { max-height: 300px; overflow-y: auto; padding: 4px; }
+.provider-group { padding: 8px 8px 4px; font: 700 10px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.provider-row, .model-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 8px; background: none; border: 0; color: var(--text); text-align: left; cursor: pointer; transition: background-color var(--dur-1) var(--ease); }
+.provider-row:hover, .model-row:hover { background: var(--panel-2); }
+.provider-row.on, .model-row.on { background: var(--accent-wash); }
+.provider-row-name { flex: 1; min-width: 0; font: 13px var(--sans); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.provider-row-meta { font: 11px var(--mono); }
+.provider-row-key { display: inline-flex; align-items: center; color: var(--good); font: 10.5px var(--mono); }
+.provider-row-key.on { color: var(--accent); }
+.provider-row-key .lucide { width: 13px; height: 13px; }
+.provider-empty { display: flex; align-items: center; gap: 6px; padding: 10px; margin: 0; }
+
+.provider-key label { display: flex; flex-direction: column; gap: 6px; }
+.provider-key label > span { display: inline-flex; align-items: center; gap: 6px; }
+.provider-key label > span .lucide { width: 13px; height: 13px; }
+.provider-key p { margin: 4px 0 0; }
+.provider-key .link .lucide { width: 11px; height: 11px; margin: 0 0 0 3px; }
+
+.model-picker { display: flex; flex-direction: column; gap: 6px; }
+.model-picker-label { font-size: 12.5px; color: var(--text-2); }
+.model-current { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; background: var(--bg); border: 1px solid var(--line-2); color: var(--text); text-align: left; cursor: pointer; transition: border-color var(--dur-1) var(--ease); }
+.model-current:hover:not(:disabled), .model-current.open { border-color: var(--accent-dim); }
+.model-current > .lucide { flex: none; width: 14px; height: 14px; color: var(--muted); margin-left: auto; transition: transform var(--dur-1) var(--ease); }
+.model-list-wrap { display: flex; flex-direction: column; background: var(--bg); border: 1px solid var(--line-2); animation: select-in var(--dur-1) var(--ease); }
+.model-line { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.model-name { display: flex; align-items: center; gap: 6px; font: 13px var(--sans); color: var(--text); }
+.model-dep { padding: 0 5px; font: 10px var(--mono); color: var(--mid); border: 1px solid color-mix(in srgb, var(--mid) 40%, transparent); }
+.model-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font: 11px var(--mono); }
+.model-meta > .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+.model-badges { display: inline-flex; gap: 4px; color: var(--text-2); }
+.model-badges .lucide { width: 12px; height: 12px; }
+.model-check { flex: none; width: 14px; height: 14px; color: var(--accent); }
+
+.ollama-panel { display: flex; flex-direction: column; gap: 8px; }
+.ollama-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12.5px; color: var(--text-2); }
+.ollama-dot { width: 8px; height: 8px; flex: none; background: var(--muted); border-radius: 50% !important; }
+.ollama-dot.on { background: var(--good); box-shadow: 0 0 0 3px var(--good-wash); }
+.ollama-panel p { margin: 0; }
+
+:root[data-shape='rounded'] :is(.prov-logo, .provider-row, .model-row, .model-dep) { border-radius: var(--r-sm); }
+:root[data-shape='rounded'] .prov-logo.big { border-radius: var(--r); }
+:root[data-shape='rounded'] :is(.provider-picker, .model-current, .model-list-wrap) { border-radius: var(--r); }
+:root[data-shape='rounded'] :is(.provider-picker, .model-list-wrap) { overflow: hidden; }

@@ -30,10 +30,21 @@ export type AiConfig = {
   pythonMemoryMb: number;
   /** Snippets the model may run per attempt. */
   pythonMaxCalls: number;
+  /** Closing the window hides it to the tray (keeps tab mode running). */
+  closeToTray: boolean;
+  /** Which provider answers: a models.dev id, or 'ollama'. */
+  provider: string;
+  /** Providers with a key saved. */
+  keyed: string[];
 };
 
 export type ConfigPatch = {
   apiKey?: string;
+  /** Which provider `apiKey` is for; the current one when left out. */
+  keyProvider?: string;
+  provider?: string;
+  /** Price and limits of chosen models, from the catalogue. */
+  modelsInfo?: Record<string, { input: number; output: number; cacheRead: number; effort: boolean; maxOutput: number; vision: boolean; tools: boolean }>;
   flashModel?: string;
   proModel?: string;
   baseUrl?: string;
@@ -46,6 +57,7 @@ export type ConfigPatch = {
   pythonTimeout?: number;
   pythonMemoryMb?: number;
   pythonMaxCalls?: number;
+  closeToTray?: boolean;
 };
 
 export const getAiConfig = () => invoke<AiConfig>('get_config');

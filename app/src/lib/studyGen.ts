@@ -1,7 +1,7 @@
 import { pythonStatus, runPython } from './python';
 import { cardGuidance, courseFlavour, guidance } from './subjects';
 import {
-  balancedTrim, budgetFor, CEILING, expectedItems, FAST_WINDOW_CHARS, fastMaterialFor, WINDOW_CHARS, coreOnly, isShrunk, MAX_ITEMS, uncovered, materialFor, pagesLabel, planWalk, sizeRule,
+  balancedTrim, budgetFor, CEILING, QUIZ_COUNT, expectedItems, FAST_WINDOW_CHARS, fastMaterialFor, WINDOW_CHARS, coreOnly, isShrunk, MAX_ITEMS, pageId, uncovered, materialFor, pagesLabel, planWalk, sizeRule,
   type CardOptions, type CardSize, type GenSource, type Page, type WalkSource, type Window,
 } from './deckPlan';
 import { generate, generateQuick } from './salem/generate';
@@ -279,9 +279,12 @@ function passPrompt(
   limit?: number,
   fast = false,
 ): string {
-  const shrunk = isShrunk(all, size, limit, fast);
+  const shrunk = isShrunk(all, size, limit, fast, what);
   const rule = sizeRule(size === 'fewer' && fast ? 'standard' : size, what, shrunk || (fast && size === 'fewer'));
-  const scale = expectedItems(window, all, size, limit, fast);
+  // A quiz is an exact length, and some questions fail their check, so each
+  // pass writes a little over its share and the quiz is cut to length after.
+  const share = expectedItems(window, all, size, limit, fast, what);
+  const scale = what === 'questions' ? Math.max(1, Math.ceil(share * 1.25)) : share;
   // In fast mode the number is the deck's own share, so it is said firmly:
   // everything written past it is paid for and then thrown away.
   const most = Math.max(scale + 1, Math.ceil(scale * 1.15));
@@ -709,7 +712,7 @@ export async function generateQuiz(
   try { python = (await pythonStatus()).ready; } catch { python = false; }
   const gen = (system: string, user: string, tool: GenTool) => generated(system, user, tool, options.meter);
   const size = options.size ?? 'standard';
-  let max = Math.min(MAX_ITEMS, options.limit ?? CEILING[size]);
+  let max = Math.min(MAX_ITEMS, options.limit ?? QUIZ_COUNT[size]);
   const seen = new Set<string>();
   const skipped: string[] = [];
   let title = '';
@@ -761,7 +764,7 @@ export async function generateQuiz(
   if (walk.length) {
     const plan = walkPlan(walk, options.fast ?? true);
     const { windows } = plan;
-    max = budgetFor(windows, size, options.limit);
+    max = budgetFor(windows, size, options.limit, 'questions');
     let done = 0;
     progress(`Reading ${walk.length === 1 ? walk[0].title : `${walk.length} sources`} page by page — ${windows.length} passes`);
     const results = await inOrder(windows, plan.parallel, async (window) => {
@@ -780,7 +783,7 @@ export async function generateQuiz(
       }
       // Checking a question costs a run of its code, so a pass that wrote far
       // past its share does not get every extra one checked.
-      const room = expectedItems(window, windows, size, options.limit, plan.fast) * 2 + 2;
+      const room = expectedItems(window, windows, size, options.limit, plan.fast, 'questions') * 2 + 2;
       const first = await settle((args.questions as RawQuestion[] | undefined) ?? [], ref, room);
       let kept = first.kept;
       // One more go for what failed its check, so a page does not lose its
@@ -803,7 +806,7 @@ export async function generateQuiz(
         );
         const more = await gen(QUIZ_SYSTEM, prompt, QUIZ_TOOL).catch(() => null);
         if (more) {
-          const room = expectedItems(gap, windows, size, options.limit, plan.fast) * 2 + 2;
+          const room = expectedItems(gap, windows, size, options.limit, plan.fast, 'questions') * 2 + 2;
           kept = [...kept, ...(await settle((more.questions as RawQuestion[] | undefined) ?? [], (r) => pageRef(r, gap), room)).kept];
         }
       }
@@ -818,7 +821,7 @@ export async function generateQuiz(
     }
   } else {
     progress('Writing the questions…');
-    const prompt = `${contextBlock(ctx)}\n\n${describeSource(src)}\n\n${sizeRule(size, 'questions')}\n\nKeep them in the order the material goes. Write as many as it needs, at most ${max}.\n${describeOptions(options)}`;
+    const prompt = `${contextBlock(ctx)}\n\n${describeSource(src)}\n\n${sizeRule(size, 'questions')}\n\nKeep them in the order the material goes. Write exactly ${max} questions.\n${describeOptions(options)}`;
     const args = await gen(QUIZ_SYSTEM, prompt, QUIZ_TOOL);
     title = String(args.title ?? '').trim();
     const ref = (r: RawQuestion) => provenance(r, src);
@@ -834,7 +837,39 @@ export async function generateQuiz(
 
   if (!groups.some((g) => g.length)) throw new Error('No question passed its check. Try again or narrow the topic.');
   // Fewer is a complete pass cut down to its core, so this is where it is made.
-  const all = size === 'fewer' ? coreOnly(groups.flat(), (t) => pageKey(t.item), (t) => t.core) : groups.flat();
+  let all = size === 'fewer' ? coreOnly(groups.flat(), (t) => pageKey(t.item), (t) => t.core) : groups.flat();
+
+  // A quiz is exactly its length. If the passes came up short — questions
+  // that failed their check, a page with less on it than its length said —
+  // the difference is written now, spread over the material, rather than
+  // handing over a 13-question "16-question quiz".
+  for (let attempt = 0; attempt < 2 && all.length < max; attempt++) {
+    const need = max - all.length;
+    progress(`Writing ${need} more question${need === 1 ? '' : 's'} to make ${max}…`);
+    const already = all.map((t) => `- ${t.item.prompt.slice(0, 160)}`).join('\n');
+    const ask = `\n\nThe quiz is ${need} question${need === 1 ? '' : 's'} short. Write exactly ${need} more, on the parts of the material the questions below cover least, and different from every one of them:\n${already}`;
+    let args: Record<string, unknown> | null;
+    let ref: (r: RawQuestion) => QuizQuestion['sources'] | null;
+    if (walk.length) {
+      const plan = walkPlan(walk, options.fast ?? true);
+      // The run of pages with the fewest questions for its length.
+      const count = (w: Window) => all.filter((t) => w.pages.some((p) => pageKey(t.item) === pageId(p))).length;
+      const target = [...plan.windows].sort((a, b) => count(a) / a.chars - count(b) / b.chars)[0];
+      const base = passPrompt(ctx, plan.material(target), target, 'questions', size, describeOptions(options), src.kind === 'sources' ? src.focus : '', plan.windows, options.limit, plan.fast);
+      args = await gen(QUIZ_SYSTEM, base + ask, QUIZ_TOOL).catch(() => null);
+      ref = (r) => pageRef(r, target);
+    } else {
+      args = await gen(QUIZ_SYSTEM, `${contextBlock(ctx)}\n\n${describeSource(src)}\n${describeOptions(options)}${ask}`, QUIZ_TOOL).catch(() => null);
+      ref = (r) => provenance(r, src);
+    }
+    if (!args) break;
+    const extra = (await settle((args.questions as RawQuestion[] | undefined) ?? [], ref, need)).kept;
+    if (!extra.length) break;
+    // Back into reading order: by source (as the walk reads them), then page.
+    const at = new Map(walk.map((w, i) => [w.id, i]));
+    const key = (t: Tagged<QuizQuestion>) => { const r = t.item.sources?.[0]; return r ? (at.get(r.sourceId) ?? 0) * 1e6 + r.unit : 0; };
+    all = [...all, ...extra].map((t, i) => ({ t, i })).sort((a, b) => key(a.t) - key(b.t) || a.i - b.i).map((x) => x.t);
+  }
   const kept = balancedTrim(all, (t) => pageKey(t.item), max, (t) => t.core).map((t) => t.item);
   if (walk.length) {
     progress('Naming the quiz…');
