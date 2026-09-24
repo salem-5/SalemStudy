@@ -191,7 +191,9 @@ Mark a label correct when it names the same thing as the reference label: a syno
 
 Mark a label incorrect when it names something else, when it is too vague to pick out the thing the reference names - the region or system rather than the part - or when it is only the general category the reference belongs to. A label that happens to resemble the reference in spelling but is the established name of a different structure is incorrect.
 
-Judge each label on its own, against its own reference. Never let one label change your mind about another.`;
+Judge each label on its own, against its own reference. Never let one label change your mind about another.
+
+For every label, add a note. When you mark it correct, two or three words for why it counts: "synonym", "abbreviation", "spelling slip". When you mark it incorrect, one sentence for the student saying what the thing they named actually is and how it differs from the right label - they are already shown the right label beside their answer, so explain the difference rather than just naming it again. Speak to them directly, and keep it to one sentence.`;
 
 export const NOTE_PRESETS: { label: string; text: string }[] = [
   { label: 'Study notes', text: 'Thorough, well-organised study notes: every concept, definition and formula, with a short worked example for each method.' },

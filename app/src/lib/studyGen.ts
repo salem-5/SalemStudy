@@ -975,7 +975,7 @@ const LABELS_TOOL = {
   type: 'function',
   function: {
     name: 'grade_labels',
-    description: 'Mark each label the strict comparison rejected.',
+    description: 'Mark each label the strict comparison rejected, and say why.',
     parameters: {
       type: 'object',
       properties: {
@@ -987,9 +987,12 @@ const LABELS_TOOL = {
             properties: {
               n: { type: 'number', description: 'The label number exactly as it was given to you.' },
               correct: { type: 'boolean', description: 'True if what the student typed names the same thing as the reference label.' },
-              why: { type: 'string', description: 'When correct, the few words that say why it counts, e.g. "synonym", "abbreviation", "typo". Leave empty when incorrect.' },
+              note: {
+                type: 'string',
+                description: 'When correct: two or three words for why it counts, e.g. "synonym", "abbreviation", "spelling slip". When incorrect: one sentence to the student saying what the thing they named actually is and how it differs from the right label, which they can already see beside their answer.',
+              },
             },
-            required: ['n', 'correct'],
+            required: ['n', 'correct', 'note'],
           },
         },
       },
@@ -998,17 +1001,12 @@ const LABELS_TOOL = {
   },
 };
 
-export type LabelGrade = { results: boolean[]; feedback: string };
-
-const labelSummary = (results: boolean[], accepted: { n: number; why: string }[], failed: boolean): string => {
-  const right = results.filter(Boolean).length;
-  const parts = [`${right} of ${results.length} labels right.`];
-  if (accepted.length) {
-    const which = accepted.map((a) => `box ${a.n}${a.why ? ` (${a.why})` : ''}`).join(', ');
-    parts.push(`What you typed in ${which} was taken as the same answer.`);
-  }
-  if (failed) parts.push('The near misses could not be double-checked by the AI, so they were marked on their wording alone.');
-  return parts.join(' ');
+export type LabelGrade = {
+  results: boolean[];
+  /** Per box: why it was accepted, or what the student named instead. '' where there is nothing to say. */
+  notes: string[];
+  /** Set only when the student should know the marking itself did not go to plan. */
+  feedback?: string;
 };
 
 /**
@@ -1024,7 +1022,8 @@ export async function gradeLabels(q: QuizQuestion, given: string): Promise<Label
   const doubtful = results
     .map((_ok, i) => i)
     .filter((i) => !results[i] && typed[i].trim() && labels[i]?.answer.trim());
-  if (!doubtful.length) return { results, feedback: labelSummary(results, [], false) };
+  const silent = results.map(() => '');
+  if (!doubtful.length) return { results, notes: silent };
 
   const asked = doubtful.map((i) => {
     const accept = labels[i].accept?.filter((a) => a.trim()) ?? [];
@@ -1042,16 +1041,21 @@ export async function gradeLabels(q: QuizQuestion, given: string): Promise<Label
       `The diagram is labelled for this question, on ${q.topic || 'this topic'}:\n${q.prompt}\n\nMark these labels:\n\n${asked.join('\n\n')}`,
       LABELS_TOOL,
     );
-    const passed = new Map<number, string>();
+    const marked = new Map<number, { correct: boolean; note: string }>();
     for (const entry of Array.isArray(args.labels) ? args.labels : []) {
-      const row = entry as { n?: unknown; correct?: unknown; why?: unknown };
+      const row = entry as { n?: unknown; correct?: unknown; note?: unknown };
       const n = Number(row.n) - 1;
-      if (row.correct === true && doubtful.includes(n)) passed.set(n, String(row.why ?? '').trim().slice(0, 40));
+      if (doubtful.includes(n)) marked.set(n, { correct: row.correct === true, note: String(row.note ?? '').trim() });
     }
-    const merged = results.map((ok, i) => ok || passed.has(i));
-    const accepted = [...passed.keys()].sort((a, b) => a - b).map((i) => ({ n: i + 1, why: passed.get(i)! }));
-    return { results: merged, feedback: labelSummary(merged, accepted, false) };
+    return {
+      results: results.map((ok, i) => ok || marked.get(i)?.correct === true),
+      notes: results.map((_ok, i) => marked.get(i)?.note ?? ''),
+    };
   } catch {
-    return { results, feedback: labelSummary(results, [], true) };
+    return {
+      results,
+      notes: silent,
+      feedback: 'The near misses could not be double-checked by the AI, so they were marked on their wording alone.',
+    };
   }
 }

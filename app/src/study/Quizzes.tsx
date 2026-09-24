@@ -28,17 +28,22 @@ function answerText(q: QuizQuestion): string {
   return `${asMath(String(q.answer))}${q.unit ? ` ${q.unit}` : ''}`;
 }
 
-function givenText(q: QuizQuestion, answer: QuizAnswer): string {
-  const given = answer.given;
+function givenText(q: QuizQuestion, given: string): string {
   if (!given) return 'nothing';
   if (q.type === 'mcq') return q.choices?.[Number(given)] ?? given;
   if (q.type === 'multi') return picked(given).map((i) => q.choices?.[i] ?? '').filter(Boolean).join(' · ') || 'nothing';
   if (q.type === 'tf') return given === 'true' ? 'True' : 'False';
-  if (q.type === 'label') {
-    const results = labelVerdicts(q, answer);
-    return labelAnswers(given, results.length).map((v, i) => `${i + 1}. ${v.trim() || '-'} ${results[i] ? '✓' : '✗'}`).join(' · ');
-  }
   return given;
+}
+
+/**
+ * Generated diagram questions carry an "explanation" that is only their answers listed out,
+ * which the label breakdown already shows. One a person wrote themselves still earns its place.
+ */
+function isAnswerList(q: QuizQuestion): boolean {
+  const labels = q.diagram?.labels ?? [];
+  if (!labels.length) return false;
+  return q.explanation.trim() === labels.map((l, i) => `${i + 1}. ${l.answer}`).join('\n');
 }
 
 type Graded = AttemptAnswer & { feedback?: string };
@@ -120,11 +125,13 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
     let correct = false;
     let feedback: string | undefined;
     let labels: boolean[] | undefined;
+    let labelNotes: string[] | undefined;
     try {
       if (q.type === 'short') ({ correct, feedback } = await gradeShort(q, value));
       else if (q.type === 'label') {
         const graded = await gradeLabels(q, value);
         labels = graded.results;
+        labelNotes = graded.notes;
         feedback = graded.feedback;
         correct = graded.results.length > 0 && graded.results.every(Boolean);
       } else correct = gradeLocal(q, value);
@@ -133,7 +140,7 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
     }
     setAnswers((a) => ({
       ...a,
-      [index]: { given: value, correct, ms: Date.now() - shownAt.current, hinted: hintFor === index || a[index]?.hinted, feedback, labels },
+      [index]: { given: value, correct, ms: Date.now() - shownAt.current, hinted: hintFor === index || a[index]?.hinted, feedback, labels, labelNotes },
     }));
     setFlash((f) => ({ kind: correct ? 'good' : 'bad', n: (f?.n ?? 0) + 1 }));
     setChecking(false);
@@ -836,6 +843,41 @@ function QuestionEditor({ question, index, onClose, onSave, onDelete, onRewrite 
   );
 }
 
+/**
+ * A diagram question's marking, box by box: what was typed, the right label where they differ,
+ * and the AI's line on why. It replaces the "you said / answer" pair, which for a diagram was
+ * the same list of labels twice over.
+ */
+function LabelMarks({ q, answer, verdicts }: { q: QuizQuestion; answer: QuizAnswer; verdicts: boolean[] }) {
+  const labels = q.diagram?.labels ?? [];
+  const typed = labelAnswers(answer.given, labels.length);
+  const local = labelResults(q, answer.given);
+  // A box is worth a row when it missed, or when it passed on wording the strict match refused.
+  const telling = (i: number) => !verdicts[i] || !local[i];
+  if (!labels.length || !labels.some((_l, i) => telling(i))) return null;
+  return (
+    <ol className="label-marks">
+      {labels.map((l, i) => {
+        const ok = verdicts[i];
+        const mine = typed[i].trim();
+        const note = (answer.labelNotes?.[i] ?? '').trim();
+        return (
+          <li key={i} className={`label-mark${ok ? ' ok' : ' bad'}`}>
+            <span className="label-mark-n mono">{i + 1}</span>
+            <span className="label-mark-icon">{ok ? <Check /> : <X />}</span>
+            <span className="label-mark-answer">
+              {mine ? <span className="label-mark-mine">{mine}</span> : <i className="muted">left blank</i>}
+              {telling(i) && <span className="label-mark-right">{l.answer}</span>}
+              {ok && note && <span className="label-mark-why">{note}</span>}
+            </span>
+            {!ok && note && <p className="label-mark-note">{note}</p>}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 function Feedback({ q, answer, reviewing, onAsk, onChange, onNext, last }: {
   q: QuizQuestion;
   answer: QuizAnswer | undefined;
@@ -846,20 +888,28 @@ function Feedback({ q, answer, reviewing, onAsk, onChange, onNext, last }: {
   last: boolean;
 }) {
   const correct = !!answer?.correct;
+  const verdicts = q.type === 'label' && q.diagram?.labels.length && answer ? labelVerdicts(q, answer) : null;
   return (
     <div className={`feedback ${answer ? (correct ? 'right' : 'wrong') : 'muted'}`}>
       <div className="feedback-head">
         <span className="feedback-icon">{correct ? <Check /> : <X />}</span>
         <b>{!answer ? 'Not answered' : correct ? 'Correct' : 'Not quite'}</b>
-        {answer && (
-          <span className="muted feedback-said">· you said: <Markdown text={givenText(q, answer)} className="tight inline" /></span>
-        )}
-        {!correct && (
-          <span className="muted feedback-said">· answer: <Markdown text={answerText(q)} className="tight inline" /></span>
+        {verdicts ? (
+          <span className="muted feedback-said">· {verdicts.filter(Boolean).length} of {verdicts.length} labels right</span>
+        ) : (
+          <>
+            {answer && (
+              <span className="muted feedback-said">· you said: <Markdown text={givenText(q, answer.given)} className="tight inline" /></span>
+            )}
+            {!correct && (
+              <span className="muted feedback-said">· answer: <Markdown text={answerText(q)} className="tight inline" /></span>
+            )}
+          </>
         )}
       </div>
+      {verdicts && answer && <LabelMarks q={q} answer={answer} verdicts={verdicts} />}
       {answer?.feedback && <p className="feedback-note">{answer.feedback}</p>}
-      {q.explanation && <Markdown text={q.explanation} className="feedback-explain" />}
+      {q.explanation && !isAnswerList(q) && <Markdown text={q.explanation} className="feedback-explain" />}
       {q.hint && (
         <div className="muted small feedback-hint">
           <Lightbulb />

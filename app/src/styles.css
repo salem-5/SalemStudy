@@ -3724,6 +3724,29 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
   color: #1b1f24; background: color-mix(in srgb, var(--good) 55%, #fff); border: 1px solid var(--good);
   animation: rise-in var(--dur-2) var(--ease);
 }
+.label-marks { display: flex; flex-direction: column; gap: 7px; margin: 10px 0 0; padding: 0; list-style: none; }
+.label-mark {
+  display: grid; grid-template-columns: 15px 13px 1fr; align-items: baseline; gap: 3px 8px;
+  font-size: 13.5px;
+}
+.label-mark-n { color: var(--muted); font-size: 11px; }
+.label-mark-icon { align-self: center; display: grid; place-items: center; }
+.label-mark-icon .lucide { width: 12px; height: 12px; }
+.label-mark.ok .label-mark-icon { color: var(--good); }
+.label-mark.bad .label-mark-icon { color: var(--bad); }
+.label-mark-answer { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; min-width: 0; }
+.label-mark.bad .label-mark-mine {
+  color: var(--text-2); text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--bad) 70%, transparent);
+}
+.label-mark.bad .label-mark-right { font-weight: 600; }
+.label-mark.bad .label-mark-right::before { content: '→ '; color: var(--muted); font-weight: 400; }
+.label-mark.ok .label-mark-right { color: var(--muted); }
+.label-mark.ok .label-mark-right::before { content: '= '; }
+.label-mark-why { color: var(--muted); font-size: 12.5px; }
+.label-mark-why::before { content: '('; }
+.label-mark-why::after { content: ')'; }
+.label-mark-note { grid-column: 3; margin: 0; color: var(--text-2); font-size: 12.5px; line-height: 1.5; }
 .diagram-foot { display: flex; align-items: center; gap: 6px; }
 .diagram-edit { display: flex; flex-direction: column; gap: 6px; }
 .diagram-edit-row { display: grid; grid-template-columns: 22px 1fr; align-items: center; gap: 8px; }

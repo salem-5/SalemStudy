@@ -6,6 +6,8 @@ export type QuizAnswer = {
   feedback?: string;
   /** Diagram questions only: the per-label verdicts as they were marked, AI passes included. */
   labels?: boolean[];
+  /** Diagram questions only: per label, why it was accepted or what was named instead. */
+  labelNotes?: string[];
 };
 
 export type QuizSession = {

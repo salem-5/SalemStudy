@@ -59,7 +59,11 @@ export function questionBriefing(quiz: Quiz, index: number, answer: QuizAnswer |
   } else if (q.type === 'label') {
     const results = labelVerdicts(q, answer);
     const given = labelAnswers(answer.given, results.length);
-    lines.push(...(q.diagram?.labels ?? []).map((l, i) => `Label ${i + 1}: "${given[i] || ''}" - ${results[i] ? 'correct' : `incorrect, it is ${l.answer}`}`));
+    lines.push(...(q.diagram?.labels ?? []).map((l, i) => {
+      const note = (answer.labelNotes?.[i] ?? '').trim();
+      const verdict = results[i] ? 'correct' : `incorrect, it is ${l.answer}`;
+      return `Label ${i + 1}: "${given[i] || ''}" - ${verdict}${note ? ` (they were told: ${note})` : ''}`;
+    }));
   } else if (q.type === 'multi') {
     const chosen = answer.given.split(',').map(Number).filter(Number.isInteger);
     lines.push(`${chosen.map((i) => `${label(q, i)}${q.choices?.[i] ?? ''}`).join('; ') || 'nothing'} - ${answer.correct ? 'correct' : 'incorrect'}`);
