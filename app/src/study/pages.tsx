@@ -37,6 +37,8 @@ export type Route =
   | { kind: 'focus' }
   | { kind: 'subject'; id: number }
   | { kind: 'schedule' }
+  /** Notes (the student's own notes app), optionally on one note. */
+  | { kind: 'notes'; id?: number | null }
   | { kind: 'notebook'; id: number; open?: NotebookTarget };
 
 /** Something inside a notebook to show when it opens (from search, citations, the assistant). */
@@ -432,8 +434,8 @@ export function NotebookPage({ notebook, subject, actions, target }: { notebook:
       setKind,
       notebook,
       src.kind === 'sources',
-      async (report, meter) => {
-        const made = await makeSet(setKind, ctx, notebook.id, src, report, { ...options, meter });
+      async (report, meter, stop) => {
+        const made = await makeSet(setKind, ctx, notebook.id, src, report, { ...options, meter, stop });
         return { id: made.id, note: made.note };
       },
       (id, note) => {

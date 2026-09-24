@@ -47,9 +47,11 @@ export function ChatPage({ threadId, tree, open, refreshTree }: {
     open,
   }), [open, refreshTree]);
   // With App control off the assistant can still look things up and search the
-  // web; it just cannot change anything. That is a tool list, not a prompt.
+  // web; it just cannot change anything — except in the student's Notes app,
+  // which it may always write in (anything deleted there is recoverable).
+  // That is a tool list, not a prompt.
   const allowTools = useMemo(
-    () => (control ? undefined : registry(toolEnv).filter((t) => !t.mutating).map((t) => t.name)),
+    () => (control ? undefined : registry(toolEnv).filter((t) => !t.mutating || t.scopes.includes('pad')).map((t) => t.name)),
     [control, toolEnv],
   );
   const system = useCallback((python: boolean) => {

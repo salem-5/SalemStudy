@@ -109,6 +109,26 @@ describe('keeping conflicting work apart', () => {
   });
 });
 
+describe('stopping', () => {
+  it('reaches the work itself, and a stopped job never counts as done', async () => {
+    const { runInBackground, stopTask, useTasks: _u, holderOf } = await setup();
+    let sawStop = false;
+    let cancelledRequest = false;
+    const gate = defer<void>();
+    const job = runInBackground({ label: 'Writing a deck', scope: 'nb:1:decks' }, async (_p, _m, stop) => {
+      stop.onStop(() => { cancelledRequest = true; });
+      await gate.promise;
+      sawStop = stop.stopped;
+      return 'saved';
+    });
+    stopTask(holderOf('nb:1:decks')!.id);
+    gate.resolve();
+    await assert.rejects(job, /stopped/, 'finishing after the stop is still a stop');
+    assert.ok(sawStop, 'the work can see it was stopped');
+    assert.ok(cancelledRequest, 'what it registered (a request) is cancelled');
+  });
+});
+
 describe('the tray', () => {
   it('stops a running task', async () => {
     const { runInBackground, holderOf, stopTask, runningCount } = await setup();
@@ -117,7 +137,7 @@ describe('the tray', () => {
     stopTask(holderOf('nb:1:quiz')!.id);
     assert.equal(runningCount(), 0, 'a stopped task stops holding its scope');
     gate.resolve();
-    await job;
+    await assert.rejects(job, /stopped/, 'and its result is not taken');
   });
 
   it('only dismisses what has finished', async () => {

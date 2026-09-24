@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import type { ExecState } from './types';
 import type { Meter } from '../meter';
+import { createStop, type Stop } from '../cancel.ts';
 
 /**
  * Work the student started and does not have to sit and watch.
@@ -100,10 +101,13 @@ export async function runInBackground<T>(
     /** Turned into the tray's one-line summary when it succeeds. */
     describe?: (result: T) => string;
   },
-  work: (progress: (detail: string) => void, meter: Meter) => Promise<T>,
+  work: (progress: (detail: string) => void, meter: Meter, stop: Stop) => Promise<T>,
 ): Promise<T> {
   const busy = holderOf(options.scope);
   if (busy) throw new ScopeBusy(busy);
+  // Stop reaches the work itself, not just the tray: its passes stop, its
+  // requests are cancelled, and nothing half-written is saved.
+  const stop = createStop();
 
   const task: BackgroundTask = {
     id: crypto.randomUUID(),
@@ -114,7 +118,7 @@ export async function runInBackground<T>(
     log: [],
     startedAt: Date.now(),
     cost: 0,
-    stop: options.stop,
+    stop: () => { stop.stop(); options.stop?.(); },
     open: options.open,
   };
   tasks.set(task.id, task);
@@ -150,7 +154,9 @@ export async function runInBackground<T>(
   };
 
   try {
-    const result = await work(step, meter);
+    const result = await work(step, meter, stop);
+    // Stopped just as it finished: it still does not count.
+    stop.throwIfStopped();
     const done = options.describe?.(result) ?? '';
     update({
       state: 'completed',

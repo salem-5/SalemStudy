@@ -18,6 +18,7 @@ pub mod chat;
 pub mod events;
 pub mod memory;
 pub mod notes;
+pub mod pad;
 pub mod search;
 pub mod sources;
 pub mod syllabus;
@@ -388,6 +389,26 @@ CREATE TABLE focus_session (
   tasks_done INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX focus_session_finished ON focus_session(finished_at);
+"#,
+// Notes: the student's own notes app, folders and rich-text notes (pad.rs).
+r#"
+CREATE TABLE pad_folder (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  position INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE pad_note (
+  id INTEGER PRIMARY KEY,
+  folder_id INTEGER REFERENCES pad_folder(id) ON DELETE SET NULL,
+  html TEXT NOT NULL DEFAULT '',
+  text TEXT NOT NULL DEFAULT '',
+  pinned INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  deleted_at INTEGER
+);
+CREATE INDEX pad_note_folder ON pad_note(folder_id, updated_at);
 "#];
 
 /// How many migrations this build knows; files from a newer build are refused.

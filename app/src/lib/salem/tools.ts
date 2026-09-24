@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { appTools, APP_TOOL_DEFS } from '../assistant';
 import { studyApi } from '../../study/api';
+import { htmlToMarkdown, htmlToText, markdownToHtml, padApi } from '../pad';
 import type { Route } from '../../study/pages';
 import type { NotebookSummary, SubjectNode } from '../../study/api';
 import type { SalemTool, ToolInput, ToolOutcome } from './types';
@@ -524,6 +525,268 @@ function noteTools(env: ToolEnv): SalemTool[] {
 }
 
 // ---------------------------------------------------------------------------
+// Notes (the student's own notes app)
+// ---------------------------------------------------------------------------
+
+/**
+ * Notes: folders and notes the student keeps in the Notes tab. The chats may
+ * do anything there the student can — make folders, write, rewrite, move,
+ * pin, delete (to Recently Deleted, from where it can be recovered).
+ *
+ * Content goes in and out as Markdown; the page is a rich editor, and the
+ * conversion keeps checklists and maths intact.
+ */
+function padTools(env: ToolEnv): SalemTool[] {
+  const BY = 'assistant';
+  /** A folder named or numbered by the model: id, or a name (any case). */
+  const folderId = async (folder: unknown): Promise<number | null> => {
+    if (folder === undefined || folder === null || folder === '') return null;
+    const all = (await padApi.overview()).folders;
+    const n = Number(folder);
+    const hit = Number.isInteger(n) && n > 0
+      ? all.find((f) => f.id === n)
+      : all.find((f) => f.name.toLowerCase() === String(folder).trim().toLowerCase());
+    if (!hit) throw new Error(`There is no folder “${String(folder)}”. Folders: ${all.map((f) => `${f.name} (id ${f.id})`).join(', ') || 'none yet'}.`);
+    return hit.id;
+  };
+  const summary = (n: { id: number; title: string; folderId: number | null; pinned: boolean; updatedAt: number; deletedAt: number | null; snippet: string }, names: Map<number, string>) => ({
+    id: n.id,
+    title: n.title || '(empty)',
+    folder: n.folderId === null ? 'Notes' : names.get(n.folderId) ?? 'Notes',
+    pinned: n.pinned,
+    updated: new Date(n.updatedAt).toISOString(),
+    deleted: n.deletedAt !== null || undefined,
+    preview: n.snippet,
+  });
+  const names = async () => new Map((await padApi.overview()).folders.map((f) => [f.id, f.name]));
+  const toHtml = (markdown: string) => markdownToHtml(markdown);
+
+  return [
+    {
+      name: 'notes_list_folders',
+      description: "List the folders in the student's Notes app (their own notes, separate from study notebooks), with how many notes each holds. \"Notes\" is the default place for notes in no folder.",
+      inputs: {},
+      outputType: 'object',
+      scopes: ['pad'],
+      label: 'Looking through your Notes',
+      state: 'retrieving',
+      async run() {
+        const o = await padApi.overview();
+        return { result: { folders: o.folders, inNoFolder: o.unfiled, total: o.all, recentlyDeleted: o.deleted }, detail: `${o.folders.length} folder${o.folders.length === 1 ? '' : 's'}` };
+      },
+    },
+    {
+      name: 'notes_list',
+      description: 'List notes in the Notes app: all of them, one folder\'s, or those matching a search (every word must appear). Returns id, title, folder and a preview; read one with notes_read.',
+      inputs: {
+        folder: { type: 'string', description: 'A folder name or id; leave out for every note. Use "Notes" for notes in no folder, "deleted" for Recently Deleted.', nullable: true },
+        query: { type: 'string', description: 'Words to search for.', nullable: true },
+      },
+      outputType: 'array',
+      scopes: ['pad', 'search'],
+      label: 'Listing your notes',
+      state: 'retrieving',
+      async run(args) {
+        const q = String(args.query ?? '').trim();
+        const f = String(args.folder ?? '').trim();
+        const list = q ? await padApi.search(q)
+          : !f ? await padApi.notes('all')
+            : f.toLowerCase() === 'deleted' || f.toLowerCase() === 'recently deleted' ? await padApi.notes('deleted')
+              : f.toLowerCase() === 'notes' ? await padApi.notes('unfiled')
+                : await padApi.notes('folder', await folderId(f));
+        const m = await names();
+        return { result: list.slice(0, 200).map((n) => summary(n, m)), detail: `${list.length} note${list.length === 1 ? '' : 's'}` };
+      },
+    },
+    {
+      name: 'notes_read',
+      description: 'Read one note from the Notes app in full, as Markdown (checklists as - [ ] / - [x], maths as $…$).',
+      inputs: { noteId: { type: 'integer', description: 'The note id, from notes_list.' } },
+      outputType: 'object',
+      scopes: ['pad'],
+      label: 'Reading a note',
+      state: 'retrieving',
+      async run(args) {
+        const n = await padApi.note(Number(args.noteId));
+        const m = await names();
+        return { result: { ...summary(n, m), markdown: clip(htmlToMarkdown(n.html), 60_000) }, detail: n.title || 'note' };
+      },
+    },
+    {
+      name: 'notes_create',
+      description: 'Write a new note in the Notes app. The first line is its title (make it a short heading). Markdown: headings, lists, checklists (- [ ] item), bold, links, tables, maths in $…$. Opens it for the student unless open is false.',
+      inputs: {
+        content: { type: 'string', description: 'The note, in Markdown. Start with its title on the first line.' },
+        folder: { type: 'string', description: 'Folder name or id; leave out for "Notes". Create the folder first with notes_create_folder if it does not exist.', nullable: true },
+        pinned: { type: 'boolean', description: 'Pin it to the top.', nullable: true },
+        open: { type: 'boolean', description: 'Show it to the student (default true).', nullable: true },
+      },
+      outputType: 'object',
+      scopes: ['pad'],
+      mutating: true,
+      label: 'Writing a note',
+      async run(args) {
+        const html = toHtml(String(args.content ?? ''));
+        const n = await padApi.create(await folderId(args.folder), html, htmlToText(html), BY);
+        if (args.pinned === true) await padApi.pin(n.id, true, BY);
+        if (args.open !== false) env.open({ kind: 'notes', id: n.id });
+        return { result: { id: n.id, title: n.title }, label: `Wrote “${n.title || 'a note'}”`, detail: n.title };
+      },
+    },
+    {
+      name: 'notes_edit',
+      description: 'Change a note in the Notes app. mode "replace" rewrites the whole note with content; "append" adds content at the end; "prepend" adds it at the top (under nothing — it becomes the new first line/title); "find_replace" replaces the first occurrence of find (plain text within one paragraph) with content. Read the note first when editing part of it.',
+      inputs: {
+        noteId: { type: 'integer', description: 'The note id.' },
+        mode: { type: 'string', description: 'How to change it.', enum: ['replace', 'append', 'prepend', 'find_replace'] },
+        content: { type: 'string', description: 'The new Markdown (or, for find_replace, the replacement text).' },
+        find: { type: 'string', description: 'find_replace only: the exact text to replace.', nullable: true },
+      },
+      outputType: 'object',
+      scopes: ['pad'],
+      mutating: true,
+      label: 'Editing a note',
+      async run(args) {
+        const id = Number(args.noteId);
+        const n = await padApi.note(id);
+        const mode = String(args.mode ?? 'replace');
+        const content = String(args.content ?? '');
+        let html: string;
+        if (mode === 'append') html = n.html + toHtml(content);
+        else if (mode === 'prepend') html = toHtml(content) + n.html;
+        else if (mode === 'find_replace') {
+          const find = String(args.find ?? '');
+          if (!find) throw new Error('find_replace needs the text to find.');
+          const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          if (!n.html.includes(esc(find))) throw new Error(`“${find}” is not in that note as written. Read it with notes_read and use the exact text, or replace the whole note.`);
+          html = n.html.replace(esc(find), esc(content));
+        } else html = toHtml(content);
+        await padApi.save(id, html, htmlToText(html), BY);
+        return { result: { id, ok: true }, label: `Edited “${n.title || 'a note'}”`, detail: mode };
+      },
+    },
+    {
+      name: 'notes_move',
+      description: 'Move a note to another folder in the Notes app (or out of Recently Deleted).',
+      inputs: {
+        noteId: { type: 'integer', description: 'The note id.' },
+        folder: { type: 'string', description: 'Folder name or id; "Notes" for no folder.', nullable: true },
+      },
+      outputType: 'object',
+      scopes: ['pad'],
+      mutating: true,
+      label: 'Moving a note',
+      async run(args) {
+        const f = String(args.folder ?? '').trim();
+        const to = !f || f.toLowerCase() === 'notes' ? null : await folderId(f);
+        await padApi.move(Number(args.noteId), to, BY);
+        return { result: { ok: true }, detail: f || 'Notes' };
+      },
+    },
+    {
+      name: 'notes_pin',
+      description: 'Pin a note to the top of its list in the Notes app, or unpin it.',
+      inputs: {
+        noteId: { type: 'integer', description: 'The note id.' },
+        pinned: { type: 'boolean', description: 'true to pin, false to unpin.' },
+      },
+      outputType: 'object',
+      scopes: ['pad'],
+      mutating: true,
+      label: 'Pinning a note',
+      async run(args) {
+        await padApi.pin(Number(args.noteId), args.pinned !== false, BY);
+        return { result: { ok: true } };
+      },
+    },
+    {
+      name: 'notes_delete',
+      description: 'Delete a note from the Notes app. It goes to Recently Deleted, where the student (or notes_restore) can recover it.',
+      inputs: { noteId: { type: 'integer', description: 'The note id.' } },
+      outputType: 'object',
+      scopes: ['pad'],
+      mutating: true,
+      label: 'Deleting a note',
+      async run(args) {
+        await padApi.remove(Number(args.noteId), false, BY);
+        return { result: { ok: true, recoverable: true } };
+      },
+    },
+    {
+      name: 'notes_restore',
+      description: 'Recover a note from Recently Deleted in the Notes app.',
+      inputs: { noteId: { type: 'integer', description: 'The note id.' } },
+      outputType: 'object',
+      scopes: ['pad'],
+      mutating: true,
+      label: 'Recovering a note',
+      async run(args) {
+        await padApi.restore(Number(args.noteId), BY);
+        return { result: { ok: true } };
+      },
+    },
+    {
+      name: 'notes_create_folder',
+      description: 'Make a new folder in the Notes app.',
+      inputs: { name: { type: 'string', description: 'The folder name.' } },
+      outputType: 'object',
+      scopes: ['pad'],
+      mutating: true,
+      label: 'Making a folder',
+      async run(args) {
+        const f = await padApi.createFolder(String(args.name ?? ''), BY);
+        return { result: f, label: `Made the folder “${f.name}”` };
+      },
+    },
+    {
+      name: 'notes_rename_folder',
+      description: 'Rename a folder in the Notes app.',
+      inputs: {
+        folder: { type: 'string', description: 'The folder name or id.' },
+        name: { type: 'string', description: 'Its new name.' },
+      },
+      outputType: 'object',
+      scopes: ['pad'],
+      mutating: true,
+      label: 'Renaming a folder',
+      async run(args) {
+        const id = await folderId(args.folder);
+        if (id === null) throw new Error('Name the folder to rename.');
+        await padApi.renameFolder(id, String(args.name ?? ''), BY);
+        return { result: { ok: true }, detail: String(args.name ?? '') };
+      },
+    },
+    {
+      name: 'notes_delete_folder',
+      description: 'Delete a folder in the Notes app. Its notes go to Recently Deleted (recoverable), not nowhere.',
+      inputs: { folder: { type: 'string', description: 'The folder name or id.' } },
+      outputType: 'object',
+      scopes: ['pad'],
+      mutating: true,
+      label: 'Deleting a folder',
+      async run(args) {
+        const id = await folderId(args.folder);
+        if (id === null) throw new Error('Name the folder to delete.');
+        await padApi.deleteFolder(id, BY);
+        return { result: { ok: true } };
+      },
+    },
+    {
+      name: 'notes_open',
+      description: 'Show a note to the student in the Notes app.',
+      inputs: { noteId: { type: 'integer', description: 'The note id.' } },
+      outputType: 'object',
+      scopes: ['pad', 'ui'],
+      label: 'Opening a note',
+      async run(args) {
+        env.open({ kind: 'notes', id: Number(args.noteId) });
+        return { result: { ok: true } };
+      },
+    },
+  ];
+}
+
+// ---------------------------------------------------------------------------
 // The registry
 // ---------------------------------------------------------------------------
 
@@ -549,7 +812,7 @@ export function registry(env: ToolEnv): SalemTool[] {
       },
     };
   });
-  return [...wrapped, ...sourceTools(env), ...noteTools(env), ...madeTools(env), ...materialTools(env), ...NATIVE];
+  return [...wrapped, ...sourceTools(env), ...noteTools(env), ...padTools(env), ...madeTools(env), ...materialTools(env), ...NATIVE];
 }
 
 /** Answer a tool call the Rust side forwarded to us. */

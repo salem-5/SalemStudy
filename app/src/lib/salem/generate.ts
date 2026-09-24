@@ -1,7 +1,8 @@
-import { aiChat, aiStream, getAiConfig, type ApiContent, type ApiMessage, type AiFeature } from '../ai';
+import { aiChat, aiStream, getAiConfig, type ApiContent, type ApiMessage, type AiFeature, aiCancel } from '../ai';
 import { formatResult, runPython } from '../python';
 import { fitsSchema, type Schema } from '../schemaCheck';
 import type { Meter } from '../meter';
+import type { Stop } from '../cancel.ts';
 import { toolLoop, type LoopTool } from '../toolLoop';
 import type { RunTelemetry, SalemEvent } from './types';
 
@@ -47,7 +48,27 @@ export type GenerateOptions = {
   onTelemetry?: (telemetry: RunTelemetry) => void;
   /** Adds what the calls cost to the piece of work they belong to. */
   meter?: Meter;
+  /** Stops it part-way, cancelling the request in flight. */
+  stop?: Stop;
 };
+
+/**
+ * One model call that a Stop can cut short: refused if already stopped,
+ * cancelled where it waits if stopped meanwhile, and "stopped" either way —
+ * never an answer that arrived after the student said stop.
+ */
+async function stoppable<R>(stop: Stop | undefined, call: (id?: string) => Promise<R>): Promise<R> {
+  if (!stop) return call();
+  stop.throwIfStopped();
+  const id = crypto.randomUUID();
+  const off = stop.onStop(() => { void aiCancel(id); });
+  try {
+    return await call(id);
+  } finally {
+    off();
+    stop.throwIfStopped();
+  }
+}
 
 const feature = (name: string) => name as AiFeature;
 
@@ -107,6 +128,7 @@ export async function generate<T>(options: GenerateOptions): Promise<T> {
   // the reply is parsed. One retry in JSON mode catches a model that wrote
   // the right answer in the wrong wrapper.
   if (options.python) {
+    let offStream = () => {};
     const worked = await toolLoop({
       meter: options.meter,
       feature: feature(options.feature),
@@ -118,13 +140,17 @@ export async function generate<T>(options: GenerateOptions): Promise<T> {
       ],
       tools: [pythonTool(options.python, config.pythonTimeout, options.onEvent)],
       rounds: options.python.maxCalls ?? 6,
-      onStream: () => {},
+      onStream: (id) => { offStream(); offStream = id && options.stop ? options.stop.onStop(() => { void aiCancel(id); }) : () => {}; },
+      cancelled: () => !!options.stop?.stopped,
       onEvent: options.onEvent,
     });
+    offStream();
+    options.stop?.throwIfStopped();
     options.onTelemetry?.(telemetryOf(null, options.feature));
     const fitted = fitsSchema(worked.text, options.schema as Schema);
     if ('value' in fitted) return fitted.value as T;
-    const again = await aiChat({
+    const again = await stoppable(options.stop, (id) => aiChat({
+      id,
       meter: options.meter,
       feature: feature(options.feature),
       model: config.flashModel,
@@ -135,7 +161,7 @@ export async function generate<T>(options: GenerateOptions): Promise<T> {
         { role: 'system', content: schemaAsk(options.schema) },
         { role: 'user', content: `Put this into the required shape, changing nothing about the answer:\n\n${worked.text}` },
       ],
-    });
+    }));
     const second = fitsSchema(again.content ?? '', options.schema as Schema);
     if ('value' in second) return second.value as T;
     throw new Error(`The model could not produce anything usable (${second.problem}). Try again.`);
@@ -152,7 +178,8 @@ export async function generate<T>(options: GenerateOptions): Promise<T> {
         content: `Your last answer did not fit: ${problem}\nWrite the whole object again, correctly.`,
       });
     }
-    const reply = await aiChat({
+    const reply = await stoppable(options.stop, (id) => aiChat({
+      id,
       meter: options.meter,
       feature: feature(options.feature),
       model: config.flashModel,
@@ -160,7 +187,7 @@ export async function generate<T>(options: GenerateOptions): Promise<T> {
       json: true,
       effort: config.effort,
       thinking: false,
-    });
+    }));
     options.onTelemetry?.(telemetryOf(reply.usage, options.feature));
     const fitted = fitsSchema(reply.content ?? '', options.schema as Schema);
     if ('value' in fitted) return fitted.value as T;

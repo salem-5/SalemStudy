@@ -19,7 +19,7 @@ import { listen } from '@tauri-apps/api/event';
 /** What stays with one page: where it is, its scroll, its caches, its key. */
 const LOCAL = [
   /^wa\.tab\./, /^wa\.route$/, /^wa\.scroll\./, /^wa\.study\.mock/, /^wa\.preview\./,
-  /^wa\.qcss\./, /^wa\.assignments\./, /^wa\.q\./, /^wa\.ai\.open$/,
+  /^wa\.qcss\./, /^wa\.assignments\./, /^wa\.q\./, /^wa\.ai\.open$/, /^wa\.pad\.view$/,
 ];
 
 export const isShared = (key: string) => key.startsWith('wa.') && !LOCAL.some((re) => re.test(key));

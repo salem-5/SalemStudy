@@ -103,8 +103,11 @@ export const aiChat = async (args: {
   toolChoice?: unknown;
   /** Adds this call's price to the piece of work it belongs to. */
   meter?: Meter;
+  /** Lets `aiCancel(id)` stop the request while it is waiting. */
+  id?: string;
 }) => {
   const reply = await invoke<AiReply>('deepseek_chat', {
+    id: args.id ?? null,
     feature: args.feature ?? 'other',
     model: args.model,
     messages: args.messages,

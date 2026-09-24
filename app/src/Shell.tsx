@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, CalendarDays, ChevronRight, Search, ClipboardCheck, Globe, MessageSquare, PanelLeftClose, PanelLeftOpen, Plus, Settings as SettingsIcon, Timer } from 'lucide-react';
+import { BookOpen, CalendarDays, ChevronRight, Search, ClipboardCheck, Globe, MessageSquare, PanelLeftClose, PanelLeftOpen, Plus, Settings as SettingsIcon, StickyNote, Timer } from 'lucide-react';
+import { NotesApp } from './study/NotesApp';
 import App from './App';
 import { AiSettingsDialog } from './components/AiPanel';
 import { TabModeDialog } from './components/TabMode';
@@ -184,6 +185,7 @@ export default function Shell() {
   if (route.kind === 'study') page = tree && <StudyHome tree={tree} actions={actions} />;
   if (route.kind === 'chat') page = <ChatPage threadId={route.id ?? null} tree={tree ?? []} open={open} refreshTree={refreshTree} />;
   if (route.kind === 'schedule') page = <SchedulePage tree={tree ?? []} open={open} refreshTree={() => void refresh()} reload={treeVersion} />;
+  if (route.kind === 'notes') page = <div className="view"><ViewBar><span className="viewbar-name">Notes</span></ViewBar><NotesApp initialNote={route.id ?? null} /></div>;
   if (route.kind === 'focus') page = <div className="view"><ViewBar><span className="viewbar-name">Focus</span></ViewBar><FocusPage /></div>;
   if (route.kind === 'subject') {
     const s = subjectOf(route.id);
@@ -217,6 +219,9 @@ export default function Shell() {
           <FocusNavItem on={route.kind === 'focus'} small={navSmall} onClick={() => open({ kind: 'focus' })} />
           <button type="button" className={`nav-item${route.kind === 'schedule' ? ' on' : ''}`} onClick={() => open({ kind: 'schedule' })} title="Schedule">
             <CalendarDays className="nav-glyph" />{!navSmall && <span>Schedule</span>}
+          </button>
+          <button type="button" className={`nav-item${route.kind === 'notes' ? ' on' : ''}`} onClick={() => open({ kind: 'notes' })} title="Notes">
+            <StickyNote className="nav-glyph" />{!navSmall && <span>Notes</span>}
           </button>
           <button type="button" className={`nav-item${route.kind === 'study' ? ' on' : ''}`} onClick={() => open({ kind: 'study' })} title={studyRunning ? `${studyRunning} thing${studyRunning === 1 ? '' : 's'} being made` : 'Study'}>
             <BookOpen className="nav-glyph" />{!navSmall && <span>Study</span>}

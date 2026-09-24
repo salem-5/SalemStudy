@@ -40,12 +40,15 @@ export async function makeSet(
     const fallback = src.kind === 'sources'
       ? [...new Map(src.hits.map((h) => [h.sourceId, { sourceId: h.sourceId, title: h.sourceTitle }])).values()]
       : null;
+    // Stopped while it was being written: nothing is saved.
+    options.stop?.throwIfStopped();
     progress('Saving the deck…');
     id = await studyApi.createDeck(notebookId, deck.title, deck.cards.map((c) => ({ ...c, sourceRefs: c.sourceRefs ?? fallback })));
     ({ title, skipped } = deck);
     count = deck.cards.length;
   } else {
     const quiz = await generateQuiz(ctx, src, notebookId, progress, options);
+    options.stop?.throwIfStopped();
     progress('Saving the quiz…');
     id = await studyApi.createQuiz(notebookId, quiz.title, quiz.questions);
     ({ title, skipped } = quiz);

@@ -6,6 +6,7 @@ import {
 } from './deckPlan';
 import { generate, generateQuick } from './salem/generate';
 import type { Meter } from './meter';
+import { isStop, type Stop } from './cancel.ts';
 import { CARDS_SYSTEM, GRADE_SYSTEM, QUIZ_SYSTEM } from './prompts';
 import { checkAgrees, defaultTolerance, parseNumber, shuffleChoices, usableHint } from './quizRules';
 import { studyApi, type NewCard, type Difficulty, type QuestionType, type QuizQuestion, type SourceHit } from '../study/api';
@@ -41,6 +42,8 @@ export type RunOptions = {
   fast?: boolean;
   /** Adds what every call cost to this deck or quiz. */
   meter?: Meter;
+  /** Stops it part-way (the task's Stop): nothing more is written or saved. */
+  stop?: Stop;
 };
 
 /** The course's own rules for cards, and the difficulty asked for. */
@@ -121,7 +124,7 @@ type GenTool = { function: { name: string; parameters: unknown } };
  * `check_code` it wrote, which is cheaper and stricter than asking a second
  * model to look.
  */
-async function generated(system: string, user: string, tool: GenTool, meter?: Meter): Promise<Record<string, unknown>> {
+async function generated(system: string, user: string, tool: GenTool, meter?: Meter, stop?: Stop): Promise<Record<string, unknown>> {
   const feature = tool.function.name === 'save_flashcards' ? 'flashcards' : 'quiz';
   return generate<Record<string, unknown>>({
     feature,
@@ -129,6 +132,7 @@ async function generated(system: string, user: string, tool: GenTool, meter?: Me
     instruction: user,
     schema: tool.function.parameters,
     meter,
+    stop,
   });
 }
 
@@ -222,15 +226,25 @@ function pageRef(raw: RawQuestion, window: Window): QuizQuestion['sources'] | nu
 async function inOrder<T, R>(items: T[], limit: number, work: (item: T, i: number) => Promise<R>): Promise<R[]> {
   const out = new Array<R>(items.length);
   let next = 0;
+  let failed: unknown = null;
   const lane = async () => {
-    while (next < items.length) {
+    // One lane failing (or being stopped) ends the others at their next
+    // item, rather than leaving them running with no one to hear them.
+    while (next < items.length && failed === null) {
       const i = next++;
-      out[i] = await work(items[i], i);
+      try { out[i] = await work(items[i], i); } catch (e) { failed ??= e; }
     }
   };
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, lane));
+  if (failed !== null) throw failed;
   return out;
 }
+
+/** A pass's call failing is a failed pass; a Stop is not — it goes up. */
+const unlessStopped = (e: unknown): null => {
+  if (isStop(e)) throw e;
+  return null;
+};
 
 const PARALLEL_PASSES = 3;
 
@@ -337,7 +351,7 @@ async function nameIt(what: 'deck' | 'quiz', sources: WalkSource[], topics: stri
     instruction: `Material: ${sources.map((x) => x.title).join('; ')}\n\nWhat it covers, in order:\n${covered.map((t) => `- ${t}`).join('\n')}`,
     schema: { type: 'object', required: ['title'], properties: { title: { type: 'string' } } },
     meter,
-  }).catch(() => null);
+  }).catch(unlessStopped);
   const title = String(args?.title ?? '').trim().replace(/^["'#*\s]+|["'.*\s]+$/g, '');
   return title ? title.slice(0, 80) : fallback;
 }
@@ -369,7 +383,7 @@ export async function generateCards(
   progress: (text: string) => void = () => {},
 ): Promise<{ title: string; cards: NewCard[]; skipped: string[] }> {
   const size = options.size ?? 'standard';
-  const gen = (system: string, user: string, tool: GenTool) => generated(system, user, tool, options.meter);
+  const gen = (system: string, user: string, tool: GenTool) => generated(system, user, tool, options.meter, options.stop);
   let max = Math.min(MAX_ITEMS, options.limit ?? CEILING[size]);
   const seen = new Set((options.existingFronts ?? []).map(sameCard));
   /** One list per pass, so going over the ceiling can be trimmed fairly. */
@@ -401,7 +415,7 @@ export async function generateCards(
         windows, options.limit, plan.fast,
       );
       let why = '';
-      const args = await gen(CARDS_SYSTEM, prompt(window), CARDS_TOOL).catch((e) => { why = errorText(e); return null; });
+      const args = await gen(CARDS_SYSTEM, prompt(window), CARDS_TOOL).catch((e) => { unlessStopped(e); why = errorText(e); return null; });
       if (!args) {
         done += 1;
         progress(`${window.sourceTitle}, ${pagesLabel(window)}: could not be written — ${why} (${done} of ${windows.length} passes)`);
@@ -413,7 +427,7 @@ export async function generateCards(
       const gap = uncovered(window, new Set(group.map((t) => pageKey(t.item))));
       if (gap) {
         progress(`${window.sourceTitle}, ${pagesLabel(gap)}: not covered yet, writing them now…`);
-        const more = await gen(CARDS_SYSTEM, prompt(gap, MISSED_NOTE), CARDS_TOOL).catch(() => null);
+        const more = await gen(CARDS_SYSTEM, prompt(gap, MISSED_NOTE), CARDS_TOOL).catch(unlessStopped);
         for (const r of (more?.cards as RawQuestion[] | undefined) ?? []) keep(group, r, pageRef(r, gap));
       }
       done += 1;
@@ -443,6 +457,7 @@ export async function generateCards(
   const all = size === 'fewer' ? coreOnly(groups.flat(), (t) => pageKey(t.item), (t) => t.core) : groups.flat();
   const kept = balancedTrim(all, (t) => pageKey(t.item), max, (t) => t.core).map((t) => t.item);
   if (walk.length) {
+    options.stop?.throwIfStopped();
     progress('Naming the deck…');
     title = await nameIt('deck', walk, kept.map((c) => c.topic ?? ''), title || 'Flashcards', options.meter);
   }
@@ -456,7 +471,7 @@ export async function generateTitle(question: string, answer: string): Promise<s
     system: 'Name this conversation like a good document title: 2 to 6 words, specific, no quotes, no final full stop, never "Question about".',
     instruction: `User: ${question.slice(0, 1500)}\n\nAssistant: ${answer.slice(0, 1500)}`,
     schema: { type: 'object', required: ['title'], properties: { title: { type: 'string' } } },
-  }).catch(() => null);
+  }).catch(unlessStopped);
   const title = String(args?.title ?? '').trim().replace(/^["'#*\s]+|["'.*\s]+$/g, '');
   return title ? title.slice(0, 80) : null;
 }
@@ -630,7 +645,7 @@ async function verify(
   const { check, figureCode, ...question } = q;
   if (python && check) {
     progress('Checking question %n in Python…');
-    const res = await runPython(check, 30).catch(() => null);
+    const res = await runPython(check, 30).catch(unlessStopped);
     if (!res) { why('the check could not be run at all'); return null; }
     if (!res.ok) { why(`the check failed to run: ${(res.error || res.stderr || '').slice(0, 200)}`); return null; }
     const printed = (res.stdout || res.result || '').trim().split('\n').pop()?.trim() ?? '';
@@ -651,7 +666,7 @@ async function verify(
   }
   if (python && figureCode) {
     progress('Drawing the figure for question %n…');
-    const res = await runPython(figureCode, 30).catch(() => null);
+    const res = await runPython(figureCode, 30).catch(unlessStopped);
     const fig = res?.figures?.[0];
     if (fig) {
       const saved = await studyApi.attachmentAdd({ notebookId, kind: 'figure', name: fig.name, mime: 'image/png', data: fig.dataUrl });
@@ -710,7 +725,7 @@ export async function generateQuiz(
 ): Promise<{ title: string; questions: QuizQuestion[]; dropped: number; skipped: string[] }> {
   let python = false;
   try { python = (await pythonStatus()).ready; } catch { python = false; }
-  const gen = (system: string, user: string, tool: GenTool) => generated(system, user, tool, options.meter);
+  const gen = (system: string, user: string, tool: GenTool) => generated(system, user, tool, options.meter, options.stop);
   const size = options.size ?? 'standard';
   let max = Math.min(MAX_ITEMS, options.limit ?? QUIZ_COUNT[size]);
   const seen = new Set<string>();
@@ -729,6 +744,7 @@ export async function generateQuiz(
     const kept: Tagged<QuizQuestion>[] = [];
     const failed: string[] = [];
     for (const r of raw) {
+      options.stop?.throwIfStopped();
       if (kept.length >= cap) break;
       // About a page another pass has: not this pass's to write.
       const from = ref(r);
@@ -775,7 +791,7 @@ export async function generateQuiz(
       );
       const ref = (r: RawQuestion) => pageRef(r, window);
       let why = '';
-      const args = await gen(QUIZ_SYSTEM, base, QUIZ_TOOL).catch((e) => { why = errorText(e); return null; });
+      const args = await gen(QUIZ_SYSTEM, base, QUIZ_TOOL).catch((e) => { unlessStopped(e); why = errorText(e); return null; });
       if (!args) {
         done += 1;
         progress(`${window.sourceTitle}, ${pagesLabel(window)}: could not be written — ${why} (${done} of ${windows.length} passes)`);
@@ -789,7 +805,7 @@ export async function generateQuiz(
       // One more go for what failed its check, so a page does not lose its
       // questions to one bad answer key.
       if (first.failed.length && kept.length < room) {
-        const again = await gen(QUIZ_SYSTEM, base + retryNote(first.failed), QUIZ_TOOL).catch(() => null);
+        const again = await gen(QUIZ_SYSTEM, base + retryNote(first.failed), QUIZ_TOOL).catch(unlessStopped);
         if (again) {
           const second = await settle((again.questions as RawQuestion[] | undefined) ?? [], ref, room - kept.length);
           kept = [...kept, ...second.kept];
@@ -804,7 +820,7 @@ export async function generateQuiz(
           size, describeOptions(options) + MISSED_NOTE, src.kind === 'sources' ? src.focus : '',
           windows, options.limit, plan.fast,
         );
-        const more = await gen(QUIZ_SYSTEM, prompt, QUIZ_TOOL).catch(() => null);
+        const more = await gen(QUIZ_SYSTEM, prompt, QUIZ_TOOL).catch(unlessStopped);
         if (more) {
           const room = expectedItems(gap, windows, size, options.limit, plan.fast, 'questions') * 2 + 2;
           kept = [...kept, ...(await settle((more.questions as RawQuestion[] | undefined) ?? [], (r) => pageRef(r, gap), room)).kept];
@@ -829,7 +845,7 @@ export async function generateQuiz(
     const group = [...first.kept];
     if (first.failed.length && group.length < max) {
       progress(`Replacing ${first.failed.length} question${first.failed.length === 1 ? '' : 's'} that failed their check…`);
-      const again = await gen(QUIZ_SYSTEM, prompt + retryNote(first.failed), QUIZ_TOOL).catch(() => null);
+      const again = await gen(QUIZ_SYSTEM, prompt + retryNote(first.failed), QUIZ_TOOL).catch(unlessStopped);
       if (again) group.push(...(await settle((again.questions as RawQuestion[] | undefined) ?? [], ref, max - group.length)).kept);
     }
     groups.push(group);
@@ -844,6 +860,7 @@ export async function generateQuiz(
   // the difference is written now, spread over the material, rather than
   // handing over a 13-question "16-question quiz".
   for (let attempt = 0; attempt < 2 && all.length < max; attempt++) {
+    options.stop?.throwIfStopped();
     const need = max - all.length;
     progress(`Writing ${need} more question${need === 1 ? '' : 's'} to make ${max}…`);
     const already = all.map((t) => `- ${t.item.prompt.slice(0, 160)}`).join('\n');
@@ -856,10 +873,10 @@ export async function generateQuiz(
       const count = (w: Window) => all.filter((t) => w.pages.some((p) => pageKey(t.item) === pageId(p))).length;
       const target = [...plan.windows].sort((a, b) => count(a) / a.chars - count(b) / b.chars)[0];
       const base = passPrompt(ctx, plan.material(target), target, 'questions', size, describeOptions(options), src.kind === 'sources' ? src.focus : '', plan.windows, options.limit, plan.fast);
-      args = await gen(QUIZ_SYSTEM, base + ask, QUIZ_TOOL).catch(() => null);
+      args = await gen(QUIZ_SYSTEM, base + ask, QUIZ_TOOL).catch(unlessStopped);
       ref = (r) => pageRef(r, target);
     } else {
-      args = await gen(QUIZ_SYSTEM, `${contextBlock(ctx)}\n\n${describeSource(src)}\n${describeOptions(options)}${ask}`, QUIZ_TOOL).catch(() => null);
+      args = await gen(QUIZ_SYSTEM, `${contextBlock(ctx)}\n\n${describeSource(src)}\n${describeOptions(options)}${ask}`, QUIZ_TOOL).catch(unlessStopped);
       ref = (r) => provenance(r, src);
     }
     if (!args) break;
@@ -872,6 +889,7 @@ export async function generateQuiz(
   }
   const kept = balancedTrim(all, (t) => pageKey(t.item), max, (t) => t.core).map((t) => t.item);
   if (walk.length) {
+    options.stop?.throwIfStopped();
     progress('Naming the quiz…');
     title = await nameIt('quiz', walk, kept.map((q) => q.topic), title || 'Practice quiz', options.meter);
   }

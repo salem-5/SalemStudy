@@ -6,6 +6,7 @@ import {
   type DeckRun, type MessageMeta, type Note, type NewCard, type NotebookSummary, type Quiz, type QuizQuestion, type Review, type Source, type SourceHit,
   type ExtractionReport, type SourceUnit, type SubjectNode, type StudyEvent, type EventInput,
 } from './api';
+import { padApi, type PadFolder, type PadNote, type PadNoteMeta } from '../lib/pad';
 
 type Db = {
   next: number;
@@ -108,7 +109,61 @@ function seed(): Db {
 const courseOf = (db: { subjects: SubjectNode[] }, e: EventInput) =>
   (e.notebookId !== null ? db.subjects.find((s) => s.notebooks.some((n) => n.id === e.notebookId))?.id : undefined) ?? e.subjectId ?? null;
 
+/** Preview only: Notes in memory, with a few to look at. */
+function installPadMock() {
+  let nextId = 100;
+  const now = Date.now();
+  const folders: PadFolder[] = [{ id: 1, name: 'Physics', count: 0 }, { id: 2, name: 'Ideas', count: 0 }];
+  const notes: PadNote[] = [
+    { id: 1, folderId: 1, pinned: true, createdAt: now - 864e5 * 3, updatedAt: now - 36e5, deletedAt: null,
+      html: '<h1>Kinematics cheat sheet</h1><p>The four equations, with <span data-type="inline-math" data-latex="v = u + at"></span> the one to reach for first.</p><ul data-type="taskList"><li data-type="taskItem" data-checked="true"><p>Derive the equations</p></li><li data-type="taskItem" data-checked="false"><p>Practice projectile problems</p></li></ul>',
+      text: 'Kinematics cheat sheet\nThe four equations, with v = u + at the one to reach for first.\nDerive the equations\nPractice projectile problems', title: '', snippet: '' },
+    { id: 2, folderId: null, pinned: false, createdAt: now - 864e5, updatedAt: now - 864e5, deletedAt: null,
+      html: '<p>Shopping</p><ul><li><p>Graph paper</p></li><li><p>Calculator batteries</p></li></ul>', text: 'Shopping\nGraph paper\nCalculator batteries', title: '', snippet: '' },
+    { id: 3, folderId: 2, pinned: false, createdAt: now - 864e5 * 12, updatedAt: now - 864e5 * 12, deletedAt: null,
+      html: '<p>Study group plan</p><p>Meet Thursdays after the lab. Bring past papers.</p>', text: 'Study group plan\nMeet Thursdays after the lab. Bring past papers.', title: '', snippet: '' },
+  ];
+  const meta = (n: PadNote): PadNoteMeta => {
+    const lines = n.text.split('\n').map((l) => l.trim()).filter(Boolean);
+    return { id: n.id, folderId: n.folderId, pinned: n.pinned, createdAt: n.createdAt, updatedAt: n.updatedAt, deletedAt: n.deletedAt, title: lines[0] ?? '', snippet: lines.slice(1).join(' ').slice(0, 160) };
+  };
+  const sorted = (list: PadNote[]) => [...list].sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt).map(meta);
+  const find = (id: number) => { const n = notes.find((x) => x.id === id); if (!n) throw new Error('Note not found.'); return n; };
+  Object.assign(padApi, {
+    overview: async () => ({
+      folders: folders.map((f) => ({ ...f, count: notes.filter((n) => n.folderId === f.id && !n.deletedAt).length })),
+      all: notes.filter((n) => !n.deletedAt).length,
+      unfiled: notes.filter((n) => !n.deletedAt && n.folderId === null).length,
+      deleted: notes.filter((n) => n.deletedAt).length,
+    }),
+    notes: async (scope: string, folder?: number | null) => sorted(notes.filter((n) =>
+      scope === 'deleted' ? n.deletedAt : !n.deletedAt && (scope === 'all' || (scope === 'unfiled' ? n.folderId === null : n.folderId === folder)))),
+    search: async (q: string) => sorted(notes.filter((n) => !n.deletedAt && q.toLowerCase().split(/\s+/).every((w) => n.text.toLowerCase().includes(w)))),
+    note: async (id: number) => { const n = find(id); return { ...n, ...meta(n) }; },
+    createFolder: async (name: string) => { const f = { id: nextId++, name, count: 0 }; folders.push(f); return f; },
+    renameFolder: async (id: number, name: string) => { folders.find((f) => f.id === id)!.name = name; },
+    deleteFolder: async (id: number) => {
+      notes.forEach((n) => { if (n.folderId === id) { n.deletedAt = Date.now(); n.folderId = null; } });
+      folders.splice(folders.findIndex((f) => f.id === id), 1);
+    },
+    create: async (folder: number | null, html: string, text: string) => {
+      const n: PadNote = { id: nextId++, folderId: folder, html, text, pinned: false, createdAt: Date.now(), updatedAt: Date.now(), deletedAt: null, title: '', snippet: '' };
+      notes.push(n);
+      return { ...n, ...meta(n) };
+    },
+    save: async (id: number, html: string, text: string) => { const n = find(id); n.html = html; n.text = text; n.updatedAt = Date.now(); return n.updatedAt; },
+    move: async (id: number, folder: number | null) => { const n = find(id); n.folderId = folder; n.deletedAt = null; },
+    pin: async (id: number, pinned: boolean) => { find(id).pinned = pinned; },
+    remove: async (id: number, forever = false) => {
+      if (forever) notes.splice(notes.findIndex((n) => n.id === id), 1); else { const n = find(id); n.deletedAt = Date.now(); n.pinned = false; }
+    },
+    restore: async (id: number) => { find(id).deletedAt = null; },
+    emptyDeleted: async () => { const before = notes.length; for (let i = notes.length - 1; i >= 0; i--) if (notes[i].deletedAt) notes.splice(i, 1); return before - notes.length; },
+  });
+}
+
 export function installStudyMock() {
+  installPadMock();
   const load = (): Db => {
     try { return { ...seed(), ...(JSON.parse(localStorage.getItem(KEY) || '') as Db) }; } catch { return seed(); }
   };

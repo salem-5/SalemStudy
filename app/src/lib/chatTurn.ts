@@ -32,16 +32,16 @@ import { studyApi, type AppAction, type PythonRun, type Step } from '../study/ap
 const SCOPES: Record<AgentKind, { scopes: string[]; readOnly: boolean }> = {
   chat: {
     scopes: ['study', 'schedule', 'notebooks', 'sources', 'notes', 'cards', 'quizzes',
-      'search', 'web', 'python', 'memory', 'ui', 'settings'],
+      'search', 'web', 'python', 'memory', 'ui', 'settings', 'pad'],
     readOnly: false,
   },
   notebook: {
-    scopes: ['sources', 'notes', 'quizzes', 'cards', 'search', 'python', 'web'],
+    scopes: ['sources', 'notes', 'quizzes', 'cards', 'search', 'python', 'web', 'pad'],
     readOnly: true,
   },
   task: {
     scopes: ['study', 'schedule', 'notebooks', 'sources', 'notes', 'cards', 'quizzes',
-      'search', 'web', 'python', 'files', 'vision', 'memory', 'settings'],
+      'search', 'web', 'python', 'files', 'vision', 'memory', 'settings', 'pad'],
     readOnly: false,
   },
   generation: { scopes: ['sources', 'notes', 'search', 'python'], readOnly: true },
@@ -97,7 +97,9 @@ function permitted(all: SalemTool[], options: ChatTurnOptions): SalemTool[] {
   const rule = SCOPES[options.agent];
   return all.filter((tool) => {
     if (options.allow) return options.allow.includes(tool.name);
-    if (rule.readOnly && tool.mutating) return false;
+    // A notebook's chat may not change the notebook's study material, but the
+    // student's Notes app is theirs to have written in from any chat.
+    if (rule.readOnly && tool.mutating && !tool.scopes.includes('pad')) return false;
     return tool.scopes.some((scope) => rule.scopes.includes(scope));
   });
 }

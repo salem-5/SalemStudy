@@ -1,10 +1,11 @@
 import { useState, type ReactNode } from 'react';
-import { AlertTriangle, ArrowLeft, Check, ChevronRight, Layers, ListChecks, Loader2, MoreHorizontal, Pencil, Play, Plus, Sparkles, Trash, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Check, ChevronRight, Layers, ListChecks, Loader2, MoreHorizontal, Pencil, Play, Plus, Sparkles, Square, Trash, X } from 'lucide-react';
 import { ContextMenu, type MenuItem } from '../components/ContextMenu';
 import { TaskProgress } from '../components/TaskProgress';
 import { dismissTask, holderOf, runInBackground, stopTask, useTasks } from '../lib/salem/tasks';
 import { ConfirmDialog, NameDialog } from './dialogs';
 import { formatCost, recalledCost, rememberCost, type Meter } from '../lib/meter';
+import type { Stop } from '../lib/cancel.ts';
 
 /**
  * What decks and quizzes have in common, written once.
@@ -47,7 +48,7 @@ export function startSet(
   kind: SetKind,
   notebook: { id: number; name: string },
   walking: boolean,
-  make: (progress: (text: string) => void, meter: Meter) => Promise<{ id: number; note: string }>,
+  make: (progress: (text: string) => void, meter: Meter, stop: Stop) => Promise<{ id: number; note: string }>,
   done: (id: number, note: string, cost: number) => void,
 ): void {
   const scope = setScope(kind, notebook.id);
@@ -57,7 +58,7 @@ export function startSet(
   let spent: Meter | null = null;
   void runInBackground(
     { label: `Writing a ${w.set} for ${notebook.name}${walking ? ', page by page' : ''}`, scope },
-    (progress, meter) => { spent = meter; return make(progress, meter); },
+    (progress, meter, stop) => { spent = meter; return make(progress, meter, stop); },
   ).then(({ id, note }) => {
     const cost = spent?.total ?? 0;
     // Kept, so the set's page can still say what it cost after a restart.
@@ -146,7 +147,7 @@ export function SetsPane({ kind, rows, notebookId, fresh, onOpen, onPlay, onGene
               <button type="button" className="set-main" onClick={() => setWatching(task.id)} title="See what it is doing">
                 <span className="set-icon">{over ? <X /> : <Loader2 className="spin" />}</span>
                 <span className="set-text">
-                  <span className="set-title">{failed ? `Could not write the ${w.set}` : task.state === 'cancelled' ? 'Stopped' : `Writing a ${w.set}…`}</span>
+                  <span className="set-title">{failed ? `Could not write the ${w.set}` : task.state === 'cancelled' ? `Stopped — nothing was saved` : `Writing a ${w.set}…`}</span>
                   <span className="set-meta">
                     {task.cost > 0 && <span className="set-cost" title="What it has cost so far">{formatCost(task.cost)}</span>}
                     {task.error ?? (task.detail || 'Starting…')}
@@ -154,9 +155,14 @@ export function SetsPane({ kind, rows, notebookId, fresh, onOpen, onPlay, onGene
                 </span>
                 <ChevronRight className="set-go" aria-hidden />
               </button>
-              <button type="button" className="icon-btn ghost-icon"
-                onClick={() => (over ? dismissTask(task.id) : stopTask(task.id))}
-                title={over ? 'Dismiss' : 'Stop'} aria-label={over ? 'Dismiss' : 'Stop'}><X /></button>
+              {over ? (
+                <button type="button" className="icon-btn ghost-icon" onClick={() => dismissTask(task.id)} title="Dismiss" aria-label="Dismiss"><X /></button>
+              ) : (
+                // Stops the passes still running, cancels the requests in
+                // flight, and saves nothing.
+                <button type="button" className="btn ghost small set-stop" onClick={() => stopTask(task.id)}
+                  title={`Stop writing this ${w.set} — nothing is saved`}><Square />Stop</button>
+              )}
             </li>
           );
         })}

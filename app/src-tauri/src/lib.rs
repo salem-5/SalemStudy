@@ -322,6 +322,7 @@ async fn deepseek_chat(
     json: Option<bool>,
     tools: Option<Value>,
     choice: Option<Value>,
+    id: Option<String>,
 ) -> Result<Value, String> {
     let c = read_config(&app);
     let ep = providers::endpoint(&c)?;
@@ -350,35 +351,46 @@ async fn deepseek_chat(
     }
     providers::shape(&ep, &c, &mut body);
 
-    if ep.is_local() {
-        let mut reply = providers::ollama_chat(&state.deepseek, &c, &body, |_, _| {}, || false).await?;
-        let used = reply["model"].as_str().unwrap_or(&model).to_string();
-        let cost = record_usage(&app, &db, &used, feature.as_deref(), reply.get("usage"));
-        reply["cost"] = json!(cost);
-        return Ok(reply);
-    }
+    // Everything from here is one piece of work that a Stop can cut short:
+    // a deck being stopped must not keep paying for the passes in flight.
+    let work = async {
+        if ep.is_local() {
+            let mut reply = providers::ollama_chat(&state.deepseek, &c, &body, |_, _| {}, || false).await?;
+            let used = reply["model"].as_str().unwrap_or(&model).to_string();
+            let cost = record_usage(&app, &db, &used, feature.as_deref(), reply.get("usage"));
+            reply["cost"] = json!(cost);
+            return Ok(reply);
+        }
 
-    let resp = providers::send(|| ep.authorise(state.deepseek.post(&url)).json(&body))
-        .await
-        .map_err(|e| format!("The {} request failed: {e}", ep.provider))?;
-    let status = resp.status();
-    let text = resp.text().await.map_err(|e| e.to_string())?;
-    if !status.is_success() {
-        return Err(format!("{} HTTP {}: {}", ep.provider, status.as_u16(), providers::error_text(&text)));
-    }
-    let value: Value = serde_json::from_str(&text)
-        .map_err(|_| format!("{} returned HTTP {status}: {}", ep.provider, text.chars().take(600).collect::<String>()))?;
+        let resp = providers::send(|| ep.authorise(state.deepseek.post(&url)).json(&body))
+            .await
+            .map_err(|e| format!("The {} request failed: {e}", ep.provider))?;
+        let status = resp.status();
+        let text = resp.text().await.map_err(|e| e.to_string())?;
+        if !status.is_success() {
+            return Err(format!("{} HTTP {}: {}", ep.provider, status.as_u16(), providers::error_text(&text)));
+        }
+        let value: Value = serde_json::from_str(&text)
+            .map_err(|_| format!("{} returned HTTP {status}: {}", ep.provider, text.chars().take(600).collect::<String>()))?;
 
-    let cost = record_usage(&app, &db, value.get("model").and_then(Value::as_str).unwrap_or(&model), feature.as_deref(), value.get("usage"));
-    let message = value.get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("message")).cloned().unwrap_or(Value::Null);
-    Ok(json!({
-        "content": message.get("content").and_then(Value::as_str).unwrap_or(""),
-        "reasoning": message.get("reasoning_content").and_then(Value::as_str).unwrap_or(""),
-        "model": value.get("model").and_then(Value::as_str).unwrap_or(""),
-        "usage": value.get("usage").cloned().unwrap_or(Value::Null),
-        "tool_calls": message.get("tool_calls").cloned().unwrap_or(Value::Null),
-        "cost": cost,
-    }))
+        let cost = record_usage(&app, &db, value.get("model").and_then(Value::as_str).unwrap_or(&model), feature.as_deref(), value.get("usage"));
+        let message = value.get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("message")).cloned().unwrap_or(Value::Null);
+        Ok::<Value, String>(json!({
+            "content": message.get("content").and_then(Value::as_str).unwrap_or(""),
+            "reasoning": message.get("reasoning_content").and_then(Value::as_str).unwrap_or(""),
+            "model": value.get("model").and_then(Value::as_str).unwrap_or(""),
+            "usage": value.get("usage").cloned().unwrap_or(Value::Null),
+            "tool_calls": message.get("tool_calls").cloned().unwrap_or(Value::Null),
+            "cost": cost,
+        }))
+    };
+    match id.filter(|i| !i.is_empty()) {
+        Some(id) => tokio::select! {
+            r = work => r,
+            _ = cancelled(&state, &id) => Err("stopped".into()),
+        },
+        None => work.await,
+    }
 }
 
 /// Streamed chat completion: the same request as `deepseek_chat` with
@@ -483,6 +495,16 @@ async fn deepseek_stream(
     let mut reply = acc.finish();
     reply["cost"] = json!(cost);
     Ok(reply)
+}
+
+/// Resolves once `ai_cancel` has been called for `id`.
+async fn cancelled(state: &AppState, id: &str) {
+    loop {
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        if state.cancelled_streams.lock().map(|mut s| s.remove(id)).unwrap_or(false) {
+            return;
+        }
+    }
 }
 
 /// Log a completion's tokens and cost, and return the cost (USD) so the
@@ -1154,6 +1176,20 @@ pub fn run() {
             data::data_inspect,
             data::data_import,
             data::data_reset,
+            study::pad::pad_overview,
+            study::pad::pad_notes,
+            study::pad::pad_search,
+            study::pad::pad_note,
+            study::pad::pad_folder_create,
+            study::pad::pad_folder_rename,
+            study::pad::pad_folder_delete,
+            study::pad::pad_note_create,
+            study::pad::pad_note_save,
+            study::pad::pad_note_move,
+            study::pad::pad_note_pin,
+            study::pad::pad_note_delete,
+            study::pad::pad_note_restore,
+            study::pad::pad_empty_deleted,
             study::memory::memory_list,
             study::memory::memory_add,
             study::memory::memory_update,
