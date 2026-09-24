@@ -13,6 +13,8 @@ export type PythonStatus = {
   error: string | null;
   help: string;
   canInstall: boolean;
+  ocrReady?: boolean;
+  ocrSizeMb?: number;
 };
 
 export type PythonResult = {
@@ -32,6 +34,7 @@ export type PythonResult = {
 
 export const pythonStatus = () => invoke<PythonStatus>('python_status');
 export const pythonSetup = (repair = false) => invoke<PythonStatus>('python_setup', { repair });
+export const installOcr = () => invoke<PythonStatus>('python_install_ocr');
 export const runPython = (code: string, timeout?: number, files?: number[], extra?: { sources?: number[]; maxOutput?: number; maxFigures?: number }) =>
   invoke<PythonResult>('run_python', {
     code,

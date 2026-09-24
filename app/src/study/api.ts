@@ -220,7 +220,19 @@ export type YoutubeTranscript = {
   segments: { start: number; text: string }[];
 };
 
-export type QuestionType = 'mcq' | 'multi' | 'tf' | 'numeric' | 'short' | 'blank';
+export type QuestionType = 'mcq' | 'multi' | 'tf' | 'numeric' | 'short' | 'blank' | 'label';
+
+export type DiagramLabel = {
+  box: [number, number, number, number];
+  answer: string;
+  accept?: string[];
+};
+
+export type Diagram = {
+  image: number;
+  original?: number;
+  labels: DiagramLabel[];
+};
 
 export type Difficulty = 'easy' | 'medium' | 'hard';
 
@@ -242,6 +254,7 @@ export type QuizQuestion = {
   sources?: QuestionSource[];
   figure?: number | null;
   verified?: boolean;
+  diagram?: Diagram;
 };
 
 export type QuizSummary = {

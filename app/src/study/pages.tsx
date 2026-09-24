@@ -3,6 +3,7 @@ import { Select } from '../components/Select';
 import { dropEmpty } from '../lib/chatThreads';
 import { SyllabusPanel } from './Syllabus';
 import { courseContextOf } from '../lib/syllabus';
+import { suitsDiagrams } from '../lib/subjects';
 import { BookOpenText, ChartColumn, Paintbrush, Loader2, Eraser, RefreshCw, MessageSquare, Pencil, Plus, Trash } from 'lucide-react';
 import { ChatView } from '../components/chat/ChatView';
 import { ActivityHeatmap } from '../components/ActivityHeatmap';
@@ -637,6 +638,7 @@ export function NotebookPage({ notebook, subject, actions, target }: { notebook:
           notebookId={notebook.id}
           sources={sources}
           initialThread={generating.thread}
+          diagramSubject={suitsDiagrams(ctx)}
           onClose={() => setGenerating(null)}
           run={(src, _progress, instructions, options) => runGeneration(generating.kind, src, instructions, options)}
         />

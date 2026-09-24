@@ -6,6 +6,7 @@ import type { QuizAnswer } from '../lib/studySession';
 import { makeReference, referencedSources, referenceTag, type Reference } from '../lib/reference';
 import { resolveAll } from '../lib/referenceContent';
 import { studyApi, type Card, type Quiz, type QuizQuestion } from './api';
+import { labelAnswers, labelResults } from '../lib/quizRules';
 
 const key = (scope: string) => `wa.askchat.${scope}`;
 
@@ -55,6 +56,10 @@ export function questionBriefing(quiz: Quiz, index: number, answer: QuizAnswer |
     lines.push('They did not answer this one.');
   } else if (q.type === 'mcq') {
     lines.push(`${label(q, Number(answer.given))}${q.choices?.[Number(answer.given)] ?? answer.given} - ${answer.correct ? 'correct' : 'incorrect'}`);
+  } else if (q.type === 'label') {
+    const results = labelResults(q, answer.given);
+    const given = labelAnswers(answer.given, results.length);
+    lines.push(...(q.diagram?.labels ?? []).map((l, i) => `Label ${i + 1}: "${given[i] || ''}" - ${results[i] ? 'correct' : `incorrect, it is ${l.answer}`}`));
   } else if (q.type === 'multi') {
     const chosen = answer.given.split(',').map(Number).filter(Number.isInteger);
     lines.push(`${chosen.map((i) => `${label(q, i)}${q.choices?.[i] ?? ''}`).join('; ') || 'nothing'} - ${answer.correct ? 'correct' : 'incorrect'}`);

@@ -60,7 +60,60 @@ export function checkAgrees(q: QuizQuestion, stdout: string): boolean {
   return true;
 }
 
+const plainLabel = (s: string) => s
+  .toLowerCase()
+  .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+  .replace(/\([^)]*\)/g, ' ')
+  .replace(/[^a-z0-9]+/g, ' ')
+  .replace(/\b(the|a|an)\b/g, ' ')
+  .replace(/\s+/g, ' ')
+  .trim();
+
+function distance(a: string, b: string): number {
+  if (a === b) return 0;
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const here = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = here;
+    }
+  }
+  return row[b.length];
+}
+
+export function labelMatches(given: string, answer: string, accept: string[] = []): boolean {
+  const g = plainLabel(given);
+  if (!g) return false;
+  return [answer, ...accept].some((a) => {
+    const want = plainLabel(a);
+    if (!want) return false;
+    if (g === want) return true;
+    const slack = want.length >= 12 ? 2 : want.length >= 5 ? 1 : 0;
+    return distance(g, want) <= slack;
+  });
+}
+
+export function labelAnswers(given: string, count: number): string[] {
+  let parsed: unknown = [];
+  try { parsed = JSON.parse(given || '[]'); } catch { parsed = []; }
+  const list = Array.isArray(parsed) ? parsed.map((x) => String(x ?? '')) : [];
+  return Array.from({ length: count }, (_, i) => list[i] ?? '');
+}
+
+export function labelResults(q: QuizQuestion, given: string): boolean[] {
+  const labels = q.diagram?.labels ?? [];
+  const answers = labelAnswers(given, labels.length);
+  return labels.map((l, i) => labelMatches(answers[i], l.answer, l.accept));
+}
+
 export function gradeLocal(q: QuizQuestion, given: string): boolean {
+  if (q.type === 'label') {
+    const results = labelResults(q, given);
+    return results.length > 0 && results.every(Boolean);
+  }
   if (q.type === 'mcq') return Number(given) === q.answer;
   if (q.type === 'tf') return given === q.answer;
   if (q.type === 'multi') return sameSet(picked(given), q.answers ?? []);

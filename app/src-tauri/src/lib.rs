@@ -1041,6 +1041,7 @@ pub fn run() {
             providers::ollama_stop,
             python::python_status,
             python::python_setup,
+            python::python_install_ocr,
             python::run_python,
             study::study_tree,
             study::study_create_subject,

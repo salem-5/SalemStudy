@@ -111,6 +111,8 @@ def audit(event, args):
             raise Denied("the sandbox can only write inside its own folder")
         return
     if event in WRITE_EVENTS:
+        if event == "os.mkdir" and args and isinstance(args[0], (str, bytes, os.PathLike)) and os.path.isdir(args[0]):
+            return
         for arg in args:
             if isinstance(arg, (str, bytes, os.PathLike)) and not inside_sandbox(arg):
                 raise Denied(f"the sandbox can only touch files in its own folder ({event})")

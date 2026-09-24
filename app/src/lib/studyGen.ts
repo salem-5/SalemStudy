@@ -5,6 +5,7 @@ import {
   type CardOptions, type CardSize, type GenSource, type Page, type WalkSource, type Window,
 } from './deckPlan';
 import { generate, generateQuick } from './salem/generate';
+import { diagramQuestions } from './diagrams';
 import type { Meter } from './meter';
 import { isStop, type Stop } from './cancel.ts';
 import { CARDS_DIRECT_SYSTEM, CARDS_SYSTEM, GRADE_SYSTEM, QUIZ_DIRECT_SYSTEM, QUIZ_SYSTEM } from './prompts';
@@ -19,6 +20,7 @@ export type QuizOptions = {
   types?: QuestionType[];
   size?: CardSize;
   limit?: number;
+  diagrams?: boolean;
 } & RunOptions;
 
 export type WalkChoice = boolean | 'auto';
@@ -43,6 +45,7 @@ const TYPE_LABEL: Record<QuestionType, string> = {
   numeric: 'numeric answer',
   short: 'short written answer',
   blank: 'fill in the blank',
+  label: 'label-the-diagram',
 };
 
 const TYPE_FIT = 'Anything the student has to explain, justify or prove is a short written answer - including a true/false statement that has to be proved or disproved: the prompt gives the statement and asks "True or false? Prove it, or give a counterexample.", and the model answer is the verdict followed by the complete proof or counterexample. tf is only for a bare claim with nothing to write; numeric for a single computed number; blank for one key term or value; mcq and multi for choosing between options.';
@@ -57,7 +60,8 @@ function describeOptions(options: QuizOptions, brief: Brief | null = null): stri
   } else {
     lines.push('Difficulty: mixed - a few easy, most medium, one or two hard. Set each question\'s difficulty honestly.');
   }
-  const narrowed = !!options.types?.length && options.types.length < Object.keys(TYPE_LABEL).length;
+  options = { ...options, types: options.types?.filter((t) => t !== 'label') };
+  const narrowed = !!options.types?.length && options.types.length < TYPES.length;
   if (narrowed && options.types!.length === 1) {
     lines.push(`Every question is ${TYPE_LABEL[options.types![0]]}.`);
   } else {
@@ -255,8 +259,9 @@ const reminderOf = (text: string, what: 'cards' | 'questions') => (text
   : '');
 
 function allowedTypes(options: QuizOptions, brief: Brief | null): QuestionType[] | null {
-  if (brief?.types?.length) return brief.types;
-  if (options.types?.length && options.types.length < TYPES.length) return options.types;
+  if (brief?.types?.length) return brief.types.filter((t) => t !== 'label');
+  const types = options.types?.filter((t) => t !== 'label');
+  if (types?.length && types.length < TYPES.length) return types;
   return null;
 }
 
@@ -705,6 +710,20 @@ export async function rewriteQuestion(
   throw new Error('Could not write a replacement that passed its check. Edit it by hand, or try a different topic.');
 }
 
+function withDiagrams(questions: QuizQuestion[], diagrams: QuizQuestion[], src: GenSource): QuizQuestion[] {
+  if (!diagrams.length) return questions;
+  const order = new Map<number, number>();
+  if (src.kind === 'sources') src.hits.forEach((h) => { if (!order.has(h.sourceId)) order.set(h.sourceId, order.size); });
+  let last = 0;
+  const keyed = [...questions, ...diagrams].map((q, i) => {
+    const ref = q.sources?.[0];
+    const key = ref && order.has(ref.sourceId) ? order.get(ref.sourceId)! * 1e6 + (ref.unit ?? 0) : last;
+    last = key;
+    return { q, i, key };
+  });
+  return keyed.sort((a, b) => a.key - b.key || a.i - b.i).map((x) => x.q);
+}
+
 export async function generateQuiz(
   ctx: StudyContext,
   src: GenSource,
@@ -713,9 +732,41 @@ export async function generateQuiz(
   options: QuizOptions = {},
 ): Promise<{ title: string; questions: QuizQuestion[]; dropped: number; skipped: string[] }> {
   let python = false;
-  try { python = (await pythonStatus()).ready; } catch { python = false; }
+  let ocr = false;
+  try { const status = await pythonStatus(); python = status.ready; ocr = !!status.ocrReady; } catch { python = false; }
   const gen = (system: string, user: string, tool: GenTool) => generated(system, user, tool, options.meter, options.stop);
   const size = options.size ?? 'standard';
+  let diagrams: QuizQuestion[] = [];
+  if (options.diagrams && src.kind === 'sources' && src.hits.length) {
+    if (!python || !ocr) {
+      progress('Diagram labelling is not installed, so this quiz has no diagram questions.');
+    } else {
+      const ids = [...new Set(src.hits.map((h) => h.sourceId))];
+      const known = await studyApi.sources(notebookId).catch(() => []);
+      const chosen = ids.map((id) => known.find((s) => s.id === id)).filter((s): s is NonNullable<typeof s> => !!s);
+      const pages = new Map<number, Map<number, string>>();
+      for (const h of src.hits) {
+        const m = pages.get(h.sourceId) ?? new Map<number, string>();
+        m.set(h.unitFrom, h.text);
+        pages.set(h.sourceId, m);
+      }
+      const texts = src.hits.filter((h) => h.kind !== 'image').map((h) => ({ sourceId: h.sourceId, unit: h.unitFrom, text: h.text }));
+      const notes = (src.notes ?? []).map((n) => n.content.replace(/data:[^\s)"']+/g, ''));
+      const total = options.limit ?? QUIZ_COUNT[size];
+      diagrams = await diagramQuestions(chosen, { texts, notes, pages }, notebookId, MAX_ITEMS, progress, options.meter, options.stop);
+      const rest = total - diagrams.length;
+      progress(!diagrams.length
+        ? 'No diagrams in these sources are about what they teach; writing the usual questions.'
+        : rest > 0
+          ? `${diagrams.length} diagram question${diagrams.length === 1 ? '' : 's'} ready; writing ${rest} more of the usual kind…`
+          : `${diagrams.length} diagram question${diagrams.length === 1 ? '' : 's'} ready.`);
+      if (diagrams.length && rest <= 0) {
+        const named = await nameIt('quiz', hitsToWalk(src.hits), diagrams.map((q) => q.topic), 'Diagram quiz', options.meter);
+        return { title: named, questions: withDiagrams([], diagrams, src), dropped: 0, skipped: [] };
+      }
+      if (diagrams.length) options = { ...options, limit: rest };
+    }
+  }
   let max = Math.min(MAX_ITEMS, options.limit ?? QUIZ_COUNT[size]);
   const seen = new Set<string>();
   const skipped: string[] = [];
@@ -892,7 +943,7 @@ export async function generateQuiz(
     progress('Naming the quiz…');
     title = await nameIt('quiz', walk, kept.map((q) => q.topic), title || 'Practice quiz', options.meter);
   }
-  return { title: title || 'Practice quiz', questions: kept, dropped, skipped };
+  return { title: title || 'Practice quiz', questions: withDiagrams(kept, diagrams, src), dropped, skipped };
 }
 
 const GRADE_TOOL = {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Select } from '../components/Select';
-import { ArrowLeft, Check, Zap, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, FileText, MessageCircleQuestion, Play, Plus, RotateCcw, Shuffle, Sparkles, Trash, X } from 'lucide-react';
+import { ArrowLeft, Check, ScanText, Zap, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, FileText, MessageCircleQuestion, Play, Plus, RotateCcw, Shuffle, Sparkles, Trash, X } from 'lucide-react';
 import { Modal } from '../components/Dialogs';
 import { Markdown } from '../lib/markdown';
 import { DIRECT_CARD_COUNT, type CardOptions, type CardSize, type GenSource, type QuizOptions } from '../lib/studyGen';
@@ -12,6 +12,8 @@ import { applyOrder, CARD_BANDS, QUIZ_COUNT } from '../lib/deckPlan';
 import { SetItem, SetPage } from './StudySets';
 import { KindIcon } from './Sources';
 import { NOTE_PRESETS } from '../lib/prompts';
+import { OcrInstallDialog } from '../components/OcrInstall';
+import { pythonStatus, type PythonStatus } from '../lib/python';
 
 export function DeckView({ deck, notebookId, onBack, onPlay, onChanged }: {
   deck: Deck;
@@ -127,6 +129,7 @@ type GenPrefs = {
   notesOff?: number[];
   fast?: boolean;
   walkMode?: WalkMode;
+  diagrams?: boolean;
 };
 
 type WalkMode = 'auto' | 'on' | 'off';
@@ -178,8 +181,9 @@ const sizeNote = (size: CardSize, one: 'card' | 'question', walk: boolean) => {
       : `Everything Standard covers, plus ${one}s that compare, connect and apply, still in page order. ${range[0].toUpperCase()}${range.slice(1)}.`;
 };
 
-export function GenerateDialog({ kind, notebookId, sources, onClose, run, initialThread }: {
+export function GenerateDialog({ kind, notebookId, sources, onClose, run, initialThread, diagramSubject = false }: {
   kind: 'cards' | 'quiz' | 'notes';
+  diagramSubject?: boolean;
   notebookId: number;
   sources: Source[];
   onClose: () => void;
@@ -212,6 +216,18 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
   const [types, setTypes] = useState<QuestionType[]>(prefs.types?.length ? prefs.types : QUIZ_TYPES.map((t) => t.type));
   const [fast, setFast] = useState(prefs.fast ?? true);
   const [walkMode, setWalkMode] = useState<WalkMode>(prefs.walkMode ?? 'auto');
+  const [diagrams, setDiagrams] = useState(prefs.diagrams ?? false);
+  const [ocrDialog, setOcrDialog] = useState<PythonStatus | null>(null);
+  useEffect(() => {
+    if (!prefs.diagrams) return;
+    pythonStatus().then((s) => { if (!s.ready || !s.ocrReady) setDiagrams(false); }).catch(() => setDiagrams(false));
+  }, [prefs.diagrams]);
+  const toggleDiagrams = async (on: boolean) => {
+    if (!on) { setDiagrams(false); return; }
+    const status = await pythonStatus().catch(() => null);
+    if (status?.ready && status.ocrReady) { setDiagrams(true); return; }
+    setOcrDialog(status ?? ({ ready: false } as PythonStatus));
+  };
   const walk = walkMode === 'on' && mode === 'sources';
   const [size, setSize] = useState<CardSize>(prefs.size ?? 'standard');
   const [notes, setNotes] = useState<Note[]>([]);
@@ -221,10 +237,10 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
     if (initialThread) return;
     savePrefs(key, {
       mode, off: ready.filter((s) => !picked.has(s.id)).map((s) => s.id),
-      focus: mode === 'sources' ? prompt : prefs.focus, instructions, difficulty, types, size, order, fast, walkMode,
+      focus: mode === 'sources' ? prompt : prefs.focus, instructions, difficulty, types, size, order, fast, walkMode, diagrams,
       notesOff: notes.filter((n) => !pickedNotes.has(n.id)).map((n) => n.id),
     });
-  }, [key, mode, picked, prompt, instructions, difficulty, types, size, order, fast, walkMode, notes, pickedNotes]);
+  }, [key, mode, picked, prompt, instructions, difficulty, types, size, order, fast, walkMode, diagrams, notes, pickedNotes]);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -269,7 +285,7 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
         if (!thread) throw new Error('Pick a chat.');
         src = { kind: 'chat', messages: await studyApi.chatMessages(thread) };
       }
-      await run(src, setStatus, instructions, { difficulty, types, size, fast, walk: mode !== 'sources' ? false : walkMode === 'auto' ? 'auto' : walkMode === 'on' });
+      await run(src, setStatus, instructions, { difficulty, types, size, fast, walk: mode !== 'sources' ? false : walkMode === 'auto' ? 'auto' : walkMode === 'on', diagrams: kind === 'quiz' && mode === 'sources' && diagrams });
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -281,7 +297,7 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
   const modes: GenMode[] = ['sources', 'topic', 'chat'];
   const can = mode === 'sources' ? picked.size + pickedNotes.size > 0 : mode === 'topic' ? !!prompt.trim() : !!thread;
   return (
-    <Modal title={kind === 'cards' ? 'Generate a flashcard deck' : kind === 'quiz' ? 'Generate a quiz' : 'Write notes'} onClose={busy ? () => {} : onClose}>
+    <Modal title={kind === 'cards' ? 'Generate a flashcard deck' : kind === 'quiz' ? 'Generate a quiz' : 'Write notes'} onClose={busy || ocrDialog ? () => {} : onClose}>
       <div className="form">
         <div className="seg" style={{ '--n': 3 } as React.CSSProperties}>
           {modes.map((m) => (
@@ -459,6 +475,16 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
               </div>
               <span className="muted small">{types.length === QUIZ_TYPES.length ? 'All of them, whichever suits each point.' : 'Only these types.'}</span>
             </div>
+            {mode === 'sources' && (
+              <label className="toggle gen-fast">
+                <input type="checkbox" checked={diagrams} disabled={busy} onChange={(e) => void toggleDiagrams(e.target.checked)} />
+                <ScanText />
+                <span>
+                  Label diagrams
+                  <span className="muted small"> - takes labelled diagrams from your sources, covers the labels, and you type them in. Best for biology, medicine and chemistry.</span>
+                </span>
+              </label>
+            )}
             <p className="muted small">Calculation questions are re-solved in Python; any whose check disagrees is thrown away and rewritten.</p>
           </>
         )}
@@ -469,6 +495,10 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
         <button type="button" className="btn ghost" onClick={onClose} disabled={busy}>Cancel</button>
         <button type="button" className="btn primary" onClick={go} disabled={busy || !can}><Sparkles />{kind === 'notes' ? 'Write notes' : 'Generate'}</button>
       </div>
+      {ocrDialog && (
+        <OcrInstallDialog status={ocrDialog} suited={diagramSubject} onClose={() => setOcrDialog(null)}
+          onDone={() => { setOcrDialog(null); setDiagrams(true); }} />
+      )}
     </Modal>
   );
 }

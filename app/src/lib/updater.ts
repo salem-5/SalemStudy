@@ -9,8 +9,10 @@ const PENDING_KEY = 'salem.update.pending';
 const SEEN_KEY = 'salem.update.seen';
 const NOTES_KEY = 'salem.update.notes';
 
-const RECHECK_MS = 6 * 60 * 60 * 1000;
-const FIRST_CHECK_MS = 8_000;
+const RECHECK_MS = 15 * 60 * 1000;
+const FIRST_CHECK_MS = 1_500;
+
+const CLOSES_TO_INSTALL = typeof navigator !== 'undefined' && /windows/i.test(navigator.userAgent);
 
 export type Changelog = { version: string; notes: string };
 
@@ -27,6 +29,8 @@ type UpdateHandle = {
   version: string;
   body?: string;
   downloadAndInstall: (onEvent?: (e: { event: string; data?: { contentLength?: number; chunkLength?: number } }) => void) => Promise<void>;
+  download: (onEvent?: (e: { event: string; data?: { contentLength?: number; chunkLength?: number } }) => void) => Promise<void>;
+  install: () => Promise<void>;
 };
 
 const store = {
@@ -41,6 +45,7 @@ const readJson = <T,>(k: string): T | null => {
 
 let state: UpdateState = { status: 'idle' };
 let found: UpdateHandle | null = null;
+let waiting: UpdateHandle | null = null;
 const listeners = new Set<() => void>();
 const set = (next: UpdateState) => { state = next; listeners.forEach((l) => l()); };
 
@@ -62,7 +67,7 @@ const errorText = (e: unknown) => String(e instanceof Error ? e.message : e).sli
 
 let busy = false;
 
-export async function checkForUpdates({ install, quiet = false }: { install: boolean; quiet?: boolean }): Promise<void> {
+export async function checkForUpdates({ install, quiet = false, later = false }: { install: boolean; quiet?: boolean; later?: boolean }): Promise<void> {
   if (busy || state.status === 'downloading' || state.status === 'ready') return;
   busy = true;
   if (!quiet) set({ status: 'checking' });
@@ -75,7 +80,7 @@ export async function checkForUpdates({ install, quiet = false }: { install: boo
       return;
     }
     found = update;
-    if (install) await installFound();
+    if (install) await installFound(later);
     else set({ status: 'available', version: update.version, notes: update.body ?? '' });
   } catch (e) {
     set(quiet ? { status: 'idle' } : { status: 'error', message: errorText(e) });
@@ -84,7 +89,7 @@ export async function checkForUpdates({ install, quiet = false }: { install: boo
   }
 }
 
-export async function installFound(): Promise<void> {
+export async function installFound(later = false): Promise<void> {
   const update = found;
   if (!update) return;
   const notes = update.body ?? '';
@@ -93,11 +98,17 @@ export async function installFound(): Promise<void> {
   let total: number | null = null;
   set({ status: 'downloading', version: update.version, done, total });
   try {
-    await update.downloadAndInstall((e) => {
+    const onEvent = (e: { event: string; data?: { contentLength?: number; chunkLength?: number } }) => {
       if (e.event === 'Started') total = e.data?.contentLength ?? null;
       if (e.event === 'Progress') done += e.data?.chunkLength ?? 0;
       set({ status: 'downloading', version: update.version, done, total });
-    });
+    };
+    if (later && CLOSES_TO_INSTALL) {
+      await update.download(onEvent);
+      waiting = update;
+    } else {
+      await update.downloadAndInstall(onEvent);
+    }
     set({ status: 'ready', version: update.version, notes });
   } catch (e) {
     store.del(PENDING_KEY);
@@ -106,6 +117,10 @@ export async function installFound(): Promise<void> {
 }
 
 export async function restartNow(): Promise<void> {
+  if (waiting) {
+    await waiting.install();
+    return;
+  }
   const { relaunch } = await import('@tauri-apps/plugin-process');
   await relaunch();
 }
@@ -115,9 +130,9 @@ let started = false;
 export function startAutoUpdates(): void {
   if (started || !canUpdate() || import.meta.env.DEV) return;
   started = true;
-  const tick = () => { if (autoUpdates()) void checkForUpdates({ install: true, quiet: true }); };
-  window.setTimeout(tick, FIRST_CHECK_MS);
-  window.setInterval(tick, RECHECK_MS);
+  const tick = (later: boolean) => { if (autoUpdates()) void checkForUpdates({ install: true, quiet: true, later }); };
+  window.setTimeout(() => tick(false), FIRST_CHECK_MS);
+  window.setInterval(() => tick(true), RECHECK_MS);
 }
 
 export type ChangelogPlan = { show: Changelog } | { fetch: string } | null;

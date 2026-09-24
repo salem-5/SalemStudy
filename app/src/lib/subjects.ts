@@ -21,6 +21,9 @@ export const computational = (flavour: Flavour): boolean => flavour === 'stem' |
 
 export const pageByPageFor = (flavour: Flavour): boolean => flavour === 'life';
 
+export const suitsDiagrams = (ctx: { subject: string; notebook: string; courseContext: string }): boolean =>
+  courseFlavour(ctx) === 'life' || /chem/i.test(`${ctx.subject} ${ctx.notebook}`);
+
 export const WALK_SYSTEM = `You decide how flashcards and quizzes are written for a university course. There are two ways:
 - page by page: the material is walked in order and every page is covered in its own pass. Right for memorisation-heavy subjects whose lectures are dense with facts to learn - biology, medicine, pharmacy and pharmacology, anatomy, physiology, pathology, histology, microbiology, nursing, dentistry, veterinary science, and similar.
 - one pass: the whole material in one go, with questions chosen for understanding and problem solving. Right for STEM (mathematics, physics, engineering, computer science, statistics, chemistry problem solving), business, economics, accounting, finance, and similar.

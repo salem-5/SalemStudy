@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { canCheck, checkAgrees, fillsTheGap, gradeLocal, parseNumber, picked, shuffleChoices, unpick, usableHint, verdictOf } from './quizRules.ts';
+import { canCheck, checkAgrees, fillsTheGap, gradeLocal, labelAnswers, labelMatches, labelResults, parseNumber, picked, shuffleChoices, unpick, usableHint, verdictOf } from './quizRules.ts';
 
 const mcq = { type: 'mcq', prompt: 'p', choices: ['3x^2', 'x^2', '3x'], answer: 0, explanation: '', topic: 't' } as const;
 const multi = { type: 'multi', prompt: 'p', choices: ['A', 'B', 'C', 'D'], answers: [0, 2], answer: '0,2', explanation: '', topic: 't' } as const;
@@ -178,5 +178,40 @@ describe('checking a prove-or-disprove answer', () => {
     assert.equal(canCheck(claim('Because the terms oscillate.')), false);
     assert.equal(canCheck(claim('False. Take $a_n = (-1)^n$.')), true);
     assert.equal(checkAgrees(claim('Because the terms oscillate.'), 'True'), false);
+  });
+});
+
+describe('marking a labelled diagram', () => {
+  const diagram = {
+    type: 'label', prompt: 'Label the stages of fracture healing.', answer: '', explanation: '', topic: 't',
+    diagram: { image: 1, labels: [
+      { box: [0, 0, 0.1, 0.1], answer: 'Medullary cavity' },
+      { box: [0, 0, 0.1, 0.1], answer: 'Periosteum' },
+      { box: [0, 0, 0.1, 0.1], answer: 'Sequestrum', accept: ['dead bone'] },
+    ] },
+  } as const;
+
+  it('forgives case, punctuation, articles and a small slip', () => {
+    assert.equal(labelMatches('the medullary cavity.', 'Medullary cavity'), true);
+    assert.equal(labelMatches('Periostium', 'Periosteum'), true);
+    assert.equal(labelMatches('Dead bone', 'Sequestrum', ['dead bone']), true);
+  });
+
+  it('does not accept a different structure', () => {
+    assert.equal(labelMatches('Endosteum', 'Periosteum'), false);
+    assert.equal(labelMatches('', 'Periosteum'), false);
+    assert.equal(labelMatches('Pus', 'Bone'), false);
+  });
+
+  it('marks each box and the question as a whole', () => {
+    const given = JSON.stringify(['medullary cavity', 'endosteum', 'sequestrum']);
+    assert.deepEqual(labelResults(diagram as never, given), [true, false, true]);
+    assert.equal(gradeLocal(diagram as never, given), false);
+    assert.equal(gradeLocal(diagram as never, JSON.stringify(['Medullary cavity', 'Periosteum', 'Dead bone'])), true);
+  });
+
+  it('treats missing boxes as unanswered', () => {
+    assert.deepEqual(labelAnswers('["a"]', 3), ['a', '', '']);
+    assert.deepEqual(labelAnswers('not json', 2), ['', '']);
   });
 });

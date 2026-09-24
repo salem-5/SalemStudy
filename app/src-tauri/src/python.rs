@@ -15,12 +15,15 @@ pub const CORE_PACKAGES: [&str; 3] = ["sympy", "numpy", "mpmath"];
 pub const EXTRA_PACKAGES: [&str; 6] = ["scipy", "matplotlib", "pint", "pymupdf", "python-pptx", "yt-dlp"];
 pub const AI_PACKAGES: [&str; 1] = ["smolagents>=1.26,<2"];
 pub const AI_MODULES: [&str; 1] = ["smolagents"];
+pub const OCR_PACKAGES: [&str; 2] = ["rapidocr>=3,<4", "onnxruntime"];
+pub const OCR_MODULES: [&str; 1] = ["rapidocr"];
+pub const OCR_SIZE_MB: u32 = 240;
 pub const MIN_AI_PYTHON: (u32, u32) = (3, 10);
 
 const PROBE: &str = r#"
 import json, sys
 mods = {}
-for m in ("sympy", "numpy", "mpmath", "scipy", "matplotlib", "pint", "pymupdf", "pptx", "yt_dlp", "smolagents"):
+for m in ("sympy", "numpy", "mpmath", "scipy", "matplotlib", "pint", "pymupdf", "pptx", "yt_dlp", "smolagents", "rapidocr"):
     try:
         mods[m] = getattr(__import__(m), "__version__", "?")
     except Exception:
@@ -316,7 +319,7 @@ fn probe(python: &Path) -> Result<Probe, String> {
     let version = value.get("version").and_then(Value::as_str).unwrap_or("?").to_string();
     let mut packages = Vec::new();
     if let Some(map) = value.get("packages").and_then(Value::as_object) {
-        for name in CORE_PACKAGES.iter().chain(EXTRA_PACKAGES.iter()).chain(AI_MODULES.iter()) {
+        for name in CORE_PACKAGES.iter().chain(EXTRA_PACKAGES.iter()).chain(AI_MODULES.iter()).chain(OCR_MODULES.iter()) {
             let v = map.get(*name).and_then(Value::as_str).map(|s| s.to_string());
             packages.push((name.to_string(), v));
         }
@@ -422,6 +425,8 @@ fn status_value(app: &AppHandle, configured: &str) -> Value {
                 "aiMissing": ai_missing,
                 "aiError": ai_error,
                 "needsRebuild": old_python,
+                "ocrReady": OCR_MODULES.iter().all(|n| has(n)),
+                "ocrSizeMb": OCR_SIZE_MB,
             })
         }
         Err(e) => json!({
@@ -438,6 +443,8 @@ fn status_value(app: &AppHandle, configured: &str) -> Value {
             "aiMissing": AI_MODULES,
             "aiError": e,
             "needsRebuild": false,
+            "ocrReady": false,
+            "ocrSizeMb": OCR_SIZE_MB,
         }),
     }
 }
@@ -582,6 +589,44 @@ pub async fn python_setup(app: AppHandle, repair: Option<bool>) -> Result<Value,
     tauri::async_runtime::spawn_blocking(move || setup_blocking(&app, &configured, repair))
         .await
         .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn python_install_ocr(app: AppHandle) -> Result<Value, String> {
+    let configured = crate::read_config(&app).python_path;
+    tauri::async_runtime::spawn_blocking(move || install_ocr_blocking(&app, &configured))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn install_ocr_blocking(app: &AppHandle, configured: &str) -> Result<Value, String> {
+    let emit = |stage: &str, line: &str| {
+        crate::tabmode::notify(app, "python://progress", json!({ "stage": stage, "line": line }));
+    };
+    let python = ready_interpreter(app, configured)?;
+    emit("stage", &format!("Downloading diagram labelling (about {OCR_SIZE_MB} MB)…"));
+    let mut cmd = Command::new(&python);
+    cmd.args(["-m", "pip", "install", "--upgrade", "--disable-pip-version-check", "--no-input", "--progress-bar", "raw"]);
+    cmd.args(OCR_PACKAGES);
+    let out = run_streaming(cmd, Duration::from_secs(1800), &|l| emit("log", l))?;
+    if out.timed_out {
+        emit("done", "timed out");
+        return Err("downloading diagram labelling timed out".into());
+    }
+    if out.code != Some(0) {
+        let msg = if out.stderr.trim().is_empty() { out.stdout.clone() } else { out.stderr.clone() };
+        let tail: Vec<&str> = msg.lines().rev().take(12).collect();
+        let tail: Vec<&str> = tail.into_iter().rev().collect();
+        emit("done", "failed");
+        return Err(format!("installing diagram labelling failed:\n{}", tail.join("\n")));
+    }
+    emit("stage", "Checking it works…");
+    let status = status_value(app, configured);
+    emit("done", "installed");
+    if !status.get("ocrReady").and_then(Value::as_bool).unwrap_or(false) {
+        return Err("diagram labelling installed, but it cannot be loaded. Try again, or repair Python in Settings.".into());
+    }
+    Ok(status)
 }
 
 static RUN_SEQ: AtomicU64 = AtomicU64::new(0);

@@ -3,6 +3,7 @@ import { Select } from '../components/Select';
 import { ArrowLeft, Check, ChevronLeft, ChevronRight, Flag, Lightbulb, MessageCircleQuestion, Play, RotateCcw, ShieldCheck, Sparkles, X } from 'lucide-react';
 import { asMath, Markdown } from '../lib/markdown';
 import { cardsFromMistakes, gradeLocal, gradeShort, picked, rewriteQuestion, unpick, type GenSource, type StudyContext } from '../lib/studyGen';
+import { labelAnswers, labelResults } from '../lib/quizRules';
 import {
   clearQuizSession, loadQuizSession, quizSessionFits, saveQuizSession,
   type QuizAnswer,
@@ -31,6 +32,10 @@ function givenText(q: QuizQuestion, given: string): string {
   if (q.type === 'mcq') return q.choices?.[Number(given)] ?? given;
   if (q.type === 'multi') return picked(given).map((i) => q.choices?.[i] ?? '').filter(Boolean).join(' · ') || 'nothing';
   if (q.type === 'tf') return given === 'true' ? 'True' : 'False';
+  if (q.type === 'label') {
+    const results = labelResults(q, given);
+    return labelAnswers(given, results.length).map((v, i) => `${i + 1}. ${v.trim() || '-'} ${results[i] ? '✓' : '✗'}`).join(' · ');
+  }
   return given;
 }
 
@@ -114,7 +119,11 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
     let feedback: string | undefined;
     try {
       if (q.type === 'short') ({ correct, feedback } = await gradeShort(q, value));
-      else correct = gradeLocal(q, value);
+      else if (q.type === 'label') {
+        const results = labelResults(q, value);
+        correct = results.length > 0 && results.every(Boolean);
+        feedback = `${results.filter(Boolean).length} of ${results.length} labels right.`;
+      } else correct = gradeLocal(q, value);
     } catch (e) {
       feedback = `Could not mark this automatically (${String(e)}). Compare with the answer below.`;
     }
@@ -187,7 +196,7 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
       const typing = !!(e.target as HTMLElement).closest('input, textarea');
       if (e.key === 'ArrowLeft' && !typing) { e.preventDefault(); goTo(pos - 1); return; }
       if (e.key === 'ArrowRight' && !typing) { e.preventDefault(); goTo(pos + 1); return; }
-      if (e.key === 'Enter' && !e.shiftKey && (!typing || q.type !== 'short' || e.metaKey || e.ctrlKey)) {
+      if (e.key === 'Enter' && !e.shiftKey && (!typing || (q.type !== 'short' && q.type !== 'label') || e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         if (reviewing || current) goTo(pos + 1);
         else void check();
@@ -351,6 +360,82 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
 
 const PROOF = /\b(prove|proof|disprove|justify|counter-?example|show that)\b/i;
 
+function DiagramInput({ q, given, locked, autoFocus, onChange }: {
+  q: QuizQuestion;
+  given: string;
+  locked: boolean;
+  autoFocus: boolean;
+  onChange: (value: string) => void;
+}) {
+  const labels = q.diagram?.labels ?? [];
+  const values = labelAnswers(given, labels.length);
+  const results = locked ? labelResults(q, given) : null;
+  const [src, setSrc] = useState<string | null>(null);
+  const [original, setOriginal] = useState<string | null>(null);
+  const [showOriginal, setShowOriginal] = useState(false);
+  const [aspect, setAspect] = useState<number | null>(null);
+  const boxes = useRef<(HTMLInputElement | null)[]>([]);
+
+  useEffect(() => {
+    let alive = true;
+    setSrc(null);
+    setShowOriginal(false);
+    if (q.diagram?.image) studyApi.attachmentData(q.diagram.image).then((d) => { if (alive) setSrc(d); }).catch(() => {});
+    return () => { alive = false; };
+  }, [q.diagram?.image]);
+
+  useEffect(() => {
+    if (!showOriginal || original || !q.diagram?.original) return;
+    studyApi.attachmentData(q.diagram.original).then(setOriginal).catch(() => setShowOriginal(false));
+  }, [showOriginal, original, q.diagram?.original]);
+
+  const set = (i: number, v: string) => {
+    const next = [...values];
+    next[i] = v;
+    onChange(next.some((x) => x.trim()) ? JSON.stringify(next) : '');
+  };
+
+  const revealing = showOriginal && !!original;
+  return (
+    <div className="diagram">
+      <div className="diagram-stage" style={{ width: aspect ? `min(100%, ${Math.round(62 * aspect)}vh)` : '100%' }}>
+        {src ? (
+          <img src={revealing ? original! : src} alt="Diagram to label" draggable={false}
+            onLoad={(e) => { const i = e.currentTarget; if (i.naturalHeight) setAspect(i.naturalWidth / i.naturalHeight); }} />
+        ) : <div className="quiz-figure loading" />}
+        {src && !revealing && labels.map((l, i) => {
+          const [x0, y0, x1, y1] = l.box;
+          const verdict = results ? (results[i] ? ' ok' : ' bad') : '';
+          return (
+            <div key={i} className={`diagram-slot${verdict}`}
+              style={{ left: `${x0 * 100}%`, top: `${y0 * 100}%`, width: `${(x1 - x0) * 100}%`, height: `${(y1 - y0) * 100}%` }}>
+              <input ref={(el) => { boxes.current[i] = el; }} value={values[i]} disabled={locked} spellCheck={false}
+                placeholder={String(i + 1)} aria-label={`Label ${i + 1}`} autoFocus={autoFocus && i === 0}
+                onChange={(e) => set(i, e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter' || e.metaKey || e.ctrlKey || e.shiftKey) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  boxes.current[i + 1]?.focus();
+                }} />
+              {results && !results[i] && <span className="diagram-fix">{l.answer}</span>}
+            </div>
+          );
+        })}
+      </div>
+      <div className="diagram-foot muted small">
+        {locked
+          ? q.diagram?.original && (
+            <button type="button" className="link" onClick={() => setShowOriginal((v) => !v)}>
+              {showOriginal ? 'Back to your labels' : 'Show the original diagram'}
+            </button>
+          )
+          : <>Type each label in its box. <kbd>↵</kbd> next box · <kbd>⌘</kbd>+<kbd>↵</kbd> check</>}
+      </div>
+    </div>
+  );
+}
+
 function AnswerInput({ q, given, locked, reviewing, onChange }: {
   q: QuizQuestion;
   given: string;
@@ -360,6 +445,8 @@ function AnswerInput({ q, given, locked, reviewing, onChange }: {
 }) {
   const chosen = picked(given);
   const correctSet = new Set(q.answers ?? []);
+
+  if (q.type === 'label') return <DiagramInput q={q} given={given} locked={locked} autoFocus={!reviewing} onChange={onChange} />;
 
   if (q.type === 'mcq' || q.type === 'multi') {
     const multi = q.type === 'multi';
@@ -449,7 +536,7 @@ const QuestionText = ({ q }: { q: QuizQuestion }) => (
 );
 
 const TYPE_BADGE: Record<QuizQuestion['type'], string> = {
-  mcq: 'choice', multi: 'select all', tf: 'true/false', numeric: 'numeric', short: 'written', blank: 'fill the gap',
+  mcq: 'choice', multi: 'select all', tf: 'true/false', numeric: 'numeric', short: 'written', blank: 'fill the gap', label: 'diagram',
 };
 
 export function QuizView({ quiz, summary, notebookId, ctx, onBack, onPlay, onChanged }: {
@@ -628,6 +715,24 @@ function QuestionEditor({ question, index, onClose, onSave, onDelete, onRewrite 
           </label>
         )}
 
+        {draft.type === 'label' && draft.diagram && (
+          <div className="field">
+            <span className="field-label">Labels <i className="muted">in the order of their boxes</i></span>
+            <div className="diagram-edit">
+              {draft.diagram.labels.map((l, i) => (
+                <label key={i} className="diagram-edit-row">
+                  <span className="mono muted">{i + 1}</span>
+                  <input className="field-input" value={l.answer} disabled={busy}
+                    onChange={(e) => {
+                      const labels = draft.diagram!.labels.map((x, j) => (j === i ? { ...x, answer: e.target.value } : x));
+                      set({ diagram: { ...draft.diagram!, labels }, answer: labels.map((x) => x.answer).join(' · ') });
+                    }} />
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
         {(draft.type === 'numeric' || draft.type === 'short' || draft.type === 'blank') && (
           <label className="field">
             <span>{draft.type === 'short' ? 'Model answer' : 'Answer'}</span>
@@ -667,7 +772,7 @@ function QuestionEditor({ question, index, onClose, onSave, onDelete, onRewrite 
       <div className="modal-actions">
         {onDelete && <button type="button" className="btn ghost danger" disabled={busy} onClick={() => void onDelete()}>Delete question</button>}
         <span className="spacer" />
-        {onRewrite && (
+        {onRewrite && draft.type !== 'label' && (
           <button
             type="button"
             className="btn ghost"
