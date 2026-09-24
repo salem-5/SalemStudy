@@ -85,10 +85,39 @@ turndown.addRule('blockMath', {
 });
 turndown.addRule('highlight', { filter: 'mark', replacement: (c) => `==${c}==` });
 
-export const htmlToMarkdown = (html: string): string =>
-  turndown.turndown(html || '')
+let pictures = 0;
+turndown.addRule('image', {
+  filter: 'img',
+  replacement: (_c, node) => {
+    const el = node as HTMLElement;
+    const src = el.getAttribute('src') ?? '';
+    const alt = (el.getAttribute('alt') || 'picture').replace(/[[\]]/g, '');
+    if (src.startsWith('data:')) {
+      pictures += 1;
+      return `![${alt}](note-image:${pictures})`;
+    }
+    return src ? `![${alt}](${src})` : '';
+  },
+});
+
+const pictureSources = (html: string): string[] =>
+  [...html.matchAll(/<img\b[^>]*?\bsrc="(data:[^"]+)"/g)].map((m) => m[1]);
+
+export function restoreNoteImages(markdown: string, html: string): string {
+  if (!/note-image:\d/.test(markdown)) return markdown;
+  const sources = pictureSources(html);
+  return markdown.replace(/\(note-image:(\d+)\)/g, (whole, n: string) => {
+    const src = sources[Number(n) - 1];
+    return src ? `(${src})` : whole;
+  });
+}
+
+export const htmlToMarkdown = (html: string): string => {
+  pictures = 0;
+  return turndown.turndown(html || '')
     .replace(/ {2,}\$/g, ' $').replace(/\$ {2,}/g, '$ ')
     .replace(/(^|\n|\() \$/g, '$1$').replace(/\$ ([.,;:!?)]|$)/gm, '$$$1');
+};
 
 export function htmlToText(html: string): string {
   const doc = new DOMParser().parseFromString(`<div>${html}</div>`, 'text/html');

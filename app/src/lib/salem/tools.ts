@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { appTools, APP_TOOL_DEFS } from '../assistant';
 import { studyApi } from '../../study/api';
-import { htmlToMarkdown, htmlToText, markdownToHtml, padApi } from '../pad';
+import { htmlToMarkdown, htmlToText, markdownToHtml, padApi, restoreNoteImages } from '../pad';
 import type { Route } from '../../study/pages';
 import type { NotebookSummary, SubjectNode } from '../../study/api';
 import type { SalemTool, ToolInput, ToolOutcome } from './types';
@@ -575,7 +575,7 @@ function padTools(env: ToolEnv): SalemTool[] {
       inputs: {
         noteId: { type: 'integer', description: 'The note id.' },
         mode: { type: 'string', description: 'How to change it.', enum: ['replace', 'append', 'prepend', 'find_replace'] },
-        content: { type: 'string', description: 'The new Markdown (or, for find_replace, the replacement text).' },
+        content: { type: 'string', description: 'The new Markdown (or, for find_replace, the replacement text). Pictures in the note read as ![…](note-image:N); keep those to keep the pictures.' },
         find: { type: 'string', description: 'find_replace only: the exact text to replace.', nullable: true },
       },
       outputType: 'object',
@@ -587,16 +587,17 @@ function padTools(env: ToolEnv): SalemTool[] {
         const n = await padApi.note(id);
         const mode = String(args.mode ?? 'replace');
         const content = String(args.content ?? '');
+        const written = restoreNoteImages(content, n.html);
         let html: string;
-        if (mode === 'append') html = n.html + toHtml(content);
-        else if (mode === 'prepend') html = toHtml(content) + n.html;
+        if (mode === 'append') html = n.html + toHtml(written);
+        else if (mode === 'prepend') html = toHtml(written) + n.html;
         else if (mode === 'find_replace') {
           const find = String(args.find ?? '');
           if (!find) throw new Error('find_replace needs the text to find.');
           const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
           if (!n.html.includes(esc(find))) throw new Error(`“${find}” is not in that note as written. Read it with notes_read and use the exact text, or replace the whole note.`);
           html = n.html.replace(esc(find), esc(content));
-        } else html = toHtml(content);
+        } else html = toHtml(written);
         await padApi.save(id, html, htmlToText(html), BY);
         return { result: { id, ok: true }, label: `Edited “${n.title || 'a note'}”`, detail: mode };
       },

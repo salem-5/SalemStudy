@@ -5,9 +5,12 @@ import { TaskItem, TaskList } from '@tiptap/extension-list';
 import { Placeholder } from '@tiptap/extensions';
 import { Highlight } from '@tiptap/extension-highlight';
 import { Mathematics } from '@tiptap/extension-mathematics';
+import { Image } from '@tiptap/extension-image';
+import type { EditorView } from '@tiptap/pm/view';
+import { compactImage } from '../lib/images';
 import katex from 'katex';
 import {
-  Bold, Code, FolderClosed, FolderPlus, Highlighter, Inbox, Italic, Link2, List, ListChecks, ListOrdered,
+  Bold, Code, FolderClosed, FolderPlus, Highlighter, ImagePlus, Inbox, Italic, Link2, List, ListChecks, ListOrdered,
   NotebookText, PanelLeft, Pin, PinOff, Quote, RotateCcw, Search, Sigma, SquarePen, Strikethrough, Trash, Trash2, Underline, X,
 } from 'lucide-react';
 import {
@@ -301,6 +304,7 @@ function NoteEditor({ id, folders, onChanged, onDeleted, onNew }: {
   const [math, setMath] = useState<{ latex: string; pos?: number; block: boolean } | null>(null);
   const [linking, setLinking] = useState(false);
   const timer = useRef<number | null>(null);
+  const picker = useRef<HTMLInputElement>(null);
   const dirty = useRef(false);
   const baseline = useRef<string | null>(null);
   const deleted = !!note?.deletedAt;
@@ -312,13 +316,33 @@ function NoteEditor({ id, folders, onChanged, onDeleted, onNew }: {
       TaskItem.configure({ nested: true }),
       Highlight,
       Placeholder.configure({ placeholder: ({ pos }) => (pos === 0 ? 'Title' : 'Start writing…'), showOnlyCurrent: true }),
+      Image.configure({
+        allowBase64: true,
+        resize: { enabled: true, directions: ['left', 'right', 'bottom-left', 'bottom-right'], minWidth: 80, alwaysPreserveAspectRatio: true },
+      }),
       Mathematics.configure({
         katexOptions: { throwOnError: false },
         inlineOptions: { onClick: (node, pos) => setMath({ latex: String(node.attrs.latex ?? ''), pos, block: false }) },
         blockOptions: { onClick: (node, pos) => setMath({ latex: String(node.attrs.latex ?? ''), pos, block: true }) },
       }),
     ],
-    editorProps: { attributes: { class: 'pad-prose', spellcheck: 'true' } },
+    editorProps: {
+      attributes: { class: 'pad-prose', spellcheck: 'true' },
+      handlePaste: (view, event) => {
+        const files = imagesIn(event.clipboardData?.files);
+        if (!files.length) return false;
+        event.preventDefault();
+        void placeImages(view, files);
+        return true;
+      },
+      handleDrop: (view, event, _slice, moved) => {
+        const files = moved ? [] : imagesIn(event.dataTransfer?.files);
+        if (!files.length) return false;
+        event.preventDefault();
+        void placeImages(view, files, view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos);
+        return true;
+      },
+    },
     onUpdate: () => {
       dirty.current = true;
       if (timer.current) window.clearTimeout(timer.current);
@@ -423,6 +447,9 @@ function NoteEditor({ id, folders, onChanged, onDeleted, onNew }: {
             <Tool on={state?.code} title="Code" onClick={() => editor.chain().focus().toggleCode().run()}><Code /></Tool>
             <Tool title="Maths" onClick={() => setMath({ latex: '', block: false })}><Sigma /></Tool>
             <Tool on={state?.link} title="Link" onClick={() => (state?.link ? editor.chain().focus().unsetLink().run() : setLinking(true))}><Link2 /></Tool>
+            <Tool title="Add a picture" onClick={() => picker.current?.click()}><ImagePlus /></Tool>
+            <input ref={picker} type="file" accept="image/*" multiple hidden
+              onChange={(e) => { const files = imagesIn(e.target.files); e.target.value = ''; if (files.length) void placeImages(editor.view, files); }} />
             <span className="spacer" />
             <Tool on={note.pinned} title={note.pinned ? 'Unpin' : 'Pin'} onClick={() => void padApi.pin(id, !note.pinned, PAD_SOURCE).then(() => { setNote({ ...note, pinned: !note.pinned }); onChanged(); })}>
               {note.pinned ? <PinOff /> : <Pin />}
@@ -459,6 +486,23 @@ function NoteEditor({ id, folders, onChanged, onDeleted, onNew }: {
       {linking && <LinkDialog editor={editor} onClose={() => setLinking(false)} />}
     </div>
   );
+}
+
+const imagesIn = (files: FileList | null | undefined): File[] => [...(files ?? [])].filter((f) => f.type.startsWith('image/'));
+
+async function placeImages(view: EditorView, files: File[], at?: number) {
+  const image = view.state.schema.nodes.image;
+  if (!image) return;
+  let pos = at;
+  for (const file of files) {
+    const src = await compactImage(file).catch(() => null);
+    if (!src) continue;
+    const node = image.create({ src, alt: file.name.replace(/\.[^.]+$/, '') });
+    const tr = pos === undefined ? view.state.tr.replaceSelectionWith(node) : view.state.tr.insert(Math.min(pos, view.state.doc.content.size), node);
+    view.dispatch(tr.scrollIntoView());
+    if (pos !== undefined) pos += node.nodeSize;
+  }
+  view.focus();
 }
 
 function Tool({ on, title, onClick, children }: { on?: boolean; title: string; onClick: () => void; children: React.ReactNode }) {

@@ -3672,3 +3672,29 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 @media (prefers-reduced-motion: reduce) {
   .study-glow, .study-glow.flash-good, .study-glow.flash-bad { animation: none; }
 }
+
+.pad-editor { animation: fade-in var(--dur-2) var(--ease); }
+.pad-page .pad-date { animation: rise-in var(--dur-3) var(--ease) both; }
+.pad-page .tiptap { animation: rise-in var(--dur-3) var(--ease) 50ms both; }
+.pad-editor-col > .pad-blank { animation: fade-in var(--dur-3) var(--ease); }
+
+.pad-prose img { display: block; max-width: 100%; height: auto; margin: 0.7em auto; border: 1px solid var(--line-2); background: var(--panel); }
+:root[data-shape='rounded'] .pad-prose img { border-radius: var(--r); }
+.pad-prose [data-resize-container] { display: flex; justify-content: center; margin: 0.7em 0; }
+.pad-prose [data-resize-wrapper] { position: relative; max-width: 100%; }
+.pad-prose [data-resize-wrapper] img { margin: 0; }
+.pad-prose .ProseMirror-selectednode img, .pad-prose img.ProseMirror-selectednode { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pad-prose [data-resize-handle] { z-index: 2; opacity: 0; transition: opacity var(--dur-1) var(--ease); }
+.pad-prose [data-resize-container]:hover [data-resize-handle],
+.pad-prose [data-resize-state='true'] [data-resize-handle],
+.pad-prose .ProseMirror-selectednode [data-resize-handle] { opacity: 1; }
+.pad-prose [data-resize-handle='left'], .pad-prose [data-resize-handle='right'] { width: 12px; cursor: ew-resize; }
+.pad-prose [data-resize-handle='left']::after, .pad-prose [data-resize-handle='right']::after {
+  content: ''; position: absolute; top: 50%; left: 4px; width: 4px; height: 38px; max-height: 60%;
+  transform: translateY(-50%); background: var(--accent); box-shadow: 0 0 0 1px var(--bg);
+}
+.pad-prose [data-resize-handle='bottom-left'], .pad-prose [data-resize-handle='bottom-right'] {
+  width: 12px; height: 12px; background: var(--accent); box-shadow: 0 0 0 1px var(--bg);
+}
+.pad-prose [data-resize-handle='bottom-left'] { cursor: nesw-resize; }
+.pad-prose [data-resize-handle='bottom-right'] { cursor: nwse-resize; }

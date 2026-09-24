@@ -90,3 +90,30 @@ export function adaptImage(img: HTMLImageElement) {
 export function adaptImagesIn(root: ParentNode | null) {
   root?.querySelectorAll<HTMLImageElement>('img').forEach(adaptImage);
 }
+
+const KEEP_AS_IS = 700 * 1024;
+
+const readAsDataUrl = (file: Blob) => new Promise<string>((resolve, reject) => {
+  const r = new FileReader();
+  r.onload = () => resolve(String(r.result));
+  r.onerror = () => reject(r.error);
+  r.readAsDataURL(file);
+});
+
+export async function compactImage(file: File, max = 1600): Promise<string> {
+  const original = await readAsDataUrl(file);
+  const img = new Image();
+  img.src = original;
+  await img.decode();
+  const big = Math.max(img.naturalWidth, img.naturalHeight);
+  if (file.type === 'image/gif' || (big <= max && file.size <= KEEP_AS_IS)) return original;
+  const scale = Math.min(1, max / big);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(img.naturalWidth * scale);
+  canvas.height = Math.round(img.naturalHeight * scale);
+  canvas.getContext('2d')?.drawImage(img, 0, 0, canvas.width, canvas.height);
+  const webp = canvas.toDataURL('image/webp', 0.86);
+  const out = webp.startsWith('data:image/webp') ? webp
+    : file.type === 'image/jpeg' ? canvas.toDataURL('image/jpeg', 0.86) : canvas.toDataURL('image/png');
+  return out.length < original.length ? out : original;
+}
