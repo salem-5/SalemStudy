@@ -29,7 +29,7 @@ export async function retrieve(sources: Source[], history: ChatMessage[], questi
 
   const citations: Citation[] = hits.map((h, i) => ({ n: i + 1, sourceId: h.sourceId, title: h.sourceTitle, label: h.label, unit: h.unitFrom }));
   const inventory = ready.map((s) => `- ${s.title} (${s.kind}${s.unitCount ? `, ${s.unitCount} ${s.kind === 'pdf' ? 'pages' : s.kind === 'slides' ? 'slides' : 'parts'}` : ''})`).join('\n');
-  const excerpts = hits.map((h, i) => `[${i + 1}] ${h.sourceTitle} — ${h.label}\n${clip(h.text, 2500)}`).join('\n\n');
+  const excerpts = hits.map((h, i) => `[${i + 1}] ${h.sourceTitle} - ${h.label}\n${clip(h.text, 2500)}`).join('\n\n');
   const context = `## The notebook's sources
 The student has these sources in this notebook:
 ${inventory}

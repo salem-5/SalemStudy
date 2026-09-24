@@ -55,14 +55,14 @@ export function describeReferences(references: Reference[]): string {
   if (!describe.length) return '';
   const lines = ['## What the student is pointing at', ''];
   for (const [i, ref] of describe.entries()) {
-    lines.push(`### ${i + 1}. ${ref.label}${ref.detail ? ` — ${ref.detail}` : ''} (${KIND_WORD[ref.kind]})`);
+    lines.push(`### ${i + 1}. ${ref.label}${ref.detail ? ` - ${ref.detail}` : ''} (${KIND_WORD[ref.kind]})`);
     if (ref.excerpt) {
       lines.push('They selected:', `> ${ref.excerpt}`, '');
     } else {
       lines.push('They referenced the whole thing rather than a part of it.', '');
     }
     if (ref.content) {
-      lines.push(`${ref.content.title}, in full — you already have this, do not go and look it up:`);
+      lines.push(`${ref.content.title}, in full - you already have this, do not go and look it up:`);
       lines.push('', ref.content.body, '');
     } else {
       const how = fetchInstruction(ref);

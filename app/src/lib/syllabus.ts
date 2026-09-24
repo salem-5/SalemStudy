@@ -96,11 +96,11 @@ const SYLLABUS_SYSTEM = `You read university course syllabuses for a student's s
 {"summary": "<markdown>", "events": [{"title": "...", "kind": "exam|deadline|class|other", "date": "YYYY-MM-DD", "start": "HH:MM" or null, "end": "HH:MM" or null, "notes": "..."}]}
 
 summary: a compact Markdown briefing the student's AI tutor will read before every answer (at most ~350 words). Sections, only those the syllabus supports:
-### Course — code, title, term, level, textbook.
-### Grading — the weight of each component (a short list), grade cut-offs if given.
-### Exams — how many, format, what is allowed (formula sheet, calculator), what they cover.
-### Topics — the topics in teaching order, grouped by week or unit when given.
-### Policies — late work, missed exams, collaboration, in one line each.
+### Course - code, title, term, level, textbook.
+### Grading - the weight of each component (a short list), grade cut-offs if given.
+### Exams - how many, format, what is allowed (formula sheet, calculator), what they cover.
+### Topics - the topics in teaching order, grouped by week or unit when given.
+### Policies - late work, missed exams, collaboration, in one line each.
 Skip contact details, office locations and boilerplate.
 
 events: every dated item the student would put in a calendar: exams and quizzes (kind "exam"), assignment/lab/project/homework due dates (kind "deadline"), and one-off class events like no-class days, reviews or presentations ("class" or "other"). Not the recurring weekly lectures.

@@ -43,7 +43,7 @@ function TabModeLock({ status }: { status: TabModeStatus }) {
       await navigator.clipboard.writeText(status.url ?? '');
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1600);
-    } catch { setError('Could not copy — select the address and copy it by hand.'); }
+    } catch { setError('Could not copy - select the address and copy it by hand.'); }
   };
 
   return (
@@ -52,7 +52,7 @@ function TabModeLock({ status }: { status: TabModeStatus }) {
         <span className="tab-lock-icon"><Globe /></span>
         <h1>Tab mode is on</h1>
         <p className="muted">
-          Salem is open in your browser. While it is, it only works there — turn tab mode off to use it in
+          Salem is open in your browser. While it is, it only works there - turn tab mode off to use it in
           this window again.
         </p>
         {status.url && <input className="field-input mono" readOnly value={status.url} onFocus={(e) => e.currentTarget.select()} />}
@@ -73,7 +73,7 @@ function TabModeLock({ status }: { status: TabModeStatus }) {
           <label className="toggle tab-lock-tray">
             <input type="checkbox" checked={tray}
               onChange={async (e) => { const v = e.target.checked; setTray(v); await setAiConfig({ closeToTray: v }).catch(() => setTray(!v)); }} />
-            <span>Keep running in the tray when this window is closed{tray ? ' — the browser tab keeps working' : ''}</span>
+            <span>Keep running in the tray when this window is closed{tray ? ' - the browser tab keeps working' : ''}</span>
           </label>
         )}
       </div>
@@ -115,7 +115,7 @@ export function TabModeDialog({ onClose }: { onClose: () => void }) {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1600);
     } catch {
-      setError('Could not copy — select the address and copy it by hand.');
+      setError('Could not copy - select the address and copy it by hand.');
     }
   };
 
@@ -125,7 +125,7 @@ export function TabModeDialog({ onClose }: { onClose: () => void }) {
         <div className="panel-title"><Globe /> Salem in a tab</div>
         <p className="muted small">
           Serve this window's interface on your own machine, so you can keep Salem in a browser tab
-          next to everything else. It is the same Salem — the same notebooks, chats and settings —
+          next to everything else. It is the same Salem - the same notebooks, chats and settings -
           and while it is on, Salem works only there. Closing this window keeps it running in the tray.
         </p>
 
@@ -139,7 +139,7 @@ export function TabModeDialog({ onClose }: { onClose: () => void }) {
             </label>
             <p className="muted small">
               The address carries a one-off key, so nothing else on this machine can reach your
-              study data. Keep it to yourself, and reopen the tab from here if you lose it — the key
+              study data. Keep it to yourself, and reopen the tab from here if you lose it - the key
               changes every time tab mode is restarted.
             </p>
             <div className="modal-actions">

@@ -165,7 +165,7 @@ const sizeNote = (size: CardSize, one: 'card' | 'question') => {
   const [lo, hi] = CARD_BANDS[size];
   const range = one === 'card' ? `${size === 'fewer' ? `up to ${hi}` : `${lo}–${hi}`} cards, by how long your material is` : `exactly ${QUIZ_COUNT[size]} questions`;
   return size === 'fewer'
-    ? `Page by page, only what you have to know — the definitions, the key numbers, the classic features. ${range[0].toUpperCase()}${range.slice(1)}.`
+    ? `Page by page, only what you have to know - the definitions, the key numbers, the classic features. ${range[0].toUpperCase()}${range.slice(1)}.`
     : size === 'standard'
       ? `The points worth knowing, page by page in the order of your material. ${range[0].toUpperCase()}${range.slice(1)}.`
       : `Everything Standard covers, plus ${one}s that compare, connect and apply, still in page order. ${range[0].toUpperCase()}${range.slice(1)}.`;
@@ -310,7 +310,7 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
               ))}
             </div>
             {kind !== 'notes' && ready.length > 1 && (
-              <span className="muted small">Read in this order — by the numbers in the titles, unless you move them.</span>
+              <span className="muted small">Read in this order - by the numbers in the titles, unless you move them.</span>
             )}
             {!!notes.length && (
               <>
@@ -391,8 +391,8 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
               Fast mode
               <span className="muted small">
                 {fast
-                  ? ' — bigger passes run side by side, each reading its own pages and an outline of the rest. Quicker, and a fraction of the tokens.'
-                  : ' — every pass reads all of your material. Slower and several times the tokens; best when distant pages depend on each other.'}
+                  ? ' - bigger passes run side by side, each reading its own pages and an outline of the rest. Quicker, and a fraction of the tokens.'
+                  : ' - every pass reads all of your material. Slower and several times the tokens; best when distant pages depend on each other.'}
               </span>
             </span>
           </label>

@@ -179,7 +179,7 @@ describe('how many a deck comes to', () => {
     assert.equal(MAX_ITEMS, 96);
   });
 
-  it('lands lower in the band for a shorter lecture — it is not always the same number', () => {
+  it('lands lower in the band for a shorter lecture - it is not always the same number', () => {
     const half = budgets(chars / 2);
     const full = budgets(chars);
     assert.ok(half.standard < full.standard && half.standard >= 32, `${half.standard} vs ${full.standard}`);
@@ -220,7 +220,7 @@ describe('how many a deck comes to', () => {
     assert.ok(told.at(-1)! >= 1);
   });
 
-  it('tells a pass on Fewer the same scale as Standard — the choosing is done afterwards', () => {
+  it('tells a pass on Fewer the same scale as Standard - the choosing is done afterwards', () => {
     const w = lecture[0];
     assert.equal(expectedItems(w, lecture, 'fewer'), expectedItems(w, lecture, 'standard'));
     assert.ok(expectedItems(w, lecture, 'more') > expectedItems(w, lecture, 'standard'));
@@ -259,7 +259,7 @@ describe('what each pass is shown', () => {
 });
 
 describe('how thorough a pass is', () => {
-  it('writes fewer exactly like standard — the difference is made afterwards', () => {
+  it('writes fewer exactly like standard - the difference is made afterwards', () => {
     assert.equal(sizeRule('fewer', 'cards'), sizeRule('standard', 'cards'));
     assert.match(sizeRule('standard', 'cards'), /Do not summarise/);
   });

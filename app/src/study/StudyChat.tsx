@@ -54,12 +54,12 @@ export function questionBriefing(quiz: Quiz, index: number, answer: QuizAnswer |
   if (!answer || !answer.given) {
     lines.push('They did not answer this one.');
   } else if (q.type === 'mcq') {
-    lines.push(`${label(q, Number(answer.given))}${q.choices?.[Number(answer.given)] ?? answer.given} — ${answer.correct ? 'correct' : 'incorrect'}`);
+    lines.push(`${label(q, Number(answer.given))}${q.choices?.[Number(answer.given)] ?? answer.given} - ${answer.correct ? 'correct' : 'incorrect'}`);
   } else if (q.type === 'multi') {
     const chosen = answer.given.split(',').map(Number).filter(Number.isInteger);
-    lines.push(`${chosen.map((i) => `${label(q, i)}${q.choices?.[i] ?? ''}`).join('; ') || 'nothing'} — ${answer.correct ? 'correct' : 'incorrect'}`);
+    lines.push(`${chosen.map((i) => `${label(q, i)}${q.choices?.[i] ?? ''}`).join('; ') || 'nothing'} - ${answer.correct ? 'correct' : 'incorrect'}`);
   } else {
-    lines.push(`"${answer.given}" — ${answer.correct ? 'correct' : 'incorrect'}`);
+    lines.push(`"${answer.given}" - ${answer.correct ? 'correct' : 'incorrect'}`);
   }
   if (answer?.hinted) lines.push('They opened the hint before answering.');
   if (answer?.feedback) lines.push('', 'MARKING FEEDBACK ALREADY SHOWN', answer.feedback);
@@ -78,7 +78,7 @@ export function questionBriefing(quiz: Quiz, index: number, answer: QuizAnswer |
       ? '- Start from their answer. Say what is reasonable about it and exactly where the reasoning goes wrong, then what the right route is.'
       : '- They got it right. Check they know why, and be ready to go deeper or to the next idea.',
     '- Do not just repeat the explanation above. They have already read it; say it another way, or go further.',
-    '- Work out anything numerical in Python before you explain it. Do not restate a number because the quiz said so — derive it, and if it disagrees with the answer key, say so plainly.',
+    '- Work out anything numerical in Python before you explain it. Do not restate a number because the quiz said so - derive it, and if it disagrees with the answer key, say so plainly.',
     '- Maths in LaTeX ($...$ inline, $$...$$ displayed).',
     q.sources?.length
       ? '- This question came from the student\'s own sources. Ground the explanation in them and cite where each point came from; say so when you go beyond them.'
@@ -128,7 +128,7 @@ export function quizBriefing(quiz: Quiz, index: number | undefined): string {
   if (q) {
     lines.push('', `They are on question ${index! + 1}, on ${q.topic}:`, q.prompt);
     if (q.choices?.length) lines.push('', 'Its choices:', ...q.choices.map((c, i) => `${label(q, i)}${c}`));
-    lines.push('', 'Do not volunteer the answer to it — they have not asked for it, and telling them would spoil the quiz. If they ask directly, help them reason it out first.');
+    lines.push('', 'Do not volunteer the answer to it - they have not asked for it, and telling them would spoil the quiz. If they ask directly, help them reason it out first.');
   }
   lines.push('', 'Help with whatever they actually ask. Maths in LaTeX. Work anything numerical out in Python.');
   return lines.join('\n');
@@ -241,7 +241,7 @@ export function AskModal({ title, subtitle, scope, briefing, tag, notebookId, so
             agent={allowed.length ? 'notebook' : 'chat'}
             sourceIds={allowed}
             emptyTitle={title}
-            emptyHint="Ask anything about it — a simpler explanation, another example, the step-by-step working, or wherever else you want to take it."
+            emptyHint="Ask anything about it - a simpler explanation, another example, the step-by-step working, or wherever else you want to take it."
             placeholder="Ask about this"
             suggestions={starters}
             onThreadCreated={(t) => {

@@ -289,7 +289,7 @@ export function SubjectPage({ subject, actions }: { subject: SubjectNode; action
             onBlur={saveContext}
           />
           <div className="field-status muted">
-            {saved === 'saving' ? 'saving…' : saved === 'saved' ? 'saved' : saved === 'error' ? <span className="warn">could not save</span> : context !== subject.context ? 'unsaved — click away to save' : ''}
+            {saved === 'saving' ? 'saving…' : saved === 'saved' ? 'saved' : saved === 'error' ? <span className="warn">could not save</span> : context !== subject.context ? 'unsaved - click away to save' : ''}
           </div>
         </section>
       </div>

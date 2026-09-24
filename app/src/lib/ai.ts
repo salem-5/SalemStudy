@@ -154,13 +154,13 @@ export const PYTHON_TOOL = {
   function: {
     name: 'run_python',
     description:
-      'Run Python in a sandbox and get its output back. Use it for every calculation: algebra, calculus, linear algebra, series, statistics, unit arithmetic, checking a candidate answer. sympy (sp), numpy (np), mpmath (mp), scipy, math, cmath, statistics, fractions.Fraction and decimal.Decimal are installed and the first few are already imported. You can call it several times — compute, look at the output, then continue. No network, no files outside the sandbox, no shell; print() what you want to see (a trailing bare expression is echoed too).',
+      'Run Python in a sandbox and get its output back. Use it for every calculation: algebra, calculus, linear algebra, series, statistics, unit arithmetic, checking a candidate answer. sympy (sp), numpy (np), mpmath (mp), scipy, math, cmath, statistics, fractions.Fraction and decimal.Decimal are installed and the first few are already imported. You can call it several times - compute, look at the output, then continue. No network, no files outside the sandbox, no shell; print() what you want to see (a trailing bare expression is echoed too).',
     parameters: {
       type: 'object',
       properties: {
         code: {
           type: 'string',
-          description: 'Python source to run. Print every value you need — nothing carries over to the next call.',
+          description: 'Python source to run. Print every value you need - nothing carries over to the next call.',
         },
       },
       required: ['code'],
@@ -254,13 +254,13 @@ You will be given a question, its answer boxes, and sometimes images (or a trans
 
 {"message": "brief reasoning the student can read", "answers": {"<box index>": <answer>}}
 
-## Hard rules — every one of these loses the mark if you break it
+## Hard rules - every one of these loses the mark if you break it
 
 1. TYPE ONLY WHAT GOES IN THE BOX. Each box description shows the printed text around it as "sits in the question as: …before [n] after…". Anything in that surrounding text is already on the page: never retype it.
    - Printed brackets stay printed. For "= ( [1] , [2] )" answer 1 and 2, NOT "(1" or "(1, 2)". For "⟨ [1] ⟩" answer the contents, not "⟨…⟩".
    - Printed "=" stays printed. For "u · v = [1]" answer "-3", never "u . v = -3" and never "= -3".
    - Printed symbols and units stay printed. For "[1] °" answer "60", not "60°". Same for %, $, m/s and any unit in the sentence.
-   - Only include a bracket when it is part of the value itself and nothing like it is already printed — an interval "(0, 5]", or a vector "<1, 2, 3>" typed into a bare box.
+   - Only include a bracket when it is part of the value itself and nothing like it is already printed - an interval "(0, 5]", or a vector "<1, 2, 3>" typed into a bare box.
 2. Follow the problem's own wording. If it says to enter a word in a special case ("if the planes are parallel, enter PARALLEL"), enter that word instead of a number when the case applies.
 3. Answer every box you can work out. Omit a box, or set it to null, only to leave it unchanged.
 
@@ -295,29 +295,29 @@ If the user gives extra instructions or corrections, follow them. If feedback sa
 
 const PYTHON_PROMPT = `
 
-## You can run Python — use it for the maths
+## You can run Python - use it for the maths
 
 You have a \`run_python\` tool that runs real Python in a sandbox and hands you its output. Work the calculation out with it instead of doing it in your head.
 
-WHEN TO USE IT — any question whose answer has to be computed: solving equations and systems, derivatives, integrals, limits, series and sums, matrices, eigenvalues, vectors (dot, cross, projections, angles), geometry, probability and statistics, roots, logs, unit conversions, awkward arithmetic, rounding to a required number of digits, and checking an answer you already have. If the question has numbers or symbols in it, run the code.
-WHEN NOT TO BOTHER — definitions, concept questions, a multiple choice you can reason about, reading a label off a figure, or arithmetic as simple as 2+3. Answer those directly.
+WHEN TO USE IT - any question whose answer has to be computed: solving equations and systems, derivatives, integrals, limits, series and sums, matrices, eigenvalues, vectors (dot, cross, projections, angles), geometry, probability and statistics, roots, logs, unit conversions, awkward arithmetic, rounding to a required number of digits, and checking an answer you already have. If the question has numbers or symbols in it, run the code.
+WHEN NOT TO BOTHER - definitions, concept questions, a multiple choice you can reason about, reading a label off a figure, or arithmetic as simple as 2+3. Answer those directly.
 
 WHAT IS INSTALLED
 - sympy, imported as \`sp\`, with \`symbols, Symbol, Eq, solve, solveset, nsolve, simplify, nsimplify, expand, factor, diff, integrate, limit, series, summation, Sum, Matrix, sqrt, pi, E, I, oo, exp, log, sin, cos, tan, asin, acos, atan, atan2, sinh, cosh, tanh, Rational, N, binomial, factorial, gcd, lcm, latex\` already in the namespace.
 - numpy as \`np\`, mpmath as \`mp\`, and \`math, cmath, itertools, functools, statistics, random, re, json, Fraction, Decimal\` (Decimal set to 50 digits).
-- scipy is installed — \`import scipy.optimize / scipy.integrate / scipy.stats / scipy.linalg\` when you want it.
+- scipy is installed - \`import scipy.optimize / scipy.integrate / scipy.stats / scipy.linalg\` when you want it.
 
 HOW TO USE IT
 - Write a short script and \`print()\` every value you care about; a bare expression on the last line is echoed back as well.
 - Nothing carries over between calls: each call starts from a fresh interpreter, so repeat the definitions you need.
-- Call it as many times as it takes — compute, read the output, refine, compute again.
+- Call it as many times as it takes - compute, read the output, refine, compute again.
 - Give yourself both forms of the answer: the exact one (\`sp.simplify\`, \`sp.nsimplify\`, \`sp.Rational\`) and a decimal (\`sp.N(x, 10)\`), then type whichever the question asks for.
 - Check before you submit: substitute the answer back into the equation, or get it a second way, and see that it agrees.
 - If the code raises, read the traceback, fix it and run it again. Never submit a number you could not compute.
 
-LIMITS OF THE SANDBOX — no internet, no other programs, no files outside its own folder, and a few seconds of CPU per call. If something is too slow, switch to a numeric method (\`sp.nsolve\`, \`mp.findroot\`, \`np.linalg\`) instead of a brute-force search.
+LIMITS OF THE SANDBOX - no internet, no other programs, no files outside its own folder, and a few seconds of CPU per call. If something is too slow, switch to a numeric method (\`sp.nsolve\`, \`mp.findroot\`, \`np.linalg\`) instead of a brute-force search.
 
-Read the maths out of the question yourself, compute it in Python, then write the final answer back in the app's math syntax (not Python syntax, and not the repr sympy prints — convert \`**\` to \`^\`, \`Rational(1,2)\` to \`1/2\`, and so on).`;
+Read the maths out of the question yourself, compute it in Python, then write the final answer back in the app's math syntax (not Python syntax, and not the repr sympy prints - convert \`**\` to \`^\`, \`Rational(1,2)\` to \`1/2\`, and so on).`;
 
 export const systemPrompt = (python: boolean): string => (python ? BASE_PROMPT + PYTHON_PROMPT : BASE_PROMPT);
 
@@ -342,11 +342,11 @@ function printedAlready(ctx: { before: string; after: string }): string[] {
   const after = ctx.after.trimStart();
   const pair = BRACKETS.find(([o, c]) => before.endsWith(o) && after.startsWith(c));
   if (pair) {
-    out.push(`the question already prints ${pair[0]} ${pair[1]} around this box — give only what goes inside them`);
+    out.push(`the question already prints ${pair[0]} ${pair[1]} around this box - give only what goes inside them`);
   }
-  if (/[=:]$/.test(before)) out.push('the question already prints the "=" — give only the value, with no "=" in it');
+  if (/[=:]$/.test(before)) out.push('the question already prints the "=" - give only the value, with no "=" in it');
   const unit = PRINTED_UNITS.find((u) => after.startsWith(u)) ?? PRINTED_UNITS.find((u) => before.endsWith(u));
-  if (unit) out.push(`the question already prints "${unit}" — leave it out of the answer`);
+  if (unit) out.push(`the question already prints "${unit}" - leave it out of the answer`);
   return out;
 }
 
@@ -394,14 +394,14 @@ export function boxContexts(q: Question): Map<number, { before: string; after: s
 
 export function questionPrompt(q: Question, opts: { images: boolean; transcript: string | null }): string {
   const parts: string[] = [];
-  parts.push(`# Question ${q.number}${q.code ? ` — ${q.code}` : ''}`);
+  parts.push(`# Question ${q.number}${q.code ? ` - ${q.code}` : ''}`);
   if (q.total != null) parts.push(`Points: ${q.total}`);
   parts.push('## Problem\n' + stripChrome(q.text).trim());
   const ctx = boxContexts(q);
   const specials = specialInstructions(stripChrome(q.text));
   parts.push('## Answer boxes\n' + (q.boxes.length ? q.boxes.map((b) => describeBox(b, ctx.get(b.index), specials)).join('\n') : '(none)'));
   if (opts.transcript) parts.push('## Figures (transcribed from the images)\n' + opts.transcript);
-  if (opts.images) parts.push('The referenced images are attached to this message — read them carefully.');
+  if (opts.images) parts.push('The referenced images are attached to this message - read them carefully.');
   return parts.join('\n\n');
 }
 
@@ -546,7 +546,7 @@ export function validateAnswers(q: Question, answers: Record<string, unknown>): 
 export function gradeFeedback(results: { index: number; status: string; message: string | null }[]): string {
   const lines = results.map((r) => {
     const label = r.status === 'correct' ? 'CORRECT' : r.status === 'incorrect' ? 'WRONG' : r.status.toUpperCase();
-    return `[${r.index}] ${label}${r.message ? ` — ${r.message}` : ''}`;
+    return `[${r.index}] ${label}${r.message ? ` - ${r.message}` : ''}`;
   });
   return 'WebAssign graded the submission:\n' + lines.join('\n') + '\nRe-examine the problem and give corrected answers as JSON.';
 }
@@ -590,7 +590,7 @@ export function applyDeduction(
       const v = correct.get(box.index);
       if (JSON.stringify(out[k]) !== JSON.stringify(v)) {
         out[k] = v;
-        notes.push(`[${box.index}] already correct — keeping ${show(v)}`);
+        notes.push(`[${box.index}] already correct - keeping ${show(v)}`);
       }
       continue;
     }
@@ -601,7 +601,7 @@ export function applyDeduction(
       const forced = remaining[0].value;
       if (coerceDraft(box, out[k]) !== forced) {
         out[k] = forced;
-        notes.push(`[${box.index}] only "${remaining[0].label}" is left — picking it`);
+        notes.push(`[${box.index}] only "${remaining[0].label}" is left - picking it`);
       }
       continue;
     }
@@ -609,7 +609,7 @@ export function applyDeduction(
       const cur = coerceDraft(box, out[k]);
       if (typeof cur === 'string' && gone.has(cur)) {
         out[k] = remaining[0].value;
-        notes.push(`[${box.index}] "${box.choices.find((c) => c.value === cur)?.label ?? cur}" was already ruled out — trying "${remaining[0].label}"`);
+        notes.push(`[${box.index}] "${box.choices.find((c) => c.value === cur)?.label ?? cur}" was already ruled out - trying "${remaining[0].label}"`);
       }
     }
   }

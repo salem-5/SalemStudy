@@ -62,7 +62,7 @@ export function renderMarkdown(src: string, cites?: CiteRef[]): string {
   const clean = DOMPurify.sanitize(html, { ADD_ATTR: ['aria-hidden', 'preserveAspectRatio'], FORBID_TAGS: ['style', 'form', 'input', 'button'] });
   return clean.replace(/\uE000R(\d+)\uE000/g, (_, n) => {
     const c = known.get(Number(n))!;
-    return `<button type="button" class="cite" data-cite="${c.n}" title="${esc(`${c.title} — ${c.label}`)}">${c.n}</button>`;
+    return `<button type="button" class="cite" data-cite="${c.n}" title="${esc(`${c.title} - ${c.label}`)}">${c.n}</button>`;
   });
 }
 

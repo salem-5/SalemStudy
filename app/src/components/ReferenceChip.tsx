@@ -24,9 +24,9 @@ export function ReferenceChips({ references, className }: { references: Referenc
               {ref.excerpt && <span className="ref-peek-quote">“{ref.excerpt}”</span>}
               <span className="ref-peek-note">
                 {ref.briefed
-                  ? 'This chat was opened about it — the assistant has it in full.'
+                  ? 'This chat was opened about it - the assistant has it in full.'
                   : ref.content
-                    ? `${ref.content.title} — sent with your message, in full.`
+                    ? `${ref.content.title} - sent with your message, in full.`
                     : 'Sent with your message.'}
               </span>
             </span>

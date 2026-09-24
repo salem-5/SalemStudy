@@ -24,7 +24,7 @@ export async function writeOverview(nb: NotebookSummary, subject: string): Promi
     const ready = sources.filter((s) => s.status === 'ready');
     const hits = ready.length ? await studyApi.sampleSources(ready.map((s) => s.id), 30_000) : [];
     const material = hits.map((h) => `<excerpt source="${h.sourceTitle}" where="${h.label}">\n${h.text}\n</excerpt>`).join('\n\n');
-    const user = `Course: ${subject}\nNotebook: ${nb.name}${nb.description ? ` — ${nb.description}` : ''}
+    const user = `Course: ${subject}\nNotebook: ${nb.name}${nb.description ? ` - ${nb.description}` : ''}
 Sources: ${ready.map((s) => s.title).join('; ') || 'none'}
 Notes: ${notes.map((n) => n.title).join('; ') || 'none'}
 Flashcard decks: ${decks.map((d) => d.title).join('; ') || 'none'}

@@ -325,7 +325,7 @@ export function useSolver(deps: SolverDeps) {
 
         if (!hasAnswers) {
           convoRef.current = [];
-          push({ role: 'system', kind: 'feedback', tone: 'bad', text: 'No answers in the reply — resetting the conversation and retrying.' });
+          push({ role: 'system', kind: 'feedback', tone: 'bad', text: 'No answers in the reply - resetting the conversation and retrying.' });
           continue;
         }
         const errs = validateAnswers(q, answers);
@@ -402,7 +402,7 @@ export function useSolver(deps: SolverDeps) {
       role: 'system',
       kind: 'solve',
       tone: 'info',
-      text: `Solving Q${n} — ${cfg.flashModel}, switching to ${cfg.proModel} after the first miss.`
+      text: `Solving Q${n} - ${cfg.flashModel}, switching to ${cfg.proModel} after the first miss.`
         + (py ? ` Python sandbox ready (${cfg.pythonTimeout}s per run).` : ''),
     });
     imagesRef.current = await imagesFor(q);
@@ -561,7 +561,7 @@ export function useSolver(deps: SolverDeps) {
       depsRef.current.afterGraded(q, r);
       learnFromResults(q, answers, r.results, correctRef.current, elimRef.current);
       if (r.allCorrect) {
-        push({ role: 'system', kind: 'manual', tone: 'ok', text: 'Submitted — all correct.' });
+        push({ role: 'system', kind: 'manual', tone: 'ok', text: 'Submitted - all correct.' });
         setStat('done');
       } else {
         push({ role: 'system', kind: 'manual', tone: 'bad', text: gradeFeedback(r.results.map((x) => ({ index: x.index, status: x.status, message: x.message }))) });

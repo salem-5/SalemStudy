@@ -98,7 +98,7 @@ export function SetsPane({ kind, rows, notebookId, fresh, onOpen, onPlay, onGene
       </div>
       {!rows.length && !pending.length && (
         <p className="muted small pane-note">
-          No {w.set === 'quiz' ? 'quizzes' : 'decks'} yet. Generate one from your sources, a topic or a chat — it follows your material page by page, and is saved here to {w.run} as often as you like.
+          No {w.set === 'quiz' ? 'quizzes' : 'decks'} yet. Generate one from your sources, a topic or a chat - it follows your material page by page, and is saved here to {w.run} as often as you like.
         </p>
       )}
       <ul className="set-list stagger">
@@ -110,7 +110,7 @@ export function SetsPane({ kind, rows, notebookId, fresh, onOpen, onPlay, onGene
               <button type="button" className="set-main" onClick={() => setWatching(task.id)} title="See what it is doing">
                 <span className="set-icon">{over ? <X /> : <Loader2 className="spin" />}</span>
                 <span className="set-text">
-                  <span className="set-title">{failed ? `Could not write the ${w.set}` : task.state === 'cancelled' ? `Stopped — nothing was saved` : `Writing a ${w.set}…`}</span>
+                  <span className="set-title">{failed ? `Could not write the ${w.set}` : task.state === 'cancelled' ? `Stopped - nothing was saved` : `Writing a ${w.set}…`}</span>
                   <span className="set-meta">
                     {task.cost > 0 && <span className="set-cost" title="What it has cost so far">{formatCost(task.cost)}</span>}
                     {task.error ?? (task.detail || 'Starting…')}
@@ -122,7 +122,7 @@ export function SetsPane({ kind, rows, notebookId, fresh, onOpen, onPlay, onGene
                 <button type="button" className="icon-btn ghost-icon" onClick={() => dismissTask(task.id)} title="Dismiss" aria-label="Dismiss"><X /></button>
               ) : (
                 <button type="button" className="btn ghost small set-stop" onClick={() => stopTask(task.id)}
-                  title={`Stop writing this ${w.set} — nothing is saved`}><Square />Stop</button>
+                  title={`Stop writing this ${w.set} - nothing is saved`}><Square />Stop</button>
               )}
             </li>
           );

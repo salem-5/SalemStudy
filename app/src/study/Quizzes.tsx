@@ -427,7 +427,7 @@ function GapInput({ given, locked, verdict, autoFocus, onChange }: {
       value={given}
       onChange={(e) => onChange(e.target.value)}
       disabled={locked}
-      placeholder={locked ? '—' : 'answer'}
+      placeholder={locked ? '-' : 'answer'}
       aria-label="Fill the gap"
       autoFocus={autoFocus}
       autoComplete="off"
@@ -591,7 +591,7 @@ function QuestionEditor({ question, index, onClose, onSave, onDelete, onRewrite 
 
         {(draft.type === 'mcq' || multi) && (
           <div className="field">
-            <span className="field-label">Choices — {multi ? 'tick every correct one' : 'tick the correct one'}</span>
+            <span className="field-label">Choices - {multi ? 'tick every correct one' : 'tick the correct one'}</span>
             {choices.map((c, i) => (
               <div className="numeric-row" key={i}>
                 <input
@@ -780,7 +780,7 @@ function Results({ quiz, order, answers, notebookId, cardsMade, onCardsMade, onR
                 </div>
               ))}
             </div>
-            <p className="muted small">Close this to look back through every question — your answer, the right one and why.</p>
+            <p className="muted small">Close this to look back through every question - your answer, the right one and why.</p>
             <div className="modal-actions">
               {!!missed.length && (
                 <button

@@ -279,7 +279,7 @@ def run_case(name: str) -> bool:
                 print(f"    {'ok' if ok else 'FAILED: ' + str(message.get('error'))}")
                 if result.get("path") == "fallback":
                     ok = False
-                    print("    FAILED: fell back to the tool-less path — "
+                    print("    FAILED: fell back to the tool-less path - "
                           f"{result.get('reason', '')[:200]}")
                 telemetry = result.get("telemetry") or {}
                 if telemetry:

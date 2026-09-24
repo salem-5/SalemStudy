@@ -127,7 +127,7 @@ export function ProviderSettings({ solverOn, onChanged }: { solverOn: boolean; o
                 type="password"
                 value={key}
                 spellCheck={false}
-                placeholder={cfg.hasKey ? `saved: ${cfg.keyHint} — type a new key to replace` : provider?.env?.[0] ?? 'API key'}
+                placeholder={cfg.hasKey ? `saved: ${cfg.keyHint} - type a new key to replace` : provider?.env?.[0] ?? 'API key'}
                 onChange={(e) => setKey(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter' && key.trim()) void saveKey(); }}
               />
@@ -255,7 +255,7 @@ function ModelPicker({ label, hint, models, value, busy, onPick, empty }: {
 
   return (
     <div className="model-picker">
-      <span className="model-picker-label">{label} <span className="muted">— {hint}</span></span>
+      <span className="model-picker-label">{label} <span className="muted">- {hint}</span></span>
       <button type="button" className={`model-current${open ? ' open' : ''}`} onClick={() => setOpen((o) => !o)} disabled={!models.length && !value}>
         {chosen ? <ModelLine m={chosen} /> : <span className={value ? 'mono' : 'muted'}>{value || empty || 'Choose a model'}</span>}
         {busy ? <Loader2 className="spin" /> : <ChevronDown className={`model-caret${open ? ' flip' : ''}`} />}
@@ -334,7 +334,7 @@ function OllamaPanel({ status, onStatus, onRefresh, ctx, onCtx }: {
             : status.running
               ? <>Running{status.version ? ` · v${status.version}` : ''} · {status.models.length} model{status.models.length === 1 ? '' : 's'} installed
                 {status.loaded.length ? <> · in memory: {status.loaded.map((m) => `${m.id}${m.vram ? ` (${gb(m.vram)})` : ''}`).join(', ')}</> : ' · nothing loaded'}</>
-              : 'Not running — it starts on its own when a local model is asked for.'}
+              : 'Not running - it starts on its own when a local model is asked for.'}
       </div>
       <div className="account-row">
         {status && !status.installed && !status.running && (

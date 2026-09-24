@@ -67,7 +67,7 @@ describe('checkSchema', () => {
     assert.equal(problem, 'questions has 1 items, fewer than the 2 required');
   });
 
-  it('lets an optional field be off its list — the reader drops it', () => {
+  it('lets an optional field be off its list - the reader drops it', () => {
     const schema = { type: 'object', required: ['type'], properties: { type: { type: 'string', enum: ['mcq'] }, importance: { type: 'string', enum: ['core', 'detail'] } } };
     assert.equal(checkSchema({ type: 'mcq', importance: 'medium' }, schema), '');
     assert.notEqual(checkSchema({ type: 'essay' }, schema), '');

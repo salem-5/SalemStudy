@@ -397,7 +397,7 @@ fn status_value(app: &AppHandle, configured: &str) -> Value {
             let old_python = !new_enough_for_ai(&p.version);
             let ai_missing: Vec<&str> = AI_MODULES.iter().filter(|n| !has(n)).copied().collect();
             let ai_error = if old_python {
-                Some(format!("this environment is Python {} — {}", p.version, ai_help()))
+                Some(format!("this environment is Python {} - {}", p.version, ai_help()))
             } else if !ai_missing.is_empty() {
                 Some("smolagents is not installed yet. Press Install.".to_string())
             } else {
@@ -553,14 +553,14 @@ fn setup_blocking(app: &AppHandle, configured: &str, repair: bool) -> Result<Val
     install(&CORE_PACKAGES, "sympy, numpy and mpmath")?;
     for pkg in EXTRA_PACKAGES {
         if let Err(e) = install(&[pkg], pkg) {
-            emit("log", &format!("{pkg} was skipped — {e}"));
+            emit("log", &format!("{pkg} was skipped - {e}"));
         }
     }
 
     let version = probe(&python).map(|p| p.version).unwrap_or_default();
     if new_enough_for_ai(&version) {
         if let Err(e) = install(&AI_PACKAGES, "smolagents (Salem's AI runtime)") {
-            emit("log", &format!("Salem's AI runtime could not be installed — {e}"));
+            emit("log", &format!("Salem's AI runtime could not be installed - {e}"));
         }
     } else {
         emit("log", &format!("Skipped smolagents: {}", ai_help()));

@@ -238,14 +238,14 @@ export function fastMaterialFor(sources: WalkSource[], window: Pick<Window, 'sou
 
 export function sizeRule(size: CardSize, what: 'cards' | 'questions', shrunk = false): string {
   const one = what === 'cards' ? 'card' : 'question';
-  const tag = `Mark every ${one}'s importance. core: a student who knew only the core ${one}s would still pass the exam on these pages — the definitions of the key terms, the main stages and classifications, the numbers that get examined, the classic features, causes and complications. detail: everything else worth knowing — the supporting facts, the second and third examples, the finer points. Be strict: on a typical page about a third to a half is core.`;
+  const tag = `Mark every ${one}'s importance. core: a student who knew only the core ${one}s would still pass the exam on these pages - the definitions of the key terms, the main stages and classifications, the numbers that get examined, the classic features, causes and complications. detail: everything else worth knowing - the supporting facts, the second and third examples, the finer points. Be strict: on a typical page about a third to a half is core.`;
   if (size === 'more') {
-    return `Everything a complete pass would write — a separate ${one} for every fact worth knowing on these pages — and then more for the same pages: ones that compare two things students confuse, connect a cause to its consequence, ask the student to apply a fact rather than repeat it, and cover the smaller details a complete pass might pass over. Keep them in the order of the pages.\n\n${tag}`;
+    return `Everything a complete pass would write - a separate ${one} for every fact worth knowing on these pages - and then more for the same pages: ones that compare two things students confuse, connect a cause to its consequence, ask the student to apply a fact rather than repeat it, and cover the smaller details a complete pass might pass over. Keep them in the order of the pages.\n\n${tag}`;
   }
   if (shrunk) {
-    return `Cover every page, and on each page every point a student is examined on — each key definition, stage, classification, number, cause, feature, complication — one ${one} per point. Fold the minor supporting facts into the ${one} they support instead of giving each its own. Do not summarise a page away and do not pad.\n\n${tag}`;
+    return `Cover every page, and on each page every point a student is examined on - each key definition, stage, classification, number, cause, feature, complication - one ${one} per point. Fold the minor supporting facts into the ${one} they support instead of giving each its own. Do not summarise a page away and do not pad.\n\n${tag}`;
   }
-  return `Every fact on these pages that is worth knowing — each definition, stage, number, cause, feature, investigation, complication — gets its own ${one}. A dense slide is several; a title or divider page is none. Do not summarise and do not skip anything; do not pad either.\n\n${tag}`;
+  return `Every fact on these pages that is worth knowing - each definition, stage, number, cause, feature, investigation, complication - gets its own ${one}. A dense slide is several; a title or divider page is none. Do not summarise and do not skip anything; do not pad either.\n\n${tag}`;
 }
 
 export function coreOnly<T>(items: T[], pageOf: (item: T) => string, isCore: (item: T) => boolean): T[] {

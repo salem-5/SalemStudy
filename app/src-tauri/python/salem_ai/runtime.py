@@ -80,7 +80,7 @@ class Runtime:
             direct = self._direct(ctx, model, registry, messages, payload, schema)
             if direct is not None:
                 return self._finish(ctx, memory, direct)
-            ctx.note("This needs a proper look — switching to the agent")
+            ctx.note("This needs a proper look - switching to the agent")
 
         result = self._agentic(ctx, registry, model_id, payload, memory, messages, schema)
         return self._finish(ctx, memory, result)
@@ -109,7 +109,7 @@ class Runtime:
             ctx.state(VALIDATING, "Checking the result against the schema")
             value, problem = _validate(text, schema)
             if problem:
-                ctx.note("The first pass did not fit — working through it properly")
+                ctx.note("The first pass did not fit - working through it properly")
                 return None
             return {"text": "", "structured": value, "state": COMPLETED, "path": "direct"}
         return {"text": text, "state": COMPLETED, "path": "direct"}
@@ -177,7 +177,7 @@ class Runtime:
         raise RuntimeError(last_error or "the task could not be completed")
 
     def _fallback(self, ctx: RunContext, model_id: str, messages: list[dict], why: str) -> dict:
-        ctx.note("Tools kept failing — answering without them")
+        ctx.note("Tools kept failing - answering without them")
         model = HostModel(ctx, model_id)
         reply = model.stream(messages + [{"role": "user", "content": _parts(
             "Your tools are not working in this run: " + why +
@@ -282,7 +282,7 @@ def _schema_note(schema: Any) -> str:
 
 def _schema_ask(schema: Any) -> str:
     return ("Answer with a single JSON object matching this schema exactly, and nothing else "
-            "— no prose, no code fence:\n" + json.dumps(schema, ensure_ascii=False)[:6000])
+            "- no prose, no code fence:\n" + json.dumps(schema, ensure_ascii=False)[:6000])
 
 
 def _retry_note(error: str) -> str:
@@ -346,7 +346,7 @@ def _check(value: Any, schema: Any, path: str) -> str:
 def _stalled(stalled: bool) -> dict:
     if not stalled:
         return {}
-    return {"degraded": True, "reason": "ran out of steps before finishing — this answer may be incomplete"}
+    return {"degraded": True, "reason": "ran out of steps before finishing - this answer may be incomplete"}
 
 
 def _readable(exc: BaseException) -> str:

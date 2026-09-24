@@ -10,7 +10,7 @@ const choiceLabel = (q: QuizQuestion, i: number) =>
 function questionText(quiz: Quiz, index: number): string {
   const q = quiz.questions[index];
   if (!q) return '';
-  const lines = [`Question ${index + 1} of ${quiz.questions.length} — ${q.topic}${q.difficulty ? ` (${q.difficulty})` : ''}`, '', q.prompt];
+  const lines = [`Question ${index + 1} of ${quiz.questions.length} - ${q.topic}${q.difficulty ? ` (${q.difficulty})` : ''}`, '', q.prompt];
   if (q.choices?.length) {
     lines.push('', ...q.choices.map((c, i) => `${choiceLabel(q, i)}${c}`));
   }
@@ -50,11 +50,11 @@ async function fetchContent(ref: Reference): Promise<Reference['content']> {
     if (one) {
       const where = cards.findIndex((c) => c.id === one.id) + 1;
       return {
-        title: `Card ${where} of ${cards.length}${one.topic ? ` — ${one.topic}` : ''}`,
+        title: `Card ${where} of ${cards.length}${one.topic ? ` - ${one.topic}` : ''}`,
         body: `Front:\n${one.front}\n\nBack:\n${one.back}`,
       };
     }
-    const body = cards.map((c, i) => `Card ${i + 1}${c.topic ? ` — ${c.topic}` : ''}\nFront: ${c.front}\nBack: ${c.back}`).join('\n\n');
+    const body = cards.map((c, i) => `Card ${i + 1}${c.topic ? ` - ${c.topic}` : ''}\nFront: ${c.front}\nBack: ${c.back}`).join('\n\n');
     return { title: 'The deck', body: clip(body, 24_000) };
   }
 

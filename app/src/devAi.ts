@@ -49,7 +49,7 @@ async function chat(a: Args) {
   if (forced === 'save_flashcards') {
     return call('save_flashcards', { title: 'Convergence tests', cards: [
       { front: 'State the **ratio test**.', back: 'If $L = \\lim_{n\\to\\infty} \\left|\\frac{a_{n+1}}{a_n}\\right|$, the series converges absolutely when $L<1$ and diverges when $L>1$.', topic: 'Ratio test' },
-      { front: 'When is the ratio test inconclusive?', back: 'When $L = 1$ — e.g. both $\\sum \\frac1n$ and $\\sum \\frac1{n^2}$ give $L=1$.', topic: 'Ratio test' },
+      { front: 'When is the ratio test inconclusive?', back: 'When $L = 1$ - e.g. both $\\sum \\frac1n$ and $\\sum \\frac1{n^2}$ give $L=1$.', topic: 'Ratio test' },
       { front: 'Sum of the geometric series $\\sum_{n=0}^\\infty r^n$ for $|r|<1$', back: '$$\\frac{1}{1-r}$$', topic: 'Geometric series' },
       { front: 'The $p$-series $\\sum \\frac{1}{n^p}$ converges when…', back: '$p > 1$', topic: 'p-series' },
     ] });
@@ -72,7 +72,7 @@ async function chat(a: Args) {
   if (sys.startsWith('Name this conversation')) return reply('Vector equation of a line');
   const last = messages.at(-1);
   if (sys.startsWith('You write excellent study notes')) {
-    return reply('# Lines in 3D space\n\n## Vector equation\nA **line** through $P_0$ with direction $\\mathbf v$:\n\n$$\\mathbf r(t) = \\mathbf r_0 + t\\,\\mathbf v$$\n\n- $\\mathbf r_0$ — position of a point on the line\n- $\\mathbf v$ — direction vector\n\n## Symmetric equations\nSolve each component for $t$:\n\n$$\\frac{x-x_0}{a} = \\frac{y-y_0}{b} = \\frac{z-z_0}{c}$$\n\n| Form | Needs |\n|---|---|\n| Vector | point + direction |\n| Symmetric | $a,b,c \\ne 0$ |\n\n## Key points\n- Direction is a **difference** of points, $Q - P$.\n- (Lecture 12, Page 1)');
+    return reply('# Lines in 3D space\n\n## Vector equation\nA **line** through $P_0$ with direction $\\mathbf v$:\n\n$$\\mathbf r(t) = \\mathbf r_0 + t\\,\\mathbf v$$\n\n- $\\mathbf r_0$ - position of a point on the line\n- $\\mathbf v$ - direction vector\n\n## Symmetric equations\nSolve each component for $t$:\n\n$$\\frac{x-x_0}{a} = \\frac{y-y_0}{b} = \\frac{z-z_0}{c}$$\n\n| Form | Needs |\n|---|---|\n| Vector | point + direction |\n| Symmetric | $a,b,c \\ne 0$ |\n\n## Key points\n- Direction is a **difference** of points, $Q - P$.\n- (Lecture 12, Page 1)');
   }
   if (sys.startsWith('You read university course syllabuses')) {
     const y = new Date().getFullYear();
@@ -94,13 +94,13 @@ async function chat(a: Args) {
   }
   const toolNames = ((a.tools as { function: { name: string } }[] | null) ?? []).map((t) => t.function.name);
   if (last?.role === 'tool' && (last as { name?: string }).name === 'save_memory') {
-    return reply("Nice — good luck with Physics 1 this term. Want me to set up a notebook for it?");
+    return reply("Nice - good luck with Physics 1 this term. Want me to set up a notebook for it?");
   }
   if (toolNames.includes('save_memory') && last?.role === 'user' && /\b(i'm|i am|remember)\b/i.test(text(last))) {
     return call('save_memory', { fact: text(last).replace(/^(please )?remember( that)?\s*/i, '').replace(/^i'm|^i am/i, 'Is').trim() });
   }
   if (last?.role === 'tool' && toolNames.includes('timer')) {
-    return reply('Done: I started a 25-minute focus session and made the deck in **Series** — open it from the Cards tab there.');
+    return reply('Done: I started a 25-minute focus session and made the deck in **Series** - open it from the Cards tab there.');
   }
   if (toolNames.includes('timer') && last?.role === 'user') {
     const q0 = text(last).toLowerCase();
@@ -306,8 +306,8 @@ export function installDevAi() {
   };
 
   const MOCK_ANSWER = `The **ratio test** looks at $L = \\lim_{n\\to\\infty}\\left|\\frac{a_{n+1}}{a_n}\\right|$.\n\n` +
-    `- $L < 1$ — the series converges absolutely.\n- $L > 1$ — it diverges.\n- $L = 1$ — inconclusive; try another test.\n\n` +
-    `This is the browser preview, so the answer is canned — the states, streaming and tool calls above are real.`;
+    `- $L < 1$ - the series converges absolutely.\n- $L > 1$ - it diverges.\n- $L = 1$ - inconclusive; try another test.\n\n` +
+    `This is the browser preview, so the answer is canned - the states, streaming and tool calls above are real.`;
 
   async function salemRun(a: Args): Promise<unknown> {
     const run = String(a.run);
@@ -347,7 +347,7 @@ export function installDevAi() {
       const props = Object.keys(schema.properties ?? {});
       const structured = props.includes('questions') ? MOCK_QUIZ
         : props.includes('cards') ? MOCK_CARDS
-        : props.includes('correct') ? { correct: true, feedback: 'That is the idea — well put.' }
+        : props.includes('correct') ? { correct: true, feedback: 'That is the idea - well put.' }
         : props.includes('title') ? { title: 'Mock title' }
         : props.includes('summary') ? { summary: '### Course\nA preview stand-in.', events: [] }
         : {};

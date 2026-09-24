@@ -63,7 +63,7 @@ const NATIVE: SalemTool[] = [
   {
     name: 'run_python',
     description:
-      'Run Python in the app\'s sandbox and get its real output back. Use it for every calculation and for anything structured — parsing, dates, tables, statistics, checking an answer. sympy (sp), numpy (np), mpmath (mp), scipy, pymupdf and matplotlib are installed. No network, no files outside the sandbox. print() what you need; nothing carries over between calls.',
+      'Run Python in the app\'s sandbox and get its real output back. Use it for every calculation and for anything structured - parsing, dates, tables, statistics, checking an answer. sympy (sp), numpy (np), mpmath (mp), scipy, pymupdf and matplotlib are installed. No network, no files outside the sandbox. print() what you need; nothing carries over between calls.',
     inputs: { code: { type: 'string', description: 'The Python to run. print() every value you need.' } },
     outputType: 'object',
     scopes: ['python'],
@@ -165,7 +165,7 @@ function sourceTools(env: ToolEnv): SalemTool[] {
     {
       name: 'read_source',
       description:
-        'Read a source in order, page by page or slide by slide — not just the passages a search returned. Use it whenever a search hit needs its surroundings, when the student asks about "the lecture" as a whole, or when the excerpts do not answer the question. You can call it again and again to page through an entire document: read 1–20, then 21–40, and so on until you have what you need.',
+        'Read a source in order, page by page or slide by slide - not just the passages a search returned. Use it whenever a search hit needs its surroundings, when the student asks about "the lecture" as a whole, or when the excerpts do not answer the question. You can call it again and again to page through an entire document: read 1–20, then 21–40, and so on until you have what you need.',
       inputs: {
         sourceId: { type: 'integer', description: 'The source id, from list_sources.' },
         from: { type: 'integer', description: 'First page/slide number (1-based). Defaults to 1.', nullable: true },
@@ -188,7 +188,7 @@ function sourceTools(env: ToolEnv): SalemTool[] {
         return {
           result: slice.sort((a, b) => a.ord - b.ord).map((u) => ({ page: u.ord, label: u.label, text: clip(u.text, 6000) })),
           detail: slice.length
-            ? `pages ${from}–${Math.min(to, units.length)} of ${units.length}${to < units.length ? ' — call again for the rest' : ''}`
+            ? `pages ${from}–${Math.min(to, units.length)} of ${units.length}${to < units.length ? ' - call again for the rest' : ''}`
             : `this source has ${units.length} pages; ${from} is past the end`,
         };
       },
@@ -206,7 +206,7 @@ function madeTools(env: ToolEnv): SalemTool[] {
     {
       name: 'list_study_material',
       description:
-        "List the quizzes and flashcard decks the student has made, with their ids. Look here when they mention 'the quiz', 'my deck' or 'that question' — it is usually quicker and more accurate than guessing what they meant.",
+        "List the quizzes and flashcard decks the student has made, with their ids. Look here when they mention 'the quiz', 'my deck' or 'that question' - it is usually quicker and more accurate than guessing what they meant.",
       inputs: {},
       outputType: 'object',
       scopes: ['quizzes', 'cards', 'study'],
@@ -333,7 +333,7 @@ function materialTools(env: ToolEnv): SalemTool[] {
         "Save written material into one of the student's notebooks as a source, so it can be searched, cited, and used to make notes, flashcards and quizzes later. Use it for something you looked up on the web, a summary you wrote for them, or text they pasted into the chat. Say where it came from in the title.",
       inputs: {
         notebook: { type: 'string', description: 'Notebook name as the student says it; "Subject / Notebook" if the name is ambiguous.' },
-        title: { type: 'string', description: 'What to call it — specific enough to recognise later, e.g. "Krebs cycle — Khan Academy".' },
+        title: { type: 'string', description: 'What to call it - specific enough to recognise later, e.g. "Krebs cycle - Khan Academy".' },
         content: { type: 'string', description: 'The material itself, as Markdown. Use headings; they become the sections the student can jump to.' },
         url: { type: 'string', description: 'Where it came from, if anywhere.', nullable: true },
       },
@@ -571,7 +571,7 @@ function padTools(env: ToolEnv): SalemTool[] {
     },
     {
       name: 'notes_edit',
-      description: 'Change a note in the Notes app. mode "replace" rewrites the whole note with content; "append" adds content at the end; "prepend" adds it at the top (under nothing — it becomes the new first line/title); "find_replace" replaces the first occurrence of find (plain text within one paragraph) with content. Read the note first when editing part of it.',
+      description: 'Change a note in the Notes app. mode "replace" rewrites the whole note with content; "append" adds content at the end; "prepend" adds it at the top (under nothing - it becomes the new first line/title); "find_replace" replaces the first occurrence of find (plain text within one paragraph) with content. Read the note first when editing part of it.',
       inputs: {
         noteId: { type: 'integer', description: 'The note id.' },
         mode: { type: 'string', description: 'How to change it.', enum: ['replace', 'append', 'prepend', 'find_replace'] },

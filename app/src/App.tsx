@@ -126,7 +126,7 @@ export default function App({ active = true, settingsSignal = 0 }: { active?: bo
 
     if (cached && !needFetch) { serve(cached); return cached; }
     if (cached && !canRefetch()) {
-      toast('info', 'Refetch limit reached this session — using cached questions.');
+      toast('info', 'Refetch limit reached this session - using cached questions.');
       serve(cached);
       return cached;
     }
@@ -258,7 +258,7 @@ export default function App({ active = true, settingsSignal = 0 }: { active?: bo
       const a = assignmentRef.current;
       if (a) usage.record(a.id, a.name, n, model, u);
     },
-    onQueueDone: (u) => toast('ok', `Assignment finished — ${fmtInt(pairTotal(u))} tokens · ~${fmtCost(pairCost(u))}`),
+    onQueueDone: (u) => toast('ok', `Assignment finished - ${fmtInt(pairTotal(u))} tokens · ~${fmtCost(pairCost(u))}`),
   });
 
   useEffect(() => { store.set('wa.ai.open', aiOpen ? '1' : '0'); }, [aiOpen]);
@@ -334,7 +334,7 @@ export default function App({ active = true, settingsSignal = 0 }: { active?: bo
   const save = async () => {
     if (!question || busy) return;
     const answers = answersFor(question);
-    if (!Object.keys(answers).length) { toast('info', 'Nothing to save — everything matches WebAssign.'); return; }
+    if (!Object.keys(answers).length) { toast('info', 'Nothing to save - everything matches WebAssign.'); return; }
     setBusy('save');
     try {
       rememberMath(question);
@@ -392,7 +392,7 @@ export default function App({ active = true, settingsSignal = 0 }: { active?: bo
       setAssignment(null);
       loadAssignment(id, true);
     }
-    toast('info', 'Question cache cleared — questions will be refetched.');
+    toast('info', 'Question cache cleared - questions will be refetched.');
   };
 
   const keyState = useRef({ save, submit: () => setConfirm(true), reload, gotoQuestion, question, assignment });

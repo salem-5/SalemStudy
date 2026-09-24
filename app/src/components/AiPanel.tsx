@@ -179,9 +179,9 @@ export function AiPanel({ solver, question, questions, open, onOpenSettings, onC
           type="button"
           className={`ai-py-chip ${!cfg?.pythonEnabled ? 'off' : solver.python?.ready ? 'ok' : 'bad'}`}
           title={
-            !cfg?.pythonEnabled ? 'Python is switched off — click to open settings'
-              : solver.python?.ready ? `Python ${solver.python.version} sandbox ready — the solver computes with sympy/numpy`
-                : 'Python is not installed yet — click to set it up'
+            !cfg?.pythonEnabled ? 'Python is switched off - click to open settings'
+              : solver.python?.ready ? `Python ${solver.python.version} sandbox ready - the solver computes with sympy/numpy`
+                : 'Python is not installed yet - click to set it up'
           }
           onClick={onOpenSettings}
         >
@@ -259,7 +259,7 @@ export function AiPanel({ solver, question, questions, open, onOpenSettings, onC
       )}
 
       <div className="ai-manual">
-        <div className="ai-label">Manual answer <span className="muted">— single value, or {'{"1":"x","2":"3"}'}</span></div>
+        <div className="ai-label">Manual answer <span className="muted">- single value, or {'{"1":"x","2":"3"}'}</span></div>
         <textarea
           className="ai-manual-input"
           value={manual}
@@ -381,7 +381,7 @@ function PythonSection({ cfg, patch, onChanged, solverOn }: {
       {status && status.packages.length > 0 && (
         <div className="py-packages">
           {status.packages.map((p) => (
-            <span key={p.name} className={p.version ? 'py-pkg ok' : 'py-pkg'}>{p.name} {p.version ?? '—'}</span>
+            <span key={p.name} className={p.version ? 'py-pkg ok' : 'py-pkg'}>{p.name} {p.version ?? '-'}</span>
           ))}
         </div>
       )}
@@ -589,7 +589,7 @@ function TrayToggle() {
     <label className="toggle">
       <input type="checkbox" checked={on}
         onChange={async (e) => { const v = e.target.checked; setOn(v); await setAiConfig({ closeToTray: v }).catch(() => setOn(!v)); }} />
-      <span>Keep running in the tray when the window is closed <span className="muted">— tab mode and anything being written carry on; quit from the tray icon</span></span>
+      <span>Keep running in the tray when the window is closed <span className="muted">- tab mode and anything being written carry on; quit from the tray icon</span></span>
     </label>
   );
 }

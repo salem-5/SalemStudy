@@ -41,7 +41,7 @@ export function ExportDialog({ entries, meta, onClose }: { entries: ExportEntry[
     let stop: (() => void) | undefined;
     listen<{ job?: string; stage?: string; line?: string }>('export://progress', (e) => {
       const { job, stage, line } = e.payload;
-      const text = line ?? `— ${stage ?? ''} —`;
+      const text = line ?? `- ${stage ?? ''} -`;
       setLog((l) => [...l.slice(-400), entries.length > 1 && job ? `${job} │ ${text}` : text]);
     }).then((un) => { stop = un; }).catch(() => { });
     return () => stop?.();

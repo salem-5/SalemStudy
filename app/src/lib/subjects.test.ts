@@ -7,7 +7,7 @@ describe('classifying a course', () => {
   it('recognises the sciences', () => {
     assert.equal(flavourOf('Calculus II'), 'stem');
     assert.equal(flavourOf('Linear Algebra'), 'stem');
-    assert.equal(flavourOf('Physics I — Mechanics'), 'stem');
+    assert.equal(flavourOf('Physics I - Mechanics'), 'stem');
     assert.equal(flavourOf('Thermodynamics'), 'stem');
     assert.equal(flavourOf('Data Structures'), 'stem');
   });

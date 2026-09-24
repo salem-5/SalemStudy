@@ -272,7 +272,7 @@ async function agentic(
   flush: (immediate?: boolean) => void,
   meter: Meter,
 ): Promise<TurnResult> {
-  say({ kind: 'note', text: 'This one needs a proper look — taking it step by step' });
+  say({ kind: 'note', text: 'This one needs a proper look - taking it step by step' });
   flush(true);
 
   const done = sofar

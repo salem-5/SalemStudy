@@ -88,11 +88,11 @@ export function ConnectPanel({ status, statusError, bridge, onRestart }: {
       <ol className="steps">
         <li className={bridgeUp ? 'ok' : 'todo'}>
           <b>Bridge</b> on 127.0.0.1:{bridge?.port ?? 8787}
-          <span className="muted"> — {bridgeUp ? (bridge?.managed ? 'started by this app' : 'external process') : statusError ?? 'starting…'}</span>
+          <span className="muted"> - {bridgeUp ? (bridge?.managed ? 'started by this app' : 'external process') : statusError ?? 'starting…'}</span>
           {bridge?.error && <div className="warn">{bridge.error}</div>}
         </li>
         <li className={status?.connected ? 'ok' : 'todo'}>
-          <b>WebAssign tab</b> — install <code>webassign-mathpad.user.js</code> in Tampermonkey or Violentmonkey,
+          <b>WebAssign tab</b> - install <code>webassign-mathpad.user.js</code> in Tampermonkey or Violentmonkey,
           then open <code>webassign.net</code> and log in. Keep the tab open.
         </li>
       </ol>

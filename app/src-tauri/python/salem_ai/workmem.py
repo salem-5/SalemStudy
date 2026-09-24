@@ -75,7 +75,7 @@ class WorkingMemory:
     def as_prompt(self) -> str:
         if self.is_empty():
             return ""
-        lines = ["## Task state (carried over — trust this over your memory of the conversation)"]
+        lines = ["## Task state (carried over - trust this over your memory of the conversation)"]
         if self.objective:
             lines.append(f"Objective: {self.objective}")
         if self.expected_final_state:
@@ -84,7 +84,7 @@ class WorkingMemory:
             ("Constraints", self.constraints), ("Entities", self.entities),
             ("Already done", self.done), ("Still to do", self.pending),
             ("Decisions", self.decisions), ("Validated", self.validations),
-            ("Unresolved — ask rather than guess", self.unresolved),
+            ("Unresolved - ask rather than guess", self.unresolved),
             ("Earlier tool results", self.tool_results[-8:]),
         ]
         for title, values in blocks:
@@ -161,7 +161,7 @@ Return ONLY a JSON object with these keys (omit what does not apply):
 
 Rules: keep the student's own wording for dates, names and figures. Never
 invent a value to fill a field. Never restate or reinterpret what the student
-asked for — the objective is recorded separately and must not be changed."""
+asked for - the objective is recorded separately and must not be changed."""
 
 
 def compact(ctx: RunContext, model, memory: WorkingMemory, messages: list[dict]) -> list[dict]:

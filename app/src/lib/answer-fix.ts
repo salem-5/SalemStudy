@@ -99,7 +99,7 @@ export function fixAnswers(
     const fixed = fixAnswerText(value, ctx.get(box.index));
     if (fixed.value === value) continue;
     out[key] = fixed.value;
-    notes.push(`[${box.index}] ${fixed.notes.join('; ')} — "${value}" → "${fixed.value}"`);
+    notes.push(`[${box.index}] ${fixed.notes.join('; ')} - "${value}" → "${fixed.value}"`);
   }
   return { answers: out, notes };
 }

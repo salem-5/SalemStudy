@@ -16,7 +16,7 @@ const walk = [source(1, 'Lecture 3 - Series', 12), source(2, 'Final exam 2022', 
 describe('the outline the instructions are read against', () => {
   it('marks the last page of every source and says how long each is', () => {
     const outline = outlineForInstructions(walk);
-    assert.match(outline, /=== Final exam 2022 — 5 pages ===/);
+    assert.match(outline, /=== Final exam 2022 - 5 pages ===/);
     assert.match(outline, /Page 5 \(last page\): Question 6\. True or False\?/);
     assert.match(outline, /Page 6 \(last page\)/);
     assert.doesNotMatch(outline, /Page 4 \(last page\)/);

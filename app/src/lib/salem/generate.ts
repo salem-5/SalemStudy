@@ -37,7 +37,7 @@ async function stoppable<R>(stop: Stop | undefined, call: (id?: string) => Promi
 const feature = (name: string) => name as AiFeature;
 
 const schemaAsk = (schema: unknown) =>
-  'Answer with a single JSON object matching this schema exactly, and nothing else — '
+  'Answer with a single JSON object matching this schema exactly, and nothing else - '
   + `no prose, no code fence:\n${JSON.stringify(schema).slice(0, 6000)}`;
 
 function pythonTool(

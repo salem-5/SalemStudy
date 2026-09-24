@@ -51,9 +51,9 @@ function seed(): Db {
       {
         type: 'mcq', topic: 'Ratio test', difficulty: 'easy',
         prompt: 'The ratio test gives $L = 1$ for a series. What can you conclude?',
-        choices: ['Nothing — the test is inconclusive', 'It converges', 'It diverges', 'It converges conditionally'],
+        choices: ['Nothing - the test is inconclusive', 'It converges', 'It diverges', 'It converges conditionally'],
         answer: 0,
-        hint: 'Think about $\\sum 1/n$ and $\\sum 1/n^2$ — what does the test give for each?',
+        hint: 'Think about $\\sum 1/n$ and $\\sum 1/n^2$ - what does the test give for each?',
         explanation: 'Both $\\sum 1/n$ (divergent) and $\\sum 1/n^2$ (convergent) give $L = 1$, so the test cannot separate them.',
         verified: true,
       },
@@ -70,7 +70,7 @@ function seed(): Db {
         prompt: 'The harmonic series $\\sum 1/n$ converges.',
         answer: 'false',
         hint: 'Compare the partial sums with $\\ln n$.',
-        explanation: 'It is the $p$-series with $p = 1$, which diverges — the partial sums grow like $\\ln n$.',
+        explanation: 'It is the $p$-series with $p = 1$, which diverges - the partial sums grow like $\\ln n$.',
       },
       {
         type: 'numeric', topic: 'Geometric series', difficulty: 'medium',

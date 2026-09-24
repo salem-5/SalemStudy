@@ -57,7 +57,7 @@ function ResultBanner({ result }: { result: SubmitResult }) {
     <div className={`result ${tone}`}>
       <div className="result-title">
         {result.allCorrect ? '✓ ALL CORRECT' : `✗ ${wrong} WRONG${partial ? ` · ${partial} PARTIAL` : ''} · ${right} CORRECT`}
-        <span className="muted"> — last submit</span>
+        <span className="muted"> - last submit</span>
       </div>
       <div className="result-parts">
         {result.results.map((r) => (

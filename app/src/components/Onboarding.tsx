@@ -74,7 +74,7 @@ export function Onboarding({ onClose }: { onClose: () => void }) {
     {
       key: 'ai',
       name: 'The AI runtime',
-      what: 'Everything the assistant does — chat, notes, flashcards, quizzes — runs through it. It is installed into the same Python environment.',
+      what: 'Everything the assistant does - chat, notes, flashcards, quizzes - runs through it. It is installed into the same Python environment.',
       ready: !!ai?.ready,
       detail: ai?.ready
         ? `smolagents ${ai.hello?.smolagents ?? '?'} on Python ${ai.hello?.python ?? '?'}`
@@ -92,7 +92,7 @@ export function Onboarding({ onClose }: { onClose: () => void }) {
       <p className="muted small">
         Salem keeps its own Python, separate from anything else on your machine. It runs the maths,
         reads your PDFs, checks quiz answers, typesets your exports and hosts the assistant. You can
-        set it up here — the app works without it, it just does a great deal less.
+        set it up here - the app works without it, it just does a great deal less.
       </p>
 
       <div className="onboard-list">

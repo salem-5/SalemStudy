@@ -14,7 +14,7 @@ export function PomodoroChip({ onOpen }: { onOpen: () => void }) {
       <button type="button" className="pomo-chip-toggle" onClick={pomodoro.toggle} title={p.status === 'running' ? 'Pause' : 'Start'}>
         {p.status === 'running' ? <Pause /> : <Play />}
       </button>
-      <button type="button" className="pomo-chip-time" onClick={onOpen} title={`${PHASE_LABEL[p.phase]} — open Focus`}>
+      <button type="button" className="pomo-chip-time" onClick={onOpen} title={`${PHASE_LABEL[p.phase]} - open Focus`}>
         <span className="pomo-chip-phase">{p.phase === 'focus' ? 'focus' : 'break'}</span>
         <span className="pomo-chip-clock">{fmtClock(left)}</span>
       </button>
@@ -127,7 +127,7 @@ export function FocusPage() {
           <div className="pomo-now" title={open[0]?.text}>
             {p.phase === 'focus'
               ? open[0] ? <><span className="muted">Now</span>{open[0].text}</> : <span className="muted">Add a task to know what this session is for</span>
-              : <span className="muted">Break — step away from the screen</span>}
+              : <span className="muted">Break - step away from the screen</span>}
           </div>
           <div className="pomo-actions">
             <button type="button" className="icon-btn pomo-side" onClick={pomodoro.reset} disabled={p.status === 'idle' && left === total} title="Reset"><RotateCcw /></button>

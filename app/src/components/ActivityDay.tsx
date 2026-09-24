@@ -31,7 +31,7 @@ export function ActivityDay({ day, onClose, onOpenNotebook }: {
   const bySubject = new Map<string, Map<string, { id: number | null; counts: Map<ActivityEntry['kind'], number> }>>();
   for (const entry of entries ?? []) {
     const subject = entry.subject ?? 'Not in a notebook';
-    const notebook = entry.notebook ?? '—';
+    const notebook = entry.notebook ?? '-';
     const notebooks = bySubject.get(subject) ?? new Map();
     const slot = notebooks.get(notebook) ?? { id: entry.notebookId, counts: new Map() };
     slot.counts.set(entry.kind, (slot.counts.get(entry.kind) ?? 0) + 1);

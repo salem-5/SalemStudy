@@ -97,7 +97,7 @@ export function SourcesPane({ notebookId, sources, selected, onToggle, onToggleA
             <button type="button" className="drop-zone" onClick={() => fileInput.current?.click()}>
               <Upload />
               <span>Upload files</span>
-              <span className="muted small">PDF, slides (PPTX), Word, images, text — or drop them here</span>
+              <span className="muted small">PDF, slides (PPTX), Word, images, text - or drop them here</span>
             </button>
             <form className="link-row" onSubmit={(e) => { e.preventDefault(); if (link.trim()) { void addYoutube(notebookId, link, onChanged); setLink(''); setAdding(false); } }}>
               <Link2 />
@@ -137,7 +137,7 @@ export function SourcesPane({ notebookId, sources, selected, onToggle, onToggleA
                   <span className="source-title">{s.title}</span>
                   <span className="source-meta">
                     {stage ? <><Loader2 className="spin" />{stage}</>
-                      : stuck ? <span className="bad-text">interrupted — read it again</span>
+                      : stuck ? <span className="bad-text">interrupted - read it again</span>
                       : s.status === 'error' ? <span className="bad-text">{s.error ?? 'could not be read'}</span>
                         : <>
                           {`${s.unitCount} ${unitWord(s)}${s.unitCount === 1 ? '' : 's'}`}

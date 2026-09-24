@@ -23,7 +23,7 @@ export function guidance(flavour: Flavour): string {
   switch (flavour) {
     case 'stem':
       return `This is a STEM course, so the marks are in the working.
-- Ask questions that require a derivation, a calculation or a correct application of a rule — not recall of a definition.
+- Ask questions that require a derivation, a calculation or a correct application of a rule - not recall of a definition.
 - Every question whose answer is a number or an expression must carry check_code that derives it independently. A question you cannot check is not worth asking.
 - Distractors should be the answers a student actually gets when they go wrong: a dropped sign, the reciprocal, degrees instead of radians, the derivative of the wrong factor.
 - State units, and be consistent about them. Say how many significant figures you want.
@@ -32,12 +32,12 @@ export function guidance(flavour: Flavour): string {
       return `This is a life-science course, so precision about mechanism and terminology is what matters, not arithmetic.
 - Ask about structure and function, cause and effect, sequence and order, and what distinguishes two things that students confuse.
 - Do NOT invent calculations. Only write check_code when the question genuinely computes something (a dilution, a ratio, allele frequencies, a rate). Most questions here should have no check_code at all, and that is correct.
-- Distractors must be real terms from the same system — an organelle that exists, a hormone from the same axis, a phase of the same process. Never a made-up word, and never something from a different topic entirely.
+- Distractors must be real terms from the same system - an organelle that exists, a hormone from the same axis, a phase of the same process. Never a made-up word, and never something from a different topic entirely.
 - Use the exact terminology the student's material uses; if it writes "mitochondrion", do not switch to "mitochondria" in the answer key.
 - Explanations say why the wrong options are wrong, because in this subject that is usually where the learning is.`;
     case 'business':
       return `This is a business course, so it is part calculation and part judgement.
-- For anything financial or quantitative — ratios, NPV, break-even, elasticity, depreciation, margins — the question must carry check_code that derives the number independently.
+- For anything financial or quantitative - ratios, NPV, break-even, elasticity, depreciation, margins - the question must carry check_code that derives the number independently.
 - For concepts, frameworks and policy, ask questions that need the idea applied to a situation rather than the definition repeated.
 - Distractors should be the other plausible treatment: the wrong ratio for the question, the neighbouring framework, the right idea applied to the wrong stakeholder.
 - Name the currency, the period and the convention. Say whether figures are in thousands.
@@ -45,7 +45,7 @@ export function guidance(flavour: Flavour): string {
     default:
       return `Ask questions that need the material understood rather than recognised.
 - Write check_code only when the answer is genuinely computed; most questions in this subject will not need it.
-- Distractors should be plausible and from the same topic — never obviously silly, never a different kind of thing.
+- Distractors should be plausible and from the same topic - never obviously silly, never a different kind of thing.
 - Explanations say why the right answer is right and why the near-misses are not.`;
   }
 }
@@ -53,12 +53,12 @@ export function guidance(flavour: Flavour): string {
 export function cardGuidance(flavour: Flavour): string {
   switch (flavour) {
     case 'stem':
-      return 'Cards are for the things you must have to hand: a statement of a theorem, a formula and what each symbol is, the condition a rule needs, a standard derivative or integral. Not worked problems — those belong in a quiz.';
+      return 'Cards are for the things you must have to hand: a statement of a theorem, a formula and what each symbol is, the condition a rule needs, a standard derivative or integral. Not worked problems - those belong in a quiz.';
     case 'life':
       return 'Cards are for terms, structures, functions and the steps of a process. One structure or one step per card. Where two things are confused with each other, write a card that pins down the difference.';
     case 'business':
       return 'Cards are for definitions, formulas and what a framework is for. One term or one formula per card, with what it is used to decide.';
     default:
-      return 'Cards are for single facts, definitions and relationships — one idea per card.';
+      return 'Cards are for single facts, definitions and relationships - one idea per card.';
   }
 }

@@ -76,7 +76,7 @@ export function Combo({ choices, value, onChange, inline, status, label }: Props
         size={width}
         spellCheck={false}
         aria-label={label ?? 'choice'}
-        placeholder={selected ? selected.label : '— select —'}
+        placeholder={selected ? selected.label : '- select -'}
         value={open ? query : selected?.label ?? ''}
         onFocus={() => { setOpen(true); setQuery(''); setActive(Math.max(0, choices.findIndex((c) => c.value === value))); }}
         onBlur={() => setTimeout(() => { setOpen(false); setQuery(''); }, 120)}

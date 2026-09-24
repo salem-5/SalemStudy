@@ -125,7 +125,7 @@ export function UpdatesSection() {
       {local && (
         <label className="toggle">
           <input type="checkbox" checked={auto} onChange={(e) => { setAuto(e.target.checked); setAutoUpdates(e.target.checked); }} />
-          <span>Update automatically <span className="muted">— new versions download in the background, and what changed is shown after they install</span></span>
+          <span>Update automatically <span className="muted">- new versions download in the background, and what changed is shown after they install</span></span>
         </label>
       )}
       {log && <Markdown className="whats-new-notes inline" text={log.notes} />}

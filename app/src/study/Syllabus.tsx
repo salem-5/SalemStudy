@@ -151,7 +151,7 @@ export function SyllabusDialog({ subject: initial, tree, rescan, onClose, onDone
                     <input type="checkbox" checked={picked.has(i)} onChange={() => setPicked((p) => { const n = new Set(p); if (n.has(i)) n.delete(i); else n.add(i); return n; })} />
                     <span className={`kind-dot ${e.kind}`} />
                     <span className="syllabus-event-date">{fmtDay(e.date)}{e.start ? ` · ${e.start}${e.end ? `–${e.end}` : ''}` : ''}</span>
-                    <span className="syllabus-event-title">{e.title}{e.notes && <span className="muted"> — {e.notes}</span>}</span>
+                    <span className="syllabus-event-title">{e.title}{e.notes && <span className="muted"> - {e.notes}</span>}</span>
                     <span className="muted small">{KINDS.find((k) => k.kind === e.kind)?.label}</span>
                   </label>
                 </li>

@@ -81,7 +81,7 @@ export function SubmitDialog({ question, draftOf, onConfirm, onClose }: {
 
 export function DryRunDialog({ dry, onClose }: { dry: DryRun; onClose: () => void }) {
   return (
-    <Modal title="DRY RUN — nothing was sent" onClose={onClose} wide>
+    <Modal title="DRY RUN - nothing was sent" onClose={onClose} wide>
       <div className="mono muted">POST {dry.url}</div>
       <pre className="code-block">{JSON.stringify(dry.data, null, 2)}</pre>
     </Modal>

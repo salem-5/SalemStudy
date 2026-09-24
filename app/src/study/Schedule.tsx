@@ -252,7 +252,7 @@ export function SchedulePage({ tree, open, refreshTree, reload = 0 }: {
                   <div className="day-event-meta">
                     WebAssign · due {fmtTime(d.at)}
                     {d.moved && <span className="tag moved" title="The due date changed since the last check"> moved</span>}
-                    {d.stale && <span className="tag stale" title="No longer listed in WebAssign — kept in case it comes back"> not listed any more</span>}
+                    {d.stale && <span className="tag stale" title="No longer listed in WebAssign - kept in case it comes back"> not listed any more</span>}
                   </div>
                 </div>
                 <button type="button" className="link" onClick={() => open({ kind: 'solver' })}>open</button>

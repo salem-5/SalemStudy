@@ -956,7 +956,7 @@ fn start_server(bridge: Bridge) {
             });
         }
         Err(e) => bridge.set_error(format!(
-            "Could not bind {}:{} — {e}. Another bridge may be using the port.",
+            "Could not bind {}:{} - {e}. Another bridge may be using the port.",
             bridge::HOST,
             bridge::PORT
         )),
