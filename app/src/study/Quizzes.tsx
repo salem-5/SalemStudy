@@ -224,6 +224,10 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
   const showAnswer = reviewing || !!current;
 
   return (
+    <div className="quiz-shell">
+    <div className="quiz-glow" aria-hidden>
+      <span key={flash?.n ?? 0} className={`study-glow${flash ? ` flash-${flash.kind}` : ''}`} />
+    </div>
     <div className="stage quiz-stage">
       <div className="stage-head">
         <button type="button" className="link" onClick={onClose}><ArrowLeft />back</button>
@@ -255,8 +259,6 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
             locator: { notebookId, quizId: quiz.id, questionIndex: index },
           }}
         >
-        <div className="glow-wrap q-glow">
-        <span key={flash?.n ?? 0} className={`study-glow${flash ? ` flash-${flash.kind}` : ''}`} aria-hidden />
         <div className="question-card" key={index}>
           <div className="q-meta muted">
             <span>{q.topic}{q.difficulty ? ` · ${q.difficulty}` : ''}</span>
@@ -312,7 +314,6 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
             </div>
           )}
         </div>
-        </div>
         </AskableArea>
       )}
 
@@ -354,6 +355,7 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
           onClose={() => setAsking(null)}
         />
       )}
+    </div>
     </div>
   );
 }

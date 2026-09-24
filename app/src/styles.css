@@ -3665,8 +3665,10 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 }
 .card-glow { width: min(640px, 100%); }
 .card-glow .flashcard { width: 100%; }
-.q-glow { width: min(760px, 100%); margin: 0 auto; }
-.q-glow .study-glow { inset: -22% -16%; --rest: 0.24; }
+.quiz-shell { position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; isolation: isolate; }
+.quiz-shell > .stage { position: relative; z-index: 1; }
+.quiz-glow { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+.quiz-glow .study-glow { inset: 6% 8% 2%; --rest: 0.26; }
 .lock-glow { width: min(520px, 100%); }
 .lock-glow .study-glow { inset: -58% -44%; }
 @media (prefers-reduced-motion: reduce) {
