@@ -3568,7 +3568,7 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 /* (overflow: hidden lets a flex child shrink below its content, so these are
    kept from shrinking — otherwise a list row or a score strip loses its
    bottom half inside a scrolling column.) */
-:root[data-shape='rounded'] :is(.set-entry, .codeblock, .md pre, .usage-totals, .seg, .modal, .card-face, .py-block, .quiz-question) { overflow: hidden; flex-shrink: 0; }
+:root[data-shape='rounded'] :is(.set-entry, .codeblock, .usage-totals, .seg, .modal, .card-face, .py-block, .quiz-question) { overflow: hidden; flex-shrink: 0; }
 :root[data-shape='rounded'] .seg-glider { border-radius: calc(var(--r) - 2px); }
 :root[data-shape='rounded'] .modal > header { border-radius: var(--r-lg) var(--r-lg) 0 0; }
 /* Things that are a stripe on one side keep that side square. */
@@ -3632,7 +3632,10 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 :root[data-shape='rounded'] .heatmap-legend .heat { border-radius: 2px; }
 
 /* Groups of cells drawn with 1px gaps: round the group, clip the cells. */
-:root[data-shape='rounded'] :is(.home-stats, .usage-totals, .cal-scroll, .stats-row) { border-radius: var(--r); overflow: hidden; }
+:root[data-shape='rounded'] :is(.home-stats, .usage-totals, .stats-row) { border-radius: var(--r); overflow: hidden; }
+/* A scroller already clips to its own rounded corners: `overflow: hidden`
+   here would stop it scrolling. */
+:root[data-shape='rounded'] .cal-scroll { border-radius: var(--r); }
 :root[data-shape='rounded'] .home-stats { flex-shrink: 0; }
 :root[data-shape='rounded'] .cal-pill { border-radius: 4px; border-left-width: 3px; }
 :root[data-shape='rounded'] .cal-num { border-radius: 5px; }
