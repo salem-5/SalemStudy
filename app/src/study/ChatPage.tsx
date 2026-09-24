@@ -23,12 +23,10 @@ const CHAT_STARTERS_APP = [
   'Explain eigenvalues like I am seeing them for the first time',
 ];
 
-/** The standalone assistant: saved threads on the left, the shared chat view on the right. */
 export function ChatPage({ threadId, tree, open, refreshTree }: {
   threadId: number | null;
   tree: SubjectNode[];
   open: (r: Route) => void;
-  /** Re-read subjects and notebooks; resolves with the new tree. */
   refreshTree: () => Promise<SubjectNode[]>;
 }) {
   const [threads, setThreads] = useState<ChatThread[]>([]);
@@ -36,9 +34,8 @@ export function ChatPage({ threadId, tree, open, refreshTree }: {
   const [clearing, setClearing] = useState<'one' | 'all' | null>(null);
   const [reload, setReload] = useState(0);
   const [control, setControl] = useState(() => { try { return localStorage.getItem('wa.chat.control') !== '0'; } catch { return true; } });
-  useEffect(() => { try { localStorage.setItem('wa.chat.control', control ? '1' : '0'); } catch { /* ignore */ } }, [control]);
+  useEffect(() => { try { localStorage.setItem('wa.chat.control', control ? '1' : '0'); } catch { } }, [control]);
 
-  // The assistant's tools read the latest tree, including changes made earlier in the same reply.
   const treeRef = useRef(tree);
   treeRef.current = tree;
   const toolEnv = useMemo<ToolEnv>(() => ({
@@ -46,10 +43,6 @@ export function ChatPage({ threadId, tree, open, refreshTree }: {
     refresh: async () => { const t = await refreshTree(); treeRef.current = t; return t; },
     open,
   }), [open, refreshTree]);
-  // With App control off the assistant can still look things up and search the
-  // web; it just cannot change anything — except in the student's Notes app,
-  // which it may always write in (anything deleted there is recoverable).
-  // That is a tool list, not a prompt.
   const allowTools = useMemo(
     () => (control ? undefined : registry(toolEnv).filter((t) => !t.mutating || t.scopes.includes('pad')).map((t) => t.name)),
     [control, toolEnv],
@@ -60,8 +53,6 @@ export function ChatPage({ threadId, tree, open, refreshTree }: {
     return chatPrompt(python) + (control ? `\n\n${APP_POLICY}\n\n${today}` : '');
   }, [control]);
 
-  // Empty chats (a new chat never sent, or one that was cleared) are dropped once
-  // you are on another chat; the one on screen is always kept.
   const currentId = useRef(threadId);
   currentId.current = threadId;
   const reload_ = useCallback(() => {
@@ -188,7 +179,6 @@ export function ChatPage({ threadId, tree, open, refreshTree }: {
   );
 }
 
-/** Chats under Today / Yesterday / Previous 7 days / Previous 30 days / month headings, newest first. */
 function groupByDate(threads: ChatThread[]): [string, ChatThread[]][] {
   const day = new Date();
   day.setHours(0, 0, 0, 0);
@@ -208,4 +198,3 @@ function groupByDate(threads: ChatThread[]): [string, ChatThread[]][] {
   }
   return out;
 }
-

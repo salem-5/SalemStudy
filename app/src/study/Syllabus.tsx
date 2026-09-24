@@ -20,15 +20,9 @@ type Step =
   | { kind: 'done'; added: number }
   | { kind: 'error'; message: string };
 
-/**
- * Upload a syllabus (or re-read the saved one): the summary is saved with the
- * subject and the dates it finds can be added to Schedule after a review.
- * With `subject` null (from Schedule), the student picks the subject first.
- */
 export function SyllabusDialog({ subject: initial, tree, rescan, onClose, onDone }: {
   subject: SubjectNode | null;
   tree: SubjectNode[];
-  /** Re-read the saved syllabus for its dates instead of uploading a new one. */
   rescan?: boolean;
   onClose: () => void;
   onDone: () => void;
@@ -39,10 +33,9 @@ export function SyllabusDialog({ subject: initial, tree, rescan, onClose, onDone
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [dragging, setDragging] = useState(false);
   const input = useRef<HTMLInputElement>(null);
-  // Extra instructions for reading it, remembered per subject for the next time.
   const notesKey = (id: number | null | undefined) => `wa.syllabus.notes.${id ?? 0}`;
   const [notes, setNotes] = useState(() => { try { return localStorage.getItem(notesKey(initial?.id ?? tree[0]?.id)) ?? ''; } catch { return ''; } });
-  const remember = () => { try { localStorage.setItem(notesKey(subject?.id), notes); } catch { /* ignore */ } };
+  const remember = () => { try { localStorage.setItem(notesKey(subject?.id), notes); } catch { } };
 
   const review = (file: Extract<Step, { kind: 'review' }>['file'], summary: string, events: SyllabusEvent[]) => {
     const today = new Date().toLocaleDateString('en-CA');
@@ -94,7 +87,7 @@ export function SyllabusDialog({ subject: initial, tree, rescan, onClose, onDone
               <Select className="select" value={String(subjectId ?? '')} onChange={(v) => {
                 const id = Number(v);
                 setSubjectId(id);
-                try { setNotes(localStorage.getItem(notesKey(id)) ?? ''); } catch { /* ignore */ }
+                try { setNotes(localStorage.getItem(notesKey(id)) ?? ''); } catch { }
               }}
                 options={tree.map((s) => ({ value: String(s.id), label: s.name }))} />
             </label>
@@ -199,7 +192,6 @@ export function SyllabusDialog({ subject: initial, tree, rescan, onClose, onDone
   );
 }
 
-/** The subject page's syllabus section. */
 export function SyllabusPanel({ subject, onChanged }: { subject: SubjectNode; onChanged: () => void }) {
   const [dialog, setDialog] = useState<'upload' | 'rescan' | null>(null);
   const [open, setOpen] = useState(false);

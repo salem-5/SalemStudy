@@ -6,10 +6,6 @@ import { previewExpr } from '../lib/render';
 import { loadHistory } from '../lib/drafts';
 import { MathView } from './MathView';
 
-// ---------------------------------------------------------------------------
-// Templates. "§" is replaced by the selection, "‸" marks where the caret lands.
-// ---------------------------------------------------------------------------
-
 type Snippet = { id: string; label: string; title: string; keys?: string; none: string; sel?: string };
 
 export const SNIPPETS: Snippet[] = [
@@ -43,17 +39,12 @@ const BY_KEYS = new Map(SNIPPETS.filter((s) => s.keys).map((s) => [s.keys!, s]))
 function comboOf(e: React.KeyboardEvent): string {
   const arrows: Record<string, string> = { ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→' };
   let k = arrows[e.key] ?? e.key;
-  // With Alt/Shift, e.key may be a shifted symbol; fall back to the physical key.
   if (e.altKey && /^Key[A-Z]$/.test(e.code)) k = e.code.slice(3);
   if (e.altKey && /^Digit\d$/.test(e.code)) k = e.code.slice(5);
   if (e.altKey && e.code === 'Period') k = '.';
   if (k.length === 1) k = k.toUpperCase();
   return `${e.ctrlKey || e.metaKey ? 'Ctrl+' : ''}${e.altKey ? 'Alt+' : ''}${e.shiftKey ? 'Shift+' : ''}${k}`;
 }
-
-// ---------------------------------------------------------------------------
-// Autocomplete
-// ---------------------------------------------------------------------------
 
 type Suggestion = { word: string; insert: string; caret: number; kind: string; sample: string };
 
@@ -81,8 +72,6 @@ function suggestFor(prefix: string): Suggestion[] {
   const rest = SUGGESTIONS.filter((s) => s.word !== prefix && s.word.toLowerCase().startsWith(p));
   return [...exact, ...rest].slice(0, 9);
 }
-
-// ---------------------------------------------------------------------------
 
 export type MathEditorHandle = { focus: () => void };
 
@@ -219,8 +208,6 @@ export const MathEditor = forwardRef<MathEditorHandle, Props>(function MathEdito
     const prev = value[a - 1];
     const closers: Record<string, string> = { '(': ')', '[': ']', '{': '}' };
 
-    // Smart brackets: wrap selections, auto-close, and let ")" or "]" type over
-    // an auto-inserted closer so half-open intervals like (1, 2] still work.
     if (closers[e.key] && !e.ctrlKey && !e.altKey) {
       e.preventDefault();
       const inner = value.slice(a, b);

@@ -1,17 +1,3 @@
-//! Notes — the student's own notes app, laid out like Apple Notes.
-//!
-//! Separate from a notebook's study notes: these are the student's, in
-//! folders of their own, written in a rich editor (Tiptap) and kept as HTML,
-//! with a plain-text copy for titles, previews and search. The first line of
-//! a note is its title, as in Apple Notes.
-//!
-//! Deleting is soft: a deleted note (or a deleted folder's notes) goes to
-//! Recently Deleted and can be put back — which matters all the more now the
-//! chats can edit and delete notes too.
-//!
-//! Every change is announced (`pad://changed`), so a note open in the window
-//! or a browser tab updates when the assistant writes to it.
-
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use serde_json::json;
@@ -53,15 +39,11 @@ pub struct PadNote {
 #[serde(rename_all = "camelCase")]
 pub struct PadOverview {
     pub folders: Vec<PadFolder>,
-    /// Notes not deleted, in any folder or none.
     pub all: i64,
-    /// Notes in no folder ("Notes").
     pub unfiled: i64,
     pub deleted: i64,
 }
 
-/// The title is the first line with anything on it; the preview is what
-/// follows. Apple Notes does the same.
 pub fn title_and_snippet(text: &str) -> (String, String) {
     let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
     let title: String = lines.next().unwrap_or("").chars().take(120).collect();
@@ -104,8 +86,6 @@ pub fn overview(c: &Connection) -> rusqlite::Result<PadOverview> {
     })
 }
 
-/// Which notes a list shows: all of them, the ones in no folder, one
-/// folder's, or Recently Deleted.
 pub fn notes(c: &Connection, scope: &str, folder: Option<i64>) -> rusqlite::Result<Vec<PadNoteMeta>> {
     let (filter, arg): (&str, Option<i64>) = match scope {
         "deleted" => ("deleted_at IS NOT NULL", None),
@@ -143,7 +123,6 @@ pub fn create(c: &Connection, folder: Option<i64>, html: &str, text: &str) -> ru
     Ok(get(c, c.last_insert_rowid())?.expect("just inserted"))
 }
 
-/// Every word of the query somewhere in the note (title included).
 pub fn search(c: &Connection, query: &str) -> rusqlite::Result<Vec<PadNoteMeta>> {
     let words: Vec<String> = query.split_whitespace().map(|w| format!("%{}%", w.to_lowercase())).collect();
     if words.is_empty() {
@@ -165,8 +144,6 @@ fn clean_name(name: &str) -> Result<String, String> {
     if n.is_empty() { return Err("A folder needs a name.".into()); }
     Ok(n.chars().take(80).collect())
 }
-
-// ------------------------------------------------------------------ commands
 
 #[tauri::command]
 pub fn pad_overview(app: AppHandle, db: State<'_, StudyDb>) -> Result<PadOverview, String> {
@@ -209,7 +186,6 @@ pub fn pad_folder_rename(app: AppHandle, db: State<'_, StudyDb>, id: i64, name: 
     Ok(())
 }
 
-/// A deleted folder's notes go to Recently Deleted, not nowhere.
 #[tauri::command]
 pub fn pad_folder_delete(app: AppHandle, db: State<'_, StudyDb>, id: i64, by: Option<String>) -> Result<(), String> {
     let n = with_db(&app, &db, |c| {
@@ -256,7 +232,6 @@ pub fn pad_note_pin(app: AppHandle, db: State<'_, StudyDb>, id: i64, pinned: boo
     Ok(())
 }
 
-/// To Recently Deleted; `forever` only for a note already there.
 #[tauri::command]
 pub fn pad_note_delete(app: AppHandle, db: State<'_, StudyDb>, id: i64, forever: Option<bool>, by: Option<String>) -> Result<(), String> {
     let n = with_db(&app, &db, |c| {
@@ -315,7 +290,6 @@ mod tests {
         assert_eq!(search(&c, "f = ma").unwrap().len(), 1);
         assert_eq!(search(&c, "forces loose").unwrap().len(), 0, "every word must match");
 
-        // Deleting the folder sends its notes to Recently Deleted.
         c.execute("UPDATE pad_note SET deleted_at = 1, folder_id = NULL WHERE folder_id = ?1", [f]).unwrap();
         c.execute("DELETE FROM pad_folder WHERE id = ?1", [f]).unwrap();
         let o = overview(&c).unwrap();

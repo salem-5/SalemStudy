@@ -1,24 +1,3 @@
-"""Typesetting, in Python.
-
-Salem used to shell out to LaTeX for its PDFs, which meant asking every
-student to install a TeX distribution — a gigabyte of it for MiKTeX, or a
-package manager they may not have. This does the same job with what the app
-already carries: PyMuPDF lays out HTML into pages, and matplotlib's mathtext
-renders the formulas.
-
-Read a job from a JSON file and write a PDF:
-
-    python salem_pdf.py job.json
-
-The job is `{title, html, out, images?, options?}`. `html` is a fragment, not
-a document: the stylesheet and the page furniture are added here so every
-export looks the same whatever produced it.
-
-Maths is written as `\\(...\\)` and `\\[...\\]` in the HTML. Each one is
-rendered to a PNG and swapped for an `<img>`, because MuPDF's layout engine
-draws text, not equations.
-"""
-
 from __future__ import annotations
 
 import base64
@@ -31,7 +10,6 @@ import sys
 
 import pymupdf
 
-# Page furniture, in points. A4 with margins that leave a comfortable measure.
 PAGE = pymupdf.paper_rect("a4")
 MARGIN = 56
 FOOTER = 26
@@ -59,7 +37,6 @@ img { margin: 2pt 0; }
 .caption { color: #555; font-size: 9pt; margin: 0 0 8pt; }
 .muted { color: #777; }
 
-/* Worksheets exported from the Assignment Solver. */
 .question { margin: 0 0 16pt; }
 .marks { color: #666; font-size: 9pt; }
 .namefields { margin: 0 0 14pt; }
@@ -79,18 +56,11 @@ img { margin: 2pt 0; }
 .scheme td.scheme-q { width: 26pt; color: #666; }
 """
 
-# ---------------------------------------------------------------- maths
-
 
 def _mathtext_png(latex: str, display: bool, dpi: int = 240) -> tuple[bytes, float, float] | None:
-    """One formula as a PNG, with the size it should be drawn at.
-
-    Returns `None` when the formula will not parse — a broken formula should
-    leave its source visible in the document, not blow up the export.
-    """
     import matplotlib
     matplotlib.use("Agg")
-    from matplotlib import figure, mathtext  # noqa: F401
+    from matplotlib import figure, mathtext
     from matplotlib.font_manager import FontProperties
 
     body = latex.strip()
@@ -114,7 +84,6 @@ def _mathtext_png(latex: str, display: bool, dpi: int = 240) -> tuple[bytes, flo
         return None
     finally:
         fig.clf()
-    # Points, so the image sits on the text baseline at the right scale.
     return buffer.getvalue(), width, height
 
 
@@ -122,7 +91,6 @@ _MATH = re.compile(r"\\\((.+?)\\\)|\\\[(.+?)\\\]", re.S)
 
 
 def render_maths(html: str, workdir: str) -> str:
-    """Swap every formula for an image of it."""
     made = {"n": 0}
 
     def one(match: re.Match[str]) -> str:
@@ -130,7 +98,6 @@ def render_maths(html: str, workdir: str) -> str:
         latex = inline if inline is not None else display
         rendered = _mathtext_png(htmllib.unescape(latex), display=inline is None)
         if rendered is None:
-            # Unparseable: show the source rather than dropping the maths.
             return f"<code>{htmllib.escape(latex.strip())}</code>"
         data, width, height = rendered
         made["n"] += 1
@@ -142,8 +109,6 @@ def render_maths(html: str, workdir: str) -> str:
 
     return _MATH.sub(one, html)
 
-
-# ---------------------------------------------------------------- the page
 
 
 def build(job: dict, workdir: str) -> str:
@@ -168,7 +133,6 @@ def build(job: dict, workdir: str) -> str:
         device = writer.begin_page(PAGE)
         more, _ = story.place(frame)
         story.draw(device)
-        # A page number, so a printed stack stays in order.
         writer.end_page()
 
     writer.close()
@@ -177,7 +141,6 @@ def build(job: dict, workdir: str) -> str:
 
 
 def _number_pages(path: str, title: str) -> None:
-    """Footer on every page: the title on the left, "3 / 12" on the right."""
     doc = pymupdf.open(path)
     total = doc.page_count
     for i, page in enumerate(doc, start=1):
@@ -198,7 +161,6 @@ def main() -> int:
         job = json.load(f)
     workdir = os.path.dirname(os.path.abspath(sys.argv[1]))
 
-    # Figures travel with the job as data URLs; MuPDF wants them on disk.
     for image in job.get("images") or []:
         raw = str(image.get("data") or "")
         blob = raw.split(",", 1)[1] if raw.startswith("data:") else raw

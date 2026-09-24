@@ -1,9 +1,3 @@
-//! WebAssign Desk backend.
-//!
-//! The WebAssign bridge runs in-process (see `bridge.rs`); there is no Node
-//! child process. `/api/*` calls from the webview are dispatched straight to
-//! the bridge, while the userscript still talks to it over HTTP on 127.0.0.1.
-
 mod bridge;
 mod data;
 mod python;
@@ -30,16 +24,12 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use bridge::Bridge;
 
-/// The typesetter, shipped with the binary and written into each job's
-/// folder so an export never depends on anything outside the app.
 const PDF_RENDERER: &str = include_str!("../python/salem_pdf.py");
 
 pub(crate) const DEFAULT_BASE_URL: &str = "https://api.deepseek.com";
 const DEFAULT_FLASH_MODEL: &str = "deepseek-flash";
 const DEFAULT_PRO_MODEL: &str = "deepseek-v4-pro";
 
-/// AI settings, kept in a JSON file under the app config dir so the key never
-/// has to live in the webview or the repo.
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct Config {
@@ -49,33 +39,17 @@ pub struct Config {
     base_url: String,
     max_attempts: u32,
     pause_after: u32,
-    /// How hard the model reasons before it answers: "low", "high" or "max".
-    /// The API's own default is "high", which buys little on the short
-    /// tool-choosing steps an agent spends most of its time on and costs real
-    /// seconds on every one of them.
     effort: String,
-    /// Let the solver call the sandboxed `run_python` tool (see python.rs).
     pub python_enabled: bool,
-    /// Always reach for Python on a question that involves calculation.
     python_auto: bool,
-    /// Interpreter override; empty means the app's managed virtualenv.
     pub python_path: String,
-    /// Seconds a single snippet may run before it is stopped.
     pub python_timeout: u32,
     pub python_memory_mb: u32,
-    /// Snippets the model may run per solve attempt.
     python_max_calls: u32,
-    /// Closing the window hides it to the tray instead of quitting, so tab
-    /// mode (and anything running) carries on.
     pub(crate) close_to_tray: bool,
-    /// Which provider answers (a models.dev id, or "ollama"). DeepSeek by
-    /// default, which is what the app spoke before there were others.
     pub(crate) provider: String,
-    /// An API key per provider, so switching back and forth keeps them.
     pub(crate) keys: std::collections::HashMap<String, String>,
-    /// Price and limits of the chosen models, from the catalogue.
     pub(crate) models_info: std::collections::HashMap<String, providers::ModelInfo>,
-    /// How much context Ollama gives a local model (tokens).
     pub(crate) ollama_ctx: u32,
 }
 
@@ -122,7 +96,6 @@ struct ConfigPatch {
     python_max_calls: Option<u32>,
     close_to_tray: Option<bool>,
     provider: Option<String>,
-    /// Which provider `api_key` is for; the current one when left out.
     key_provider: Option<String>,
     models_info: Option<std::collections::HashMap<String, providers::ModelInfo>>,
     ollama_ctx: Option<u32>,
@@ -151,21 +124,13 @@ pub(crate) fn write_config(app: &AppHandle, cfg: &Config) -> Result<(), String> 
 pub(crate) struct AppState {
     bridge: Bridge,
     http: reqwest::Client,
-    /// Separate client: thinking-model replies can take several minutes.
     deepseek: reqwest::Client,
-    /// Controls for in-flight LaTeX exports. Several run at once, and they
-    /// share the pause/cancel switches: the dialog's buttons stop the batch.
     export_pause: Arc<AtomicBool>,
     export_cancel: Arc<AtomicBool>,
-    /// Exports currently running, so only the first one of a batch clears the
-    /// switches that a later Cancel sets.
     export_active: Arc<AtomicUsize>,
-    /// Stream ids the user stopped; `deepseek_stream` checks between chunks.
     cancelled_streams: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
-/// `/api/*` for the webview. Dispatches straight to the in-process bridge, so
-/// no loopback HTTP round-trip is needed.
 #[tauri::command]
 async fn api(
     state: State<'_, AppState>,
@@ -188,10 +153,6 @@ async fn api(
     }
 }
 
-/// Fetch a WebAssign image and return it as a data URL. WebAssign sends no CORS
-/// headers, so the webview can't read image pixels itself; with a data URL the
-/// UI can check whether a figure has a light background and needs dark-mode
-/// treatment. Only https webassign.net URLs are allowed.
 #[tauri::command]
 async fn fetch_image(state: State<'_, AppState>, url: String) -> Result<String, String> {
     const MAX_BYTES: usize = 8 * 1024 * 1024;
@@ -271,7 +232,6 @@ fn set_config(app: AppHandle, patch: ConfigPatch) -> Result<Value, String> {
         let v = v.trim().to_string();
         if !v.is_empty() && v != providers::provider_of(&c) {
             c.provider = v;
-            // A new provider brings its own endpoint unless one is given.
             if patch.base_url.is_none() { c.base_url = String::new(); }
         }
     }
@@ -283,11 +243,8 @@ fn set_config(app: AppHandle, patch: ConfigPatch) -> Result<Value, String> {
     }
     if let Some(m) = patch.models_info { c.models_info.extend(m); }
     if let Some(n) = patch.ollama_ctx { c.ollama_ctx = n.clamp(2048, 262_144); }
-    // Empty clears it: a provider with nothing to pick yet (Ollama with no
-    // models pulled) must not keep the last provider's model.
     if let Some(v) = patch.flash_model { c.flash_model = v.trim().to_string(); }
     if let Some(v) = patch.pro_model { c.pro_model = v.trim().to_string(); }
-    // Empty means "the provider's own endpoint".
     if let Some(v) = patch.base_url { c.base_url = v.trim().to_string(); }
     if let Some(v) = patch.max_attempts { c.max_attempts = v.clamp(1, 10); }
     if let Some(v) = patch.pause_after { c.pause_after = v.min(10); }
@@ -306,9 +263,6 @@ fn set_config(app: AppHandle, patch: ConfigPatch) -> Result<Value, String> {
     Ok(get_config(app))
 }
 
-/// Chat completion against DeepSeek. Images are allowed only for the Flash
-/// model, and only inside user messages (DeepSeek's rule). Returns the message
-/// content plus any chain-of-thought reasoning.
 #[tauri::command]
 async fn deepseek_chat(
     state: State<'_, AppState>,
@@ -351,8 +305,6 @@ async fn deepseek_chat(
     }
     providers::shape(&ep, &c, &mut body);
 
-    // Everything from here is one piece of work that a Stop can cut short:
-    // a deck being stopped must not keep paying for the passes in flight.
     let work = async {
         if ep.is_local() {
             let mut reply = providers::ollama_chat(&state.deepseek, &c, &body, |_, _| {}, || false).await?;
@@ -393,11 +345,6 @@ async fn deepseek_chat(
     }
 }
 
-/// Streamed chat completion: the same request as `deepseek_chat` with
-/// `stream: true`. Every text delta is emitted as an `ai://stream` event
-/// tagged with `id`, so the chat can show tokens as they arrive; tool calls are
-/// reassembled from their fragments. Returns the whole message at the end, in
-/// the same shape as `deepseek_chat`. `ai_cancel(id)` stops it mid-stream.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn deepseek_stream(
@@ -484,8 +431,6 @@ async fn deepseek_stream(
             let Ok(v) = serde_json::from_str::<Value>(data) else { continue };
             let (content, reasoning) = acc.absorb(&v);
             if !content.is_empty() || !reasoning.is_empty() {
-                // Through tab mode too: a chat in a browser tab reads its reply from
-                // these, and without them it got the price and no words.
                 tabmode::notify(&app, "ai://stream", json!({ "id": id, "content": content, "reasoning": reasoning }));
             }
         }
@@ -497,7 +442,6 @@ async fn deepseek_stream(
     Ok(reply)
 }
 
-/// Resolves once `ai_cancel` has been called for `id`.
 async fn cancelled(state: &AppState, id: &str) {
     loop {
         tokio::time::sleep(Duration::from_millis(150)).await;
@@ -507,9 +451,6 @@ async fn cancelled(state: &AppState, id: &str) {
     }
 }
 
-/// Log a completion's tokens and cost, and return the cost (USD) so the
-/// caller can show what that piece of work cost. Usage is bookkeeping: a
-/// failure here must never fail the request.
 pub(crate) fn record_usage(app: &AppHandle, db: &study::StudyDb, model: &str, feature: Option<&str>, usage: Option<&Value>) -> f64 {
     let Some(u) = usage.filter(|u| u.is_object()) else { return 0.0 };
     let price = providers::price(&read_config(app), model);
@@ -517,7 +458,6 @@ pub(crate) fn record_usage(app: &AppHandle, db: &study::StudyDb, model: &str, fe
     study::usage::cost_of(model, u, study::now_ms(), price)
 }
 
-/// Stop a streamed completion; the next chunk boundary ends it.
 #[tauri::command]
 fn ai_cancel(state: State<'_, AppState>, id: String) {
     if let Ok(mut s) = state.cancelled_streams.lock() {
@@ -525,22 +465,16 @@ fn ai_cancel(state: State<'_, AppState>, id: String) {
     }
 }
 
-/// Pieces of a streamed reply, put back together.
 #[derive(Default)]
 pub(crate) struct StreamAcc {
     content: String,
     reasoning: String,
     model: String,
     usage: Value,
-    /// Tool calls by index: id, name, argument text so far.
     tools: std::collections::BTreeMap<u64, StreamCall>,
     pub(crate) cancelled: bool,
 }
 
-/// One tool call as it streams in: its pieces, plus anything else the
-/// provider hangs on it. Gemini 3 puts a `thought_signature` in
-/// `extra_content`, and refuses the next request (HTTP 400) unless it comes
-/// back with the call exactly as it was sent.
 #[derive(Default)]
 pub(crate) struct StreamCall {
     id: String,
@@ -550,7 +484,6 @@ pub(crate) struct StreamCall {
 }
 
 impl StreamAcc {
-    /// Fold one SSE chunk in; returns the new content and reasoning text.
     pub(crate) fn absorb(&mut self, v: &Value) -> (String, String) {
         if let Some(m) = v.get("model").and_then(Value::as_str) {
             self.model = m.to_string();
@@ -562,7 +495,6 @@ impl StreamAcc {
             return (String::new(), String::new());
         };
         let content = delta.get("content").and_then(Value::as_str).unwrap_or("").to_string();
-        // DeepSeek calls it reasoning_content; OpenRouter, Ollama and others, reasoning.
         let reasoning = delta.get("reasoning_content").or_else(|| delta.get("reasoning")).and_then(Value::as_str).unwrap_or("").to_string();
         self.content.push_str(&content);
         self.reasoning.push_str(&reasoning);
@@ -581,7 +513,6 @@ impl StreamAcc {
                         entry.args.push_str(a);
                     }
                 }
-                // Everything else on the call is kept as it came.
                 if let Some(obj) = call.as_object() {
                     for (k, v) in obj {
                         if !matches!(k.as_str(), "index" | "id" | "type" | "function") && !v.is_null() {
@@ -616,7 +547,6 @@ impl StreamAcc {
     }
 }
 
-/// Current DeepSeek account balance (`GET /user/balance`).
 #[tauri::command]
 async fn deepseek_balance(state: State<'_, AppState>, app: AppHandle) -> Result<Value, String> {
     let c = read_config(&app);
@@ -646,8 +576,6 @@ async fn deepseek_balance(state: State<'_, AppState>, app: AppHandle) -> Result<
     Ok(value)
 }
 
-/// Loopback, link-local and RFC1918 addresses that a question should never be
-/// able to make the app fetch.
 pub(crate) fn is_private_host(host: &str) -> bool {
     use std::net::IpAddr;
     let h = host.trim_matches(|c| c == '[' || c == ']').to_ascii_lowercase();
@@ -661,10 +589,6 @@ pub(crate) fn is_private_host(host: &str) -> bool {
     }
 }
 
-/// Fetch any http(s) image as a data URL, for the vision model. Unlike
-/// `fetch_image`, this is not limited to webassign.net: questions can embed
-/// figures from a CDN. Private/loopback hosts are refused so a crafted question
-/// cannot use this as a local-network probe.
 #[tauri::command]
 async fn fetch_image_any(state: State<'_, AppState>, url: String) -> Result<String, String> {
     const MAX_BYTES: usize = 12 * 1024 * 1024;
@@ -700,17 +624,12 @@ async fn fetch_image_any(state: State<'_, AppState>, url: String) -> Result<Stri
     Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes)))
 }
 
-/// A figure that travels with an export, as a data URL.
 #[derive(Deserialize)]
 struct ExportImage {
     file: String,
     data: String,
 }
 
-/// Export one assignment. Several of these run at once when a batch is
-/// exported, so each builds in a scratch folder of its own — every document
-/// names its figures `figure-1.png`, and two jobs sharing a folder would
-/// overwrite each other's.
 #[tauri::command]
 async fn export_pdf(
     app: AppHandle,
@@ -727,8 +646,6 @@ async fn export_pdf(
         .or_else(|_| app.path().download_dir())
         .map_err(|e| format!("cannot find the Documents folder: {e}"))?;
     let work = scratch_dir(&app, &safe_name(&name))?;
-    // Only the first job of a batch clears the switches; a later one starting
-    // must not undo a Cancel the user has already pressed.
     if state.export_active.fetch_add(1, Ordering::SeqCst) == 0 {
         state.export_cancel.store(false, Ordering::Relaxed);
         state.export_pause.store(false, Ordering::Relaxed);
@@ -752,7 +669,6 @@ async fn export_pdf(
     out.map_err(|e| format!("export task failed: {e}"))?
 }
 
-/// A private folder to build one document in, under the app cache dir.
 fn scratch_dir(app: &AppHandle, base: &str) -> Result<PathBuf, String> {
     let root = app
         .path()
@@ -771,7 +687,6 @@ fn scratch_dir(app: &AppHandle, base: &str) -> Result<PathBuf, String> {
 
 static EXPORT_SEQ: AtomicUsize = AtomicUsize::new(0);
 
-/// Build folders only outlive an export after a crash. Called once at startup.
 fn sweep_exports(app: &AppHandle) {
     let Ok(root) = app.path().app_cache_dir().map(|d| d.join("export")) else { return };
     let Ok(entries) = fs::read_dir(&root) else { return };
@@ -793,7 +708,6 @@ fn export_cancel(state: State<'_, AppState>) {
     state.export_pause.store(false, Ordering::Relaxed);
 }
 
-/// Hand a file to whatever the system opens it with (a PDF viewer, usually).
 #[tauri::command]
 fn open_path(path: String) -> Result<(), String> {
     let p = std::path::PathBuf::from(&path);
@@ -802,8 +716,6 @@ fn open_path(path: String) -> Result<(), String> {
     }
     #[cfg(windows)]
     let mut cmd = {
-        // `start` is a shell builtin, and its first quoted argument is a window
-        // title, so the path has to be the second one.
         let mut c = std::process::Command::new("cmd.exe");
         c.arg("/C").arg("start").arg("").arg(&p);
         c
@@ -825,8 +737,6 @@ fn open_path(path: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Where exports are written, so the app can offer to open the folder.
-/// Open an http(s) link in the default browser (YouTube timestamps, citations).
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
     let parsed = reqwest::Url::parse(&url).map_err(|e| format!("not a link: {e}"))?;
@@ -873,7 +783,6 @@ fn reveal_path(path: String) -> Result<(), String> {
     } else {
         p.parent().map(|d| d.to_path_buf()).unwrap_or_else(|| p.clone())
     };
-    // Windows and macOS can select the file itself; elsewhere open the folder.
     #[cfg(windows)]
     let mut cmd = {
         let mut c = std::process::Command::new("explorer.exe");
@@ -905,7 +814,6 @@ fn reveal_path(path: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Delete the intermediate files an export creates, leaving only the PDF.
 fn safe_name(s: &str) -> String {
     let out: String = s
         .chars()
@@ -916,7 +824,6 @@ fn safe_name(s: &str) -> String {
     out.chars().take(80).collect()
 }
 
-/// Keep a spawned console program (pdflatex) from flashing a terminal window.
 pub(crate) fn hide_window(cmd: &mut std::process::Command) {
     #[cfg(windows)]
     {
@@ -926,8 +833,6 @@ pub(crate) fn hide_window(cmd: &mut std::process::Command) {
     }
 }
 
-/// Move a finished file out of the build folder and into the export folder,
-/// across filesystems if that is where Documents lives.
 fn move_out(from: &std::path::Path, to: &std::path::Path) -> Result<(), String> {
     if std::fs::rename(from, to).is_ok() {
         return Ok(());
@@ -938,19 +843,8 @@ fn move_out(from: &std::path::Path, to: &std::path::Path) -> Result<(), String> 
 }
 
 #[allow(clippy::too_many_arguments)]
-// Generic over the runtime so the tests can drive it with a mock app; the only
-// thing the handle is used for is the progress event.
-/// Turn a document into a PDF with the app's own Python.
-///
-/// This used to run pdflatex or Tectonic, which meant asking every student to
-/// install a TeX distribution before they could export anything. PyMuPDF and
-/// matplotlib are already in Salem's environment for reading PDFs and drawing
-/// figures, so the same environment now does the typesetting too — see
-/// `python/salem_pdf.py`.
 fn export_pdf_blocking<R: tauri::Runtime>(
     app: &AppHandle<R>,
-    // The interpreter to render with, resolved by the caller: this stays
-    // generic over the runtime so the tests can drive it.
     python: &std::path::Path,
     dir: &std::path::Path,
     work: &std::path::Path,
@@ -963,8 +857,6 @@ fn export_pdf_blocking<R: tauri::Runtime>(
     job: &str,
 ) -> Result<Value, String> {
     let emit = |stage: &str, line: &str| {
-        // `job` tells the dialog which document a line belongs to when several
-        // are being written at once.
         let _ = app.emit("export://progress", json!({ "job": job, "stage": stage, "line": line }));
     };
     emit("stage", "Laying out the pages…");
@@ -973,7 +865,6 @@ fn export_pdf_blocking<R: tauri::Runtime>(
     let out_pdf = dir.join(format!("{base}.pdf"));
     let built = work.join(format!("{base}.pdf"));
 
-    // The renderer reads one file and writes one file, so a job is a folder.
     let job_file = work.join("job.json");
     let payload = json!({
         "title": name,
@@ -1016,7 +907,6 @@ fn export_pdf_blocking<R: tauri::Runtime>(
     Ok(json!({ "pdf": out_pdf.to_string_lossy(), "tex": Value::Null }))
 }
 
-/// Block while the export dialog's Pause is held, and give up on Cancel.
 fn wait_while_paused(pause: &AtomicBool, cancel: &AtomicBool) -> Result<(), String> {
     while pause.load(Ordering::Relaxed) {
         if cancel.load(Ordering::Relaxed) {
@@ -1044,7 +934,6 @@ fn bridge_info(state: State<'_, AppState>) -> Value {
 
 #[tauri::command]
 fn restart_bridge(state: State<'_, AppState>) -> Value {
-    // The bridge lives in this process and cannot die; report its status instead.
     bridge_info(state)
 }
 
@@ -1087,10 +976,6 @@ pub fn run() {
     let bridge = Bridge::new();
 
     let app = tauri::Builder::default()
-        // One Salem at a time: two would share one database and one tab-mode
-        // port and trip over each other. A second launch exits before any of
-        // its setup runs, and the one already running comes to the front.
-        // First, so no other plugin starts in the copy that is turned away.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| tray::show_main(app)))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
@@ -1111,7 +996,6 @@ pub fn run() {
         .setup(move |app| {
             start_server(bridge.clone());
             bridge::spawn_logger(bridge.clone());
-            // Sandbox folders only ever outlive a run after a crash.
             python::sweep_sandboxes(&app.handle().clone());
             sweep_exports(&app.handle().clone());
             if let Err(e) = tray::install(app.handle()) {
@@ -1120,9 +1004,6 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Closing hides to the tray (the default), so tab mode keeps
-            // serving and anything running keeps running. Quit is in the
-            // tray's menu.
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "main" && read_config(window.app_handle()).close_to_tray {
                     api.prevent_close();
@@ -1275,13 +1156,10 @@ pub fn run() {
         .expect("error while building WebAssign Desk");
 
     app.run(|app, event| {
-        // macOS: clicking the Dock icon with the window hidden brings it back.
         #[cfg(target_os = "macos")]
         if let tauri::RunEvent::Reopen { .. } = event {
             tray::show_main(app);
         }
-        // Quitting: a local model is gigabytes of memory, and Ollama keeps it
-        // loaded for minutes after the last request. Unload it and stop Ollama.
         if let tauri::RunEvent::Exit = event {
             if providers::provider_of(&read_config(app)) == providers::OLLAMA {
                 tauri::async_runtime::block_on(providers::stop_ollama(app));
@@ -1318,8 +1196,6 @@ mod stream_tests {
 
     #[test]
     fn keeps_what_the_provider_hangs_on_a_tool_call() {
-        // Gemini 3: the call's thought_signature must go back with it, or the
-        // next request is refused.
         let mut acc = StreamAcc::default();
         acc.absorb(&json!({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c1", "type": "function",
             "function": {"name": "create_subject", "arguments": "{}"},
@@ -1338,8 +1214,6 @@ mod export_tests {
     const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
     fn doc(title: &str) -> String {
-        // Every document refers to `figure-1.png`, which is exactly the case
-        // that used to make two parallel exports overwrite each other.
         format!(
             "\\documentclass{{article}}\\usepackage{{graphicx}}\\begin{{document}}\
              \\section*{{{title}}}\\includegraphics[width=1cm]{{figure-1.png}}\\end{{document}}"
@@ -1350,9 +1224,6 @@ mod export_tests {
         vec![ExportImage { file: "figure-1.png".into(), data: format!("data:image/png;base64,{PNG}") }]
     }
 
-    /// Where the renderer lives on this machine, or `None` if Python is not
-    /// set up here. The export tests are about the pipeline, not about
-    /// whether a particular laptop has an environment.
     fn renderer() -> Option<std::path::PathBuf> {
         let venv = dirs_next_data()?.join("net.serverside.webassign-desk/python/venv/bin/python3");
         venv.is_file().then_some(venv)
@@ -1362,8 +1233,6 @@ mod export_tests {
         std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("Library/Application Support"))
     }
 
-    /// Three documents rendered at once land as three PDFs, and nothing else
-    /// is left in the export folder.
     #[test]
     fn parallel_exports_do_not_collide() {
         let Some(python) = renderer() else {
@@ -1419,7 +1288,6 @@ mod export_tests {
         let _ = fs::remove_dir_all(&root);
     }
 
-    /// Cancelling stops the export rather than letting it finish quietly.
     #[test]
     fn a_cancelled_export_stops() {
         let Some(python) = renderer() else { return };

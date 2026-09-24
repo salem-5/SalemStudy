@@ -9,7 +9,6 @@ const fmtMin = (ms: number) => { const m = Math.round(ms / 60_000); return m >= 
 const pct = (v: number | null) => (v === null ? '–' : `${Math.round(v * 100)}%`);
 const when = (t: number) => new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-/** Flashcard answers, deck scores, quiz scores and weak topics for one notebook. */
 export function Analytics({ notebookId, version }: { notebookId: number; version: number }) {
   const [data, setData] = useState<{ reviews: Review[]; runs: DeckRun[]; attempts: Attempt[] } | null>(null);
 

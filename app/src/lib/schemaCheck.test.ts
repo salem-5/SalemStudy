@@ -93,8 +93,6 @@ describe('checkSchema', () => {
   });
 
   it('reads a number and the same number as text as one answer', () => {
-    // "answer": 2 for an option index, where the schema says string: one
-    // quiz pass in seven used to be thrown away over the quotes.
     assert.equal(checkSchema(2, { type: 'string' }), '');
     assert.equal(checkSchema('2', { type: 'integer' }), '');
     assert.equal(checkSchema('0.5', { type: 'number' }), '');

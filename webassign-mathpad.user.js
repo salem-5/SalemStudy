@@ -13,37 +13,14 @@
 // @run-at       document-idle
 // ==/UserScript==
 
-/*
- * Console usage (run mp.help() for the full syntax table):
- *   mp("x^2 + 1/2")          write into the selected box (last one you clicked)
- *   mp(2, "<2p, -3q>")       write into question 2 (first box)
- *   mp("8b", "sqrt(x+1)")    question 8, part b  (also "8.2")
- *   mp.append(2, "+ 5")      append to what's already there
- *   mp.clear(2)              empty the box
- *   mp.text(2)               read the box back as typeable text
- *   mp.boxes()               table of every math box on the page
- *   mp.parse("...")          show the MathML without writing anything
- *   mp.raw(2, "<math>...")   write raw MathML
- *   mp.open(2) / mp.close()  open / close the full pad
- *   mp.press("Fraction")     click a real toolbar button in the open pad
- *
- * The console helpers never submit anything. Submitting only happens through
- * the REST API (POST .../submit) when bridge.js is running — see README.md.
- */
-
 (function () {
     'use strict';
 
-    // Page globals (mathTypeEditor, MooTools, fetch) live on the real page window.
     const W = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
     const NS = 'http://www.w3.org/1998/Math/MathML';
     const EMPTY = `<math xmlns="${NS}"/>`;
     const BOX_ID_RE = /^R[A-Z]_\d+_(\d+)_(\d+)_\d+$/;
-
-    // ---------------------------------------------------------------------------
-    // Symbol tables — every entry mirrors the MathML the real pad buttons emit.
-    // ---------------------------------------------------------------------------
 
     const TRIG = [
         'sin', 'cos', 'tan', 'csc', 'sec', 'cot',
@@ -58,13 +35,11 @@
     const LOGS = ['log', 'ln'];
     const SPECIAL_FUNCS = ['sqrt', 'cbrt', 'root', 'abs', 'exp', 'vec', 'hat', 'arrow'];
 
-    // Lowercase greek -> <mi>, as the Greek tab emits. Note: pad "phi" is U+03D5.
     const GREEK_LOWER = {
         alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ε', zeta: 'ζ', eta: 'η', theta: 'θ',
         iota: 'ι', kappa: 'κ', lambda: 'λ', mu: 'μ', nu: 'ν', xi: 'ξ', omicron: 'ο', pi: 'π', rho: 'ρ',
         sigma: 'σ', tau: 'τ', upsilon: 'υ', phi: 'ϕ', varphi: 'φ', chi: 'χ', psi: 'ψ', omega: 'ω',
     };
-    // Capital greek -> <mo>, as the Greek tab's "More" panel emits.
     const GREEK_UPPER = {
         Alpha: 'Α', Beta: 'Β', Gamma: 'Γ', Delta: 'Δ', Epsilon: 'Ε', Zeta: 'Ζ', Eta: 'Η', Theta: 'Θ',
         Iota: 'Ι', Kappa: 'Κ', Lambda: 'Λ', Mu: 'Μ', Nu: 'Ν', Xi: 'Ξ', Omicron: 'Ο', Pi: 'Π', Rho: 'Ρ',
@@ -81,15 +56,13 @@
     };
     const INFIX_WORDS = { union: '∪', cup: '∪', intersect: '∩', cap: '∩' };
 
-    // `#name` escapes for buttons that have no natural typed form.
     const HASH = {
-        i: () => mi('\u{1D5F6}'), j: () => mi('\u{1D5F7}'), k: () => mi('\u{1D5F8}'), // Vectors tab bold i/j/k
-        im: () => mi('i', ' mathvariant="normal"'),                                   // "Imaginary number i"
+        i: () => mi('\u{1D5F6}'), j: () => mi('\u{1D5F7}'), k: () => mi('\u{1D5F8}'),
+        im: () => mi('i', ' mathvariant="normal"'),
         deg: () => mo('°'), empty: () => mo('∅'), inf: () => mo('∞'), pi: () => mi('π'),
         dne: () => mtext('DNE'), undef: () => mtext('UNDEFINED'), nosol: () => mtext('NO SOLUTION'),
     };
 
-    // Infix operators (output as a flat <mo>). Values are what the pad emits.
     const INFIX = {
         '+': '+', '-': '-', '−': '-', '=': '=', '<': '<', '>': '>',
         '<=': '≤', '≤': '≤', '>=': '≥', '≥': '≥', '!=': '≠', '≠': '≠',
@@ -97,19 +70,12 @@
         '∪': '∪', '∩': '∩', '⇀': '⇀', '⇌': '⇌', '←': '←',
     };
     const TIMES = ['*', '⋅', '·', '×', '.'];
-    // Single unicode characters that act as a value.
     const SYMBOL_CHARS = { 'π': () => mi('π'), '∞': () => mo('∞'), '°': () => mo('°'), '∅': () => mo('∅'), 'ℏ': () => mi('ℏ') };
 
     const WORDS = [
         ...TRIG, ...Object.keys(TRIG_ALIAS), ...LOGS, ...SPECIAL_FUNCS,
         ...Object.keys(GREEK_LOWER), ...Object.keys(GREEK_UPPER), ...Object.keys(CONST_WORDS), ...Object.keys(INFIX_WORDS),
     ].sort((a, b) => b.length - a.length);
-
-    // ---------------------------------------------------------------------------
-    // MathML node helpers. A node is { x: xml, multi?: bool, paren?: node }.
-    // `multi` means x is several sibling elements (needs <mrow> inside a slot);
-    // `paren` is set on plain (...) groups so they can be unwrapped in / ^ _ sqrt.
-    // ---------------------------------------------------------------------------
 
     const escXml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const enc = (s) => [...s].map((c) => (c.codePointAt(0) > 126
@@ -126,7 +92,6 @@
     const concat = (...ns) => ({ x: ns.map((n) => n.x).join(''), multi: true });
 
     function number(v) {
-        // The pad splits typed decimals: 12.5 -> <mn>12</mn><mo>.</mo><mn>5</mn>
         const out = [];
         v.split(/(\.)/).forEach((p) => {
             if (p === '.') out.push(mo('.'));
@@ -134,10 +99,6 @@
         });
         return group(out);
     }
-
-    // ---------------------------------------------------------------------------
-    // Tokenizer
-    // ---------------------------------------------------------------------------
 
     const TWO_CHAR = ['<=', '>=', '!=', '->', '**'];
 
@@ -194,10 +155,6 @@
         return t;
     }
 
-    // ---------------------------------------------------------------------------
-    // Parser: text -> MathML body (without the <math> wrapper)
-    // ---------------------------------------------------------------------------
-
     function parse(src) {
         const toks = tokenize(String(src));
         let pos = 0;
@@ -207,7 +164,6 @@
         const fail = (msg) => { throw new SyntaxError(`${msg} (at token ${pos + 1} of "${src}")`); };
         const expect = (v) => { if (!isOp(peek(), v)) fail(`Expected "${v}"`); next(); };
 
-        // Flat sequence of runs separated by infix operators, until a closer.
         function parseSeq(closers) {
             const out = [];
             let operandPos = true;
@@ -219,7 +175,6 @@
                 }
                 if (tk.k === 'op') {
                     if (tk.v === '>=' && closers.includes('>')) {
-                        // "<a,b>=c": split into closing ">" and "="
                         toks.splice(pos, 1, { k: 'op', v: '>' }, { k: 'op', v: '=' });
                         break;
                     }
@@ -246,9 +201,6 @@
             return out;
         }
 
-        // A run of factors joined by implicit/explicit multiplication and "/".
-        // "/" takes everything in the run so far as numerator and one factor as
-        // denominator, which matches left-to-right evaluation: 1/2x = (1/2)x.
         function parseRun(closers) {
             let run = [];
             for (;;) {
@@ -321,7 +273,6 @@
             return base;
         }
 
-        // Exponent / subscript: a (group), or [sign] atom, with right-assoc ^.
         function parseScript(isSup) {
             let sign = null;
             if (isOp(peek(), '-') || isOp(peek(), '+') || isOp(peek(), '−')) sign = next().v === '+' ? '+' : '-';
@@ -354,7 +305,6 @@
             return node;
         }
 
-        // Argument of a function: (…) contents, or a single factor.
         function fnArg(closers) {
             if (isOp(peek(), '(')) {
                 next();
@@ -392,7 +342,6 @@
                     expect(')');
                     if (args.length === 2) return { x: `<mroot>${slot(args[1])}${slot(args[0])}</mroot>` };
                     if (args.length === 1 && isOp(peek(), '(')) {
-                        // root(n)(x)
                         return { x: `<mroot>${slot(fnArg(closers))}${slot(args[0])}</mroot>` };
                     }
                     if (args.length === 1) return { x: `<msqrt>${args[0].x}</msqrt>` };
@@ -449,10 +398,6 @@
         return xmlOf(out);
     }
 
-    // ---------------------------------------------------------------------------
-    // MathML -> typeable text (for reading answers back)
-    // ---------------------------------------------------------------------------
-
     const REV_MO = { '⋅': '*', '≤': '<=', '≥': '>=', '≠': '!=', '→': '->', '∞': 'inf', '∅': 'empty', '°': 'deg', '∪': ' union ', '∩': ' intersect ', '÷': '÷' };
     const REV_MI = Object.assign(
         { '\u{1D5F6}': '#i', '\u{1D5F7}': '#j', '\u{1D5F8}': '#k', 'ℏ': 'hbar' },
@@ -463,7 +408,6 @@
 
     function toText(mathml) {
         const doc = new DOMParser().parseFromString(mathml || EMPTY, 'application/xml');
-        // A parse error document must never be turned into text.
         if (!doc.documentElement || doc.documentElement.localName === 'parsererror') return '';
         const kids = (n) => [...n.children];
         const atomic = (n) => ['mi', 'mn', 'mo', 'mtext', 'mfenced', 'msqrt', 'mroot'].includes(n.localName)
@@ -471,7 +415,6 @@
         const wrap = (n) => (atomic(n) ? tt(n) : `(${tt(n)})`);
         function tt(n) {
             const k = kids(n);
-            // Include bare text nodes: some answers come back as <math>0</math>.
             const all = () => [...n.childNodes].map((c) => (c.nodeType === 3 ? c.nodeValue : tt(c))).join('');
             const txt = n.textContent;
             switch (n.localName) {
@@ -504,10 +447,6 @@
         }
         return tt(doc.documentElement).replace(/\s+/g, ' ').trim();
     }
-
-    // ---------------------------------------------------------------------------
-    // Page integration
-    // ---------------------------------------------------------------------------
 
     let current = null;
 
@@ -602,7 +541,6 @@
             }
             if (typeof W.warnInvalidMathTypeCharacters === 'function') W.warnInvalidMathTypeCharacters(box.id);
         }
-        // WebAssign loads MooTools, which replaces window.Event, so build events the old way.
         ['input', 'change'].forEach((type) => {
             const ev = document.createEvent('HTMLEvents');
             ev.initEvent(type, true, false);
@@ -618,10 +556,6 @@
     }
 
     const bodyOf = (mathml) => (mathml || '').replace(/^<math[^>]*\/>$/, '').replace(/^<math[^>]*>/, '').replace(/<\/math>$/, '');
-
-    // ---------------------------------------------------------------------------
-    // Console API
-    // ---------------------------------------------------------------------------
 
     async function mp(a, b) {
         return b === undefined ? mp.set(undefined, a) : mp.set(a, b);
@@ -758,13 +692,7 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
     W.mp = mp;
     console.log('[mp] WebAssign MathPad console loaded — type mp.help()');
 
-    // ===========================================================================
-    // REST bridge: bridge.js queues jobs, this tab runs them with the logged-in
-    // session (same-origin fetch) and posts the results back.
-    // ===========================================================================
-
     const BRIDGE = 'http://127.0.0.1:8787';
-    // Reported to the bridge so clients can tell when this script is outdated.
     const SCRIPT_VERSION = '0.3.5';
     const BOX_RE = /^RP?([A-Z])_(\d+)_(\d+)_(\d+)_(\d+)$/;
     const BOX_TYPES = {
@@ -780,7 +708,6 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
         try {
             r = await W.fetch(path, { credentials: 'include', ...opts });
         } catch (e) {
-            // Cross-origin redirects (e.g. to the Cengage login) surface as a network error.
             throw httpError(401, `WebAssign request failed (${e.message}). Is the session still logged in?`);
         }
         const url = new URL(r.url);
@@ -795,10 +722,6 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
         const r = await waFetch(path, opts);
         return new DOMParser().parseFromString(await r.text(), 'text/html');
     }
-
-    // ---------------------------------------------------------------------------
-    // Courses & assignment lists
-    // ---------------------------------------------------------------------------
 
     async function listCourses() {
         const doc = await getDoc('/v4cgi/student.pl');
@@ -856,15 +779,10 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
         };
     }
 
-    // ---------------------------------------------------------------------------
-    // Assignment page parsing
-    // ---------------------------------------------------------------------------
-
     const PAREN_IMG = { angle: ['⟨', '⟩'], paren: ['(', ')'], bracket: ['[', ']'], brace: ['{', '}'], bar: ['|', '|'], vert: ['|', '|'], floor: ['⌊', '⌋'], ceil: ['⌈', '⌉'] };
     const RESOURCE_LINE = /^((Read It|Watch It|Master It|Tutorial|eBook|Resources)\s*\d*\s*)+$/i;
     const BLOCK = new Set(['DIV', 'P', 'BR', 'TR', 'LI', 'UL', 'OL', 'TABLE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'PRE', 'HR']);
 
-    // Label markup for a choice (may contain images or math), sanitized.
     function labelHtml(input, doc) {
         const lbl = (input.id && doc.querySelector(`label[for="${CSS.escape(input.id)}"]`)) || input.closest('label');
         if (!lbl) return null;
@@ -887,19 +805,16 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
         if (!named.length) return null;
         const settingsEl = doc.getElementById(`${id}_settings`);
         let settings = {};
-        try { settings = settingsEl ? JSON.parse(settingsEl.value) : {}; } catch (e) { /* keep {} */ }
+        try { settings = settingsEl ? JSON.parse(settingsEl.value) : {}; } catch (e) { }
 
         let kind;
         let value = '';
         let choices = null;
-        let display = null; // how WebAssign shows it: dropdown | radio | checkbox
+        let display = null;
         if (settings.mathtype) {
             kind = 'math';
             value = named[0].value;
             if (!value) {
-                // Closed/answered boxes render their answer in .mtAnswer rather
-                // than keeping it in the input. Look in the box's whole MathType
-                // wrapper (.mtAnswer can sit beside #editable-math, not inside it).
                 const ed = qEl.querySelector(`#editable-math-${CSS.escape(id)}`);
                 const wrap = (named[0] && (named[0].closest('.mathtype-wrapper') || named[0].closest('.mathtype')))
                     || (ed && (ed.closest('.mathtype-wrapper') || ed));
@@ -933,12 +848,11 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
         }
         const part = parts[Number(boxNum)] || {};
         const tip = doc.getElementById(`tip_${id}`);
-        // Grading mark next to the box, e.g. <span class="waMark single mCorrect"> with an img title.
         const markEl = doc.getElementById(`${id}_mark`);
         const markClass = markEl ? [...markEl.classList].find((c) => /^m[A-Z]/.test(c)) : null;
         const markImg = markEl ? markEl.querySelector('img') : null;
         const mark = markClass ? {
-            state: markClass.slice(1).replace(/^./, (c) => c.toLowerCase()), // mCorrect -> correct
+            state: markClass.slice(1).replace(/^./, (c) => c.toLowerCase()),
             title: markImg ? clean(markImg.getAttribute('title') || markImg.getAttribute('alt')) : null,
         } : null;
         const scoreState = part.scoreState || null;
@@ -972,7 +886,6 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
         };
     }
 
-    // Question HTML -> readable text, with each answer box shown as [1], [2], ...
     function questionText(content, boxList, code) {
         const root = content.cloneNode(true);
         root.querySelectorAll('script:not([type^="math/tex"]), style, .tooltip, noscript').forEach((e) => e.remove());
@@ -1019,14 +932,6 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
             .join('\n');
     }
 
-    // ---------------------------------------------------------------------------
-    // Question HTML for rich clients: sanitized, absolute image URLs, and every
-    // answer widget replaced by a placeholder the client renders itself:
-    //   <span class="wa-slot" data-box="n" [data-sub="k"]>   text/math/dropdown boxes
-    //   <span class="wa-opt" data-box="n" data-value="v">    each radio/checkbox
-    //   <label class="wa-opt-label" data-box data-value>      that option's label
-    // ---------------------------------------------------------------------------
-
     const WA_BASE = 'https://www.webassign.net/web/Student/Assignment-Responses/';
     const DROP = [
         'script:not([type^="math/tex"])', 'style', 'noscript', 'iframe', 'object', 'embed', 'link', 'meta', 'form',
@@ -1037,7 +942,6 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
     function sanitizeTree(root) {
         const d = root.ownerDocument;
         root.querySelectorAll(DROP).forEach((e) => e.remove());
-        // Grading marks wrap a closed question's choices: unwrap, don't drop.
         root.querySelectorAll('.waMark, .waMarkWrap').forEach((m) => m.replaceWith(...m.childNodes));
         root.querySelectorAll('script[type^="math/tex"]').forEach((sc) => {
             const span = d.createElement('span');
@@ -1061,7 +965,6 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
                 }
             }
             if (el.tagName === 'A') {
-                // No navigation from question text; keep the content.
                 const span = d.createElement('span');
                 while (el.firstChild) span.appendChild(el.firstChild);
                 el.replaceWith(span);
@@ -1085,9 +988,6 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
             if (b.kind === 'math') {
                 const ed = root.querySelector(`#editable-math-${esc}`);
                 const wrap = ed && (ed.closest('.mathtype-wrapper') || ed);
-                // Only a disabled editor or a .mtAnswer that actually holds math
-                // counts as closed. An empty .mtAnswer is just a placeholder, and
-                // those boxes must stay editable slots.
                 const ans = wrap && wrap.querySelector('.mtAnswer');
                 const hasAnswer = !!ans && (!!ans.querySelector('math') || (ans.textContent || '').trim() !== '');
                 const closed = !!wrap && (!!(ed && ed.classList.contains('mtDisabled')) || hasAnswer);
@@ -1115,8 +1015,6 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
             const targets = [...root.querySelectorAll(`select[name="${esc}"], textarea[name="${esc}"], input[name="${esc}"]:not([type="hidden"])`)];
             targets.forEach((t, j) => t.replaceWith(slot(n, targets.length > 1 ? j : undefined)));
         });
-        // Closed questions keep their answers as disabled radios/checkboxes (often inside
-        // the grading mark). Show them read-only: <span class="static-opt radio on grade-correct">.
         root.querySelectorAll('input[type="radio"], input[type="checkbox"]').forEach((inp) => {
             const mark = inp.closest('.waMark');
             const m = mark && [...mark.classList].find((c) => /^m[A-Z]/.test(c));
@@ -1128,7 +1026,6 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
             if (lbl) lbl.classList.add('static-chosen', ...(grade ? [`grade-${grade}`] : []));
             inp.replaceWith(s);
         });
-        // Closed/answered math boxes remain as disabled editors: keep only the rendered answer.
         root.querySelectorAll('.mathtype-wrapper').forEach((w) => {
             const span = d.createElement('span');
             span.className = 'wa-static';
@@ -1148,15 +1045,13 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
         return root.innerHTML;
     }
 
-    // WebAssign's own question-layout CSS (watex math, stacks, choice lists),
-    // scoped under .qhtml and recolored for a dark background.
     const QCSS_RE = /(watex|\.wa1|\.stack|subblock|sublabel|subpart|multBox|\.ms\b|fitb|accblock|\.figure|nobr|\.indent|qTextField|questionRadio|wa1list|cap-btm|alt-cap|\.desc\b|studentQuestion)/;
 
     function luminance(value, ctx) {
         ctx.fillStyle = '#010203';
         ctx.fillStyle = value;
         const v = ctx.fillStyle;
-        if (v === '#010203') return null; // not a color (inherit, currentColor, ...)
+        if (v === '#010203') return null;
         let r; let g; let b; let a = 1;
         const hex = /^#([0-9a-f]{6})$/i.exec(v);
         if (hex) {
@@ -1205,7 +1100,7 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
         const [, qid, position] = qEl.id.match(/^question(\d+)_(\d+)$/);
         const header = qEl.querySelector('.js-question-header');
         let info = {};
-        try { info = JSON.parse(header ? header.getAttribute('data-question-display') : '{}') || {}; } catch (e) { /* ignore */ }
+        try { info = JSON.parse(header ? header.getAttribute('data-question-display') : '{}') || {}; } catch (e) { }
         const parts = (info.summary && info.summary.parts) || [];
         const boxList = [...qEl.querySelectorAll('input.wa_question_box')]
             .filter((b) => !b.classList.contains('static'))
@@ -1254,7 +1149,6 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
         };
     }
 
-    // Public shape: drop internal fields the CLI does not need.
     function publicQuestion(q, { html = false } = {}) {
         const { html: qHtml, saved, masteryGroup, boxes: bx, ...rest } = q;
         return {
@@ -1273,10 +1167,6 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
         if (!q) throw httpError(404, `Assignment ${a.id} has no question ${n} (it has ${a.questions.length}).`);
         return q;
     }
-
-    // ---------------------------------------------------------------------------
-    // Answers
-    // ---------------------------------------------------------------------------
 
     function findBox(q, key) {
         const k = String(key).trim();
@@ -1327,7 +1217,6 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
         }
     }
 
-    // answers: ["x^2", "parallel"]  or  {"1": "x^2", "b": "parallel", "<box id>": ...}
     function applyAnswers(q, answers) {
         if (answers === undefined || answers === null) return;
         const entries = Array.isArray(answers)
@@ -1343,8 +1232,6 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
     const trimmed = (v) => String(v === undefined || v === null ? '' : v).trim();
     const changed = (q) => q.boxes.some((b) => trimmed(b.value) !== trimmed(b.original));
 
-    // Mirrors WA.Question.Submittable#getResponses: saved questions send every box,
-    // otherwise only the boxes that changed.
     function questionResponses(q) {
         const boxes = q.saved ? q.boxes : q.boxes.filter((b) => trimmed(b.value) !== trimmed(b.original));
         if (!boxes.length) return null;
@@ -1380,7 +1267,7 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
             body: JSON.stringify(data),
         });
         let result = null;
-        try { result = await r.json(); } catch (e) { /* non-JSON body */ }
+        try { result = await r.json(); } catch (e) { }
         if (result && result.status && String(result.status) !== '200') {
             throw httpError(502, `WebAssign refused the save: ${result.message || JSON.stringify(result).slice(0, 300)}`);
         }
@@ -1400,7 +1287,6 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
             allResponses: changed(q) ? [{ ...resp, masteryGroup: q.masteryGroup }] : [],
             smw: [],
         };
-        // The page adds qid/pos when the question is the one being viewed (index > 0).
         const params = new URLSearchParams({ dep: String(a.id) });
         if (q.number - 1 > 0) {
             data.qid = q.id;
@@ -1456,10 +1342,6 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
         },
     };
 
-    // ---------------------------------------------------------------------------
-    // Bridge polling
-    // ---------------------------------------------------------------------------
-
     const gm = typeof GM_xmlhttpRequest === 'function' ? GM_xmlhttpRequest
         : (typeof GM !== 'undefined' && GM.xmlHttpRequest) ? GM.xmlHttpRequest : null;
 
@@ -1479,7 +1361,7 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
     }
 
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    let jobChain = Promise.resolve(); // run jobs one at a time, in order
+    let jobChain = Promise.resolve();
 
     async function runJob(job) {
         let reply;
@@ -1490,7 +1372,7 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
         } catch (e) {
             reply = { id: job.id, ok: false, status: e.status || 500, error: e.message || String(e) };
         }
-        try { await bridgeRequest('POST', '/_bridge/result', reply, 15000); } catch (e) { /* bridge went away */ }
+        try { await bridgeRequest('POST', '/_bridge/result', reply, 15000); } catch (e) { }
     }
 
     async function pollLoop() {
@@ -1512,16 +1394,15 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
         }
     }
 
-    // One polling tab is enough; other WebAssign tabs stand by until the leader closes.
     function startBridge() {
         if (!gm) return;
         const KEY = 'mpBridgeLeader';
         const me = Math.random().toString(36).slice(2);
         const claim = () => {
             let cur = null;
-            try { cur = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { /* ignore */ }
+            try { cur = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { }
             if (!cur || cur.id === me || Date.now() - cur.t > 10000) {
-                try { localStorage.setItem(KEY, JSON.stringify({ id: me, t: Date.now() })); } catch (e) { /* ignore */ }
+                try { localStorage.setItem(KEY, JSON.stringify({ id: me, t: Date.now() })); } catch (e) { }
                 return true;
             }
             return false;
@@ -1536,10 +1417,10 @@ Nothing is ever submitted — use the page's Submit button yourself.`);
             try {
                 const cur = JSON.parse(localStorage.getItem(KEY) || 'null');
                 if (cur && cur.id === me) localStorage.removeItem(KEY);
-            } catch (e) { /* ignore */ }
+            } catch (e) { }
         });
     }
 
-    mp.api = ACTIONS; // e.g. await mp.api.assignments() from the console
+    mp.api = ACTIONS;
     startBridge();
 }());

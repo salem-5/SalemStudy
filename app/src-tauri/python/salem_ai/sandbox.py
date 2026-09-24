@@ -1,23 +1,3 @@
-"""Python execution for the agents — always the app's real sandbox.
-
-Two shapes of the same thing:
-
-  * `python_tool_result` formats a `run_python` tool call for a tool-calling
-    agent (chat, notebook, task);
-  * `SandboxExecutor` plugs the same sandbox in as a smolagents `CodeAgent`
-    executor, so a code agent's blocks run under the app's audit hook, memory
-    cap and timeout instead of inside this process.
-
-Neither of them simulates anything: if the sandbox cannot run the code, the
-agent is told so and has to deal with it.
-
-The sandbox is deliberately stateless — each call starts a fresh interpreter in
-a throwaway folder. A code agent expects its variables to survive between
-blocks, so the executor replays the blocks that succeeded before, with their
-output swallowed, and then runs the new one. Replay is capped; past that the
-agent is told to carry its state in files instead.
-"""
-
 from __future__ import annotations
 
 import json
@@ -31,8 +11,6 @@ from .state import RunContext, RUNNING_PYTHON, EXECUTING
 
 MAX_REPLAY_CHARS = 60_000
 
-# Defined in the sandbox so a code agent can end a run the way smolagents
-# expects. The sentinel is picked up by the executor below.
 PREAMBLE = '''
 import json as _json, sys as _sys
 class _SalemFinal(BaseException):
@@ -53,8 +31,6 @@ def _indent(code: str) -> str:
 
 def run_in_sandbox(ctx: RunContext, code: str, *, files: list[int] | None = None,
                    sources: list[int] | None = None, timeout: float | None = None) -> dict:
-    """One sandbox call. Raises `HostError` when the sandbox itself is broken;
-    a program that raises comes back as a normal result with `ok: false`."""
     ctx.check()
     ctx.spend_python()
     return ctx.call(
@@ -71,7 +47,6 @@ def run_in_sandbox(ctx: RunContext, code: str, *, files: list[int] | None = None
 
 
 def format_result(result: dict) -> str:
-    """What the agent reads back. Plain text, and every failure stated."""
     parts: list[str] = []
     stdout = (result.get("stdout") or "").strip()
     stderr = (result.get("stderr") or "").strip()
@@ -97,8 +72,6 @@ def format_result(result: dict) -> str:
 
 
 class SandboxExecutor(PythonExecutor):
-    """smolagents' code-agent executor, backed by the app's sandbox."""
-
     def __init__(self, ctx: RunContext, *, files: list[int] | None = None,
                  sources: list[int] | None = None, timeout: float = 60.0) -> None:
         self.ctx = ctx
@@ -109,10 +82,6 @@ class SandboxExecutor(PythonExecutor):
         self.variables: dict[str, Any] = {}
         self.tool_names: list[str] = []
 
-    # smolagents hands the code agent's tools to the executor so the generated
-    # code can call them. Ours run on the app side, out of the sandbox's reach,
-    # so a code agent is only ever given computation tools; anything else is
-    # named in the prompt as unavailable rather than silently missing.
     def send_tools(self, tools: dict[str, Tool]) -> None:
         self.tool_names = [name for name in tools if name != "final_answer"]
 
@@ -145,14 +114,11 @@ class SandboxExecutor(PythonExecutor):
         })
         self.ctx.state(EXECUTING)
         if not ok:
-            # A traceback is the agent's problem to fix, and it is given the
-            # real one rather than a summary.
             raise RuntimeError(logs)
         return CodeOutput(output=final if final is not None else result.get("result"),
                           logs=logs, is_final_answer=final is not None)
 
     def _script(self, code: str) -> str:
-        """Replay of what already ran (silenced), then this block."""
         replay = ""
         kept: list[str] = []
         total = 0
@@ -180,7 +146,6 @@ def _reprable(value: Any) -> bool:
 
 
 def _take_final(stdout: str) -> tuple[Any | None, str]:
-    """Split the `final_answer` sentinel out of the captured output."""
     marker = "__SALEM_FINAL__"
     at = stdout.rfind(marker)
     if at < 0:

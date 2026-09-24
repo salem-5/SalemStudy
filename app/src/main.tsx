@@ -25,11 +25,8 @@ function fatal(message: string) {
 }
 
 async function boot() {
-  // Decided once, before the tab's stand-in for Tauri exists.
   const isTab = inTabMode();
   const isDesktop = '__TAURI_INTERNALS__' in window && !isTab;
-  // Served by the app's own tab-mode server: talk to it over HTTP instead of
-  // through Tauri. Everything above this line is the same app.
   if (isTab) {
     try {
       await installTabTransport(tabToken()!);
@@ -38,21 +35,15 @@ async function boot() {
       return;
     }
   }
-  // One set of preferences for the window and every tab: taken before the
-  // first render, so a tab opens in the window's theme rather than its own.
   if (isDesktop || isTab) {
     await startPrefSync(isTab ? 'tab' : 'window').catch(() => {});
   }
-  // No native WebView context menu in the app chrome; the app supplies its own
-  // menus. Text fields keep theirs so paste still works.
   document.addEventListener('contextmenu', (e) => {
     const t = e.target as HTMLElement | null;
     if (t?.closest('input, textarea, [contenteditable="true"]')) return;
     e.preventDefault();
   });
 
-  // Outside Tauri (plain `npm run dev` in a browser): ?live talks to the real
-  // bridge through the Vite proxy, otherwise fixture data.
   if (import.meta.env.DEV && !('__TAURI_INTERNALS__' in window)) {
     if (new URLSearchParams(location.search).has('live')) {
       useHttpTransport();
@@ -66,15 +57,12 @@ async function boot() {
     }
     installStudyMock();
   }
-  // In the desktop app, stand ready to answer for any browser tabs.
   if (isDesktop) {
     void installTabHost().catch(() => {});
   }
-  // Dev-only: VITE_SELFTEST=1 runs the in-app AI smoke test (src/devSelfTest.ts).
   if (import.meta.env.DEV && import.meta.env.VITE_SELFTEST === '1') {
     void import('./devSelfTest').then((m) => m.runSelfTest());
   }
-  // Dev-only: VITE_SELFTEST=walk runs the page-walk benchmark on one source.
   if (import.meta.env.DEV && import.meta.env.VITE_SELFTEST === 'walk') {
     void import('./devSelfTest').then((m) => m.runWalkBenchmark(import.meta.env.VITE_SELFTEST_SOURCE ?? 'MSK'));
   }

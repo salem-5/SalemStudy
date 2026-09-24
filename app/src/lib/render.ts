@@ -1,7 +1,5 @@
 import { EMPTY, toMathML, toText } from './mathpad.js';
 
-// WebView2/Chromium renders MathML Core, which dropped <mfenced> and <maction>.
-// Rewrite those into plain <mrow>/<mo> so previews look like the pad.
 export function renderable(mathml: string): string {
   const doc = new DOMParser().parseFromString(mathml || EMPTY, 'application/xml');
   if (doc.documentElement?.localName === 'parsererror' || doc.querySelector('parsererror')) return '';
@@ -12,7 +10,6 @@ export function renderable(mathml: string): string {
     return el;
   };
   doc.querySelectorAll('maction').forEach((a) => a.replaceWith(...Array.from(a.children).slice(0, 1)));
-  // Innermost first so nested fences are handled before their parents move.
   Array.from(doc.querySelectorAll('mfenced')).reverse().forEach((f) => {
     const open = f.hasAttribute('open') ? f.getAttribute('open')! : '(';
     const close = f.hasAttribute('close') ? f.getAttribute('close')! : ')';
@@ -45,7 +42,6 @@ export function previewExpr(expr: string): Preview {
   }
 }
 
-/** Canonical text for comparing a typed expression with the server's MathML. */
 export function canonical(expr: string): string | null {
   if (!expr.trim()) return '';
   try {
@@ -57,18 +53,12 @@ export function canonical(expr: string): string | null {
 
 export const canonicalMathML = (mathml: string) => toText(mathml).replace(/\s+/g, '');
 
-/**
- * Best-effort visible text for a stored math value. `toText` handles real
- * MathML; if it yields nothing (bare text nodes, MathJax/HTML wrappers), fall
- * back to the DOM text so the card can still show what WebAssign has.
- */
 export function mathValueText(value: string): string {
   if (!value) return '';
   try {
     const t = toText(value);
     if (t.trim()) return t;
   } catch {
-    /* fall through */
   }
   try {
     const html = new DOMParser().parseFromString(value, 'text/html');

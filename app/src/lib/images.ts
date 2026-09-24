@@ -1,13 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
 
-// WebAssign figures are mostly black/blue line art on white. On the dark UI
-// those are inverted (with a hue rotation so blue stays blue); photos and
-// images that are already dark are left alone.
-//
-// Deciding needs pixel access, which WebAssign's missing CORS headers forbid
-// in the webview. So images are loaded as same-origin data: in Tauri through
-// the `fetch_image` command, in `npm run dev` through the /wa-img Vite proxy.
-
 export type ImageMode = 'invert' | 'keep';
 type Loaded = { src: string; mode: ImageMode };
 
@@ -32,7 +24,6 @@ function decode(src: string): Promise<HTMLImageElement> {
 
 const lum = (r: number, g: number, b: number) => (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
 
-/** Line art with a light (or transparent-with-dark-ink) background → invert. */
 export function classify(img: HTMLImageElement): ImageMode {
   const scale = Math.min(1, 240 / Math.max(img.naturalWidth, img.naturalHeight, 1));
   const w = Math.max(1, Math.round(img.naturalWidth * scale));
@@ -45,7 +36,6 @@ export function classify(img: HTMLImageElement): ImageMode {
   ctx.drawImage(img, 0, 0, w, h);
   const { data } = ctx.getImageData(0, 0, w, h);
 
-  // Background: the image border.
   let edge = 0; let edgeLum = 0; let edgeClear = 0;
   const sample = (x: number, y: number) => {
     const i = (y * w + x) * 4;
@@ -56,7 +46,6 @@ export function classify(img: HTMLImageElement): ImageMode {
   for (let x = 0; x < w; x++) { sample(x, 0); sample(x, h - 1); }
   for (let y = 1; y < h - 1; y++) { sample(0, y); sample(w - 1, y); }
 
-  // Photos have many distinct colors; diagrams have few.
   const colors = new Set<number>();
   let inkLum = 0; let ink = 0;
   for (let i = 0; i < data.length; i += 4) {
@@ -68,7 +57,6 @@ export function classify(img: HTMLImageElement): ImageMode {
   if (colors.size > 900) return 'keep';
 
   if (edgeClear / edge > 0.6) {
-    // Transparent background: dark ink would vanish on the dark UI.
     return ink && inkLum / ink < 0.5 ? 'invert' : 'keep';
   }
   const opaque = edge - edgeClear;
@@ -86,7 +74,6 @@ function load(url: string): Promise<Loaded> {
   return p;
 }
 
-/** Swap an <img> to its same-origin copy and tag it img-invert / img-keep. */
 export function adaptImage(img: HTMLImageElement) {
   const url = img.getAttribute('src');
   if (!url || img.dataset.adapted || /\/watex\/img\//.test(url) || url.startsWith('data:')) return;

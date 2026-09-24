@@ -1,17 +1,3 @@
-/**
- * Fetching what a reference points at, before the chat opens.
- *
- * A reference carries a highlighted line and a locator. That is enough for
- * the assistant to go and find the rest — but going and finding it costs a
- * tool call or three before it can start on the actual question, and the
- * student is sitting there watching it look up something they had open in
- * front of them.
- *
- * So it is fetched here instead, while the sheet is opening, and handed over
- * with the question. Nothing here throws: a reference whose material cannot
- * be read still works, it just falls back to telling the assistant where to
- * look.
- */
 import { studyApi, type Quiz, type QuizQuestion } from '../study/api';
 import type { Reference } from './reference';
 
@@ -21,7 +7,6 @@ const clip = (text: string, n: number) => (text.length > n ? `${text.slice(0, n)
 const choiceLabel = (q: QuizQuestion, i: number) =>
   (q.type === 'mcq' || q.type === 'multi' ? `${String.fromCharCode(65 + i)}. ` : '');
 
-/** One quiz question, written out the way the model should read it. */
 function questionText(quiz: Quiz, index: number): string {
   const q = quiz.questions[index];
   if (!q) return '';
@@ -76,8 +61,6 @@ async function fetchContent(ref: Reference): Promise<Reference['content']> {
   if (sourceId !== undefined) {
     const units = await studyApi.sourceUnits(sourceId);
     if (!units.length) return undefined;
-    // A page on its own reads as a fragment; the ones either side are what
-    // make it make sense.
     const around = unit === undefined
       ? units.slice(0, 6)
       : units.filter((u) => u.ord >= unit - CONTEXT_UNITS && u.ord <= unit + CONTEXT_UNITS);
@@ -93,14 +76,7 @@ async function fetchContent(ref: Reference): Promise<Reference['content']> {
   return undefined;
 }
 
-/**
- * The same reference, with its material attached.
- *
- * Returns the reference unchanged when the material cannot be read, so a
- * failure here costs a tool call rather than the whole conversation.
- */
 export async function resolve(ref: Reference): Promise<Reference> {
-  // Already spelled out in the briefing: nothing to fetch, nothing to add.
   if (ref.briefed) return ref;
   try {
     const content = await fetchContent(ref);

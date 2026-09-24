@@ -4,19 +4,8 @@ import { Check, Copy, ExternalLink, Globe, Loader2, Power } from 'lucide-react';
 import { getAiConfig, setAiConfig } from '../lib/ai';
 import { studyApi } from '../study/api';
 
-/**
- * Running Salem in a browser tab.
- *
- * The app serves its own interface on `127.0.0.1` so it can sit beside the
- * student's other tabs. It is the same Salem, not a copy: the tab talks to
- * this window, so both see the same notebooks, the same chats and the same
- * AI. Closing the window closes the tab's backend with it.
- */
-
 export type TabModeStatus = { running: boolean; port: number | null; url: string | null; origin: string | null };
 
-// What the desktop window knows about tab mode, shared: the dialog turns it
-// on, and the gate round the whole app swaps the app for the lock screen.
 let current: TabModeStatus | null = null;
 const listeners = new Set<() => void>();
 const publish = (s: TabModeStatus) => { current = s; listeners.forEach((l) => l()); return s; };
@@ -31,18 +20,9 @@ export function useTabModeStatus(): TabModeStatus | null {
   return status;
 }
 
-/**
- * The whole desktop app, unless tab mode is on.
- *
- * While Salem is being used in a browser tab this window stays running — it
- * is what answers the tab — but the app in it is not usable: two copies of
- * the same notebook side by side, each able to write, is how work gets lost.
- * So it shows only that tab mode is on, and how to go back.
- */
 export function TabModeGate({ children }: { children: ReactNode }) {
   const status = useTabModeStatus();
   const locked = !!status?.running;
-  // Marked on the page, for what runs outside React (the focus timer).
   useEffect(() => {
     if (locked) document.documentElement.setAttribute('data-tab-locked', '');
     else document.documentElement.removeAttribute('data-tab-locked');
@@ -120,7 +100,6 @@ export function TabModeDialog({ onClose }: { onClose: () => void }) {
       else {
         const on = await startTabMode();
         setStatus(on);
-        // Straight into the tab; this window becomes the lock screen.
         if (on.url) void studyApi.openUrl(on.url);
       }
     } catch (e) {

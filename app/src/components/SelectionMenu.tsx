@@ -2,18 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, Copy, MessageCircleQuestion } from 'lucide-react';
 import { makeReference, type Reference, type ReferenceKind } from '../lib/reference';
 
-/**
- * What you get when you select something and right-click it.
- *
- * The app suppresses the native menu everywhere except text fields, which
- * left selected text with nothing to do. This is the replacement: copy it, or
- * — where the app knows what you are looking at — ask the assistant about
- * exactly that, without retyping it.
- */
-
 export type SelectionTarget = {
   kind: ReferenceKind;
-  /** What to call it on the chip. */
   label: string;
   detail?: string;
   locator: Reference['locator'];
@@ -22,9 +12,7 @@ export type SelectionTarget = {
 type Menu = { x: number; y: number; text: string };
 
 export function SelectionMenu({ scope, target, onAsk }: {
-  /** Only selections inside this element count. */
   scope: React.RefObject<HTMLElement | null>;
-  /** What the selection is part of. Omit and only Copy is offered. */
   target?: SelectionTarget | ((node: Node) => SelectionTarget | undefined);
   onAsk?: (reference: Reference) => void;
 }) {
@@ -41,7 +29,6 @@ export function SelectionMenu({ scope, target, onAsk }: {
     const onContext = (e: MouseEvent) => {
       const selection = window.getSelection();
       const text = selection?.toString().trim() ?? '';
-      // No selection: let whatever else handles right-click have it.
       if (!text || !selection?.anchorNode || !host.contains(selection.anchorNode)) return;
       e.preventDefault();
       e.stopPropagation();
@@ -74,7 +61,6 @@ export function SelectionMenu({ scope, target, onAsk }: {
   if (!menu) return null;
 
   const slot = pending.current;
-  // Keep it on screen when the click was near an edge.
   const x = Math.min(menu.x, window.innerWidth - 230);
   const y = Math.min(menu.y, window.innerHeight - 110);
 

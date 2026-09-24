@@ -8,12 +8,9 @@ export const draftKey = (dep: number, q: number, box: number) => `${dep}:${q}:${
 
 const isEmptyMath = (mathml: string) => !mathml || /^<math[^>]*\/>$/.test(mathml.trim()) || mathValueText(mathml) === '';
 
-/** The draft that represents what WebAssign currently has saved for a box. */
 export function serverDraft(box: Box): Draft {
   switch (box.kind) {
     case 'math':
-      // `box.text` can hold a recovered static answer; fall back to the value's
-      // visible text when the parser can't produce pad syntax.
       return isEmptyMath(box.value) ? (box.text || '') : (box.text || mathValueText(box.value));
     case 'checkboxes':
       return box.value ? box.value.split(',') : [];
@@ -24,7 +21,6 @@ export function serverDraft(box: Box): Draft {
   }
 }
 
-/** True when the draft is what the server already has. */
 export function matchesServer(box: Box, draft: Draft): boolean {
   if (box.kind === 'math') {
     const d = canonical(String(draft));
@@ -53,7 +49,6 @@ function load(): Record<string, Draft> {
   }
 }
 
-/** Local drafts survive restarts; they are dropped once they match the server. */
 export function useDrafts() {
   const [map, setMap] = useState<Record<string, Draft>>(load);
 
@@ -61,7 +56,6 @@ export function useDrafts() {
     try {
       localStorage.setItem(KEY, JSON.stringify(map));
     } catch {
-      /* storage full or blocked: drafts stay in memory */
     }
   }, [map]);
 
@@ -91,6 +85,5 @@ export function pushHistory(exprs: string[]) {
   try {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(unique));
   } catch {
-    /* ignore */
   }
 }

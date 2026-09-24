@@ -1,19 +1,3 @@
-/**
- * The AI smoke test that runs *inside the desktop app*.
- *
- *     npm run test:ai:app
- *
- * `test:ai` scripts the model's replies and `test:ai:live` drives the real
- * runtime from outside; neither goes through the webview, which is where the
- * study space, the tool registry and every real tool declaration actually
- * live. A tool the app declared in a way the runtime could not turn into a
- * Python function killed every agentic feature while both of those suites
- * stayed green — this is the one that catches that.
- *
- * It runs the same modules the UI calls, over the student's own data, and
- * reports to a collector on 127.0.0.1:9911 because the webview's console is
- * not visible from outside. Loaded from main.tsx only when VITE_SELFTEST=1.
- */
 import { runtimeStatus } from './lib/salem/runtime';
 import { runChatTurn } from './lib/chatTurn';
 import { generate, generateText } from './lib/salem/generate';
@@ -35,9 +19,7 @@ async function say(step: string, ok: boolean, detail: unknown) {
   try {
     await fetch(REPORT, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
   } catch {
-    /* the collector is optional */
   }
-  // eslint-disable-next-line no-console
   console.log(`[selftest] ${ok ? 'ok ' : 'FAIL'} ${step}`, detail);
 }
 
@@ -146,13 +128,11 @@ export async function runSelfTest() {
       fetched: !!full.content,
       title: full.content?.title,
       bodyChars: full.content?.body.length ?? 0,
-      // It must not be telling the model to go and look it up.
       tellsItToFetch: /read_quiz\(/.test(briefing),
       briefing: briefing.slice(0, 260),
     };
   });
 
-  // The real generators, over the student's own notebook and sources.
   const material = await attempt('sample the notebook sources', async () => {
     const tree = await studyApi.tree();
     const notebook = tree.flatMap((sub) => (sub.notebooks ?? []).map((nb) => ({ sub, nb })))[0];
@@ -166,8 +146,6 @@ export async function runSelfTest() {
   if (material) {
     const ctx = { subject: material.subject, notebook: material.notebook, courseContext: '' };
     const src = { kind: 'sources' as const, hits: material.hits as never, focus: '' };
-    // The path the generate dialog and the assistant both take: write it,
-    // save it, and it is there to open — no preview, no save click.
     await attempt('makeSet quiz (saved)', async () => {
       const meter = createMeter();
       const made = await makeSet('quiz', ctx, material.notebookId, src, () => {}, { size: 'fewer', limit: 6, meter });
@@ -189,13 +167,6 @@ export async function runSelfTest() {
   await say('done', true, {});
 }
 
-/**
- * The page-walk benchmark: a real lecture, every size, compared by hand with
- * a deck the student made and liked. `VITE_SELFTEST=walk`.
- *
- * It reports every card with the page it came from, so coverage — which
- * pages got cards, in what order, and which got none — can be read off.
- */
 export async function runWalkBenchmark(sourceTitle: string) {
   const tree = await studyApi.tree();
   const notebooks = tree.flatMap((sub) => (sub.notebooks ?? []).map((nb) => ({ sub, nb })));
@@ -211,7 +182,6 @@ export async function runWalkBenchmark(sourceTitle: string) {
   const src = { kind: 'sources' as const, hits, focus: '' };
   await say('walk: material', true, { source: source.title, pages: hits.length, chars: hits.reduce((n, h) => n + h.text.length, 0) });
 
-  // The order check, on the notebook whose lectures went in newest first.
   for (const { nb: other } of notebooks) {
     const list = (await studyApi.sources(other.id)).filter((x) => x.status === 'ready');
     if (list.length > 1) {
@@ -219,7 +189,6 @@ export async function runWalkBenchmark(sourceTitle: string) {
     }
   }
 
-  // Fast (the default) and thorough, side by side, with what each cost.
   const decks: { size: 'standard' | 'fewer' | 'more'; fast: boolean }[] = [
     { size: 'fewer', fast: true }, { size: 'standard', fast: true }, { size: 'more', fast: true },
   ];

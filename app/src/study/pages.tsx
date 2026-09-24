@@ -37,11 +37,9 @@ export type Route =
   | { kind: 'focus' }
   | { kind: 'subject'; id: number }
   | { kind: 'schedule' }
-  /** Notes (the student's own notes app), optionally on one note. */
   | { kind: 'notes'; id?: number | null }
   | { kind: 'notebook'; id: number; open?: NotebookTarget };
 
-/** Something inside a notebook to show when it opens (from search, citations, the assistant). */
 export type NotebookTarget =
   | { type: 'source'; id: number; unit?: number }
   | { type: 'note'; id: number }
@@ -57,7 +55,6 @@ export type StudyActions = {
   editNotebook: (n: NotebookSummary) => void;
   deleteNotebook: (n: NotebookSummary) => void;
   saveSubjectContext: (id: number, context: string) => Promise<void>;
-  /** Re-read counts (cards, quizzes) for the sidebar and cards. */
   refresh: () => void;
 };
 
@@ -106,10 +103,8 @@ export function StudyHome({ tree, actions }: { tree: SubjectNode[]; actions: Stu
       .catch(() => setUpcoming([]));
   }, []);
 
-  /** The day whose breakdown is open, if any. */
   const [pickedDay, setPickedDay] = useState<number | null>(null);
 
-  // Focus sessions from the timer count as activity too.
   const allTimes = useMemo(() => [...times, ...pomo.history.filter((h) => h.phase === 'focus' && h.completed).map((h) => h.end)], [times, pomo.history]);
   const nbs = tree.flatMap((s) => s.notebooks);
   const sum = (k: keyof NotebookSummary) => nbs.reduce((a, n) => a + (n[k] as number), 0);
@@ -173,7 +168,6 @@ export function StudyHome({ tree, actions }: { tree: SubjectNode[]; actions: Stu
               {tree.map((s, i) => {
                 const color = subjectColor(s);
                 return (
-                  // The whole card opens the subject; the chips and buttons inside do their own thing.
                   <article
                     key={s.id}
                     className="subject-card"
@@ -208,7 +202,6 @@ export function StudyHome({ tree, actions }: { tree: SubjectNode[]; actions: Stu
   );
 }
 
-/** Pick a subject's icon and colour. */
 export function SubjectStyleDialog({ subject, onClose, onSaved }: { subject: SubjectNode; onClose: () => void; onSaved: () => void }) {
   const [icon, setIcon] = useState(subject.icon || guessIcon(subject.name));
   const [color, setColor] = useState(subjectColor(subject));
@@ -305,8 +298,6 @@ export function SubjectPage({ subject, actions }: { subject: SubjectNode; action
   );
 }
 
-// ---------------------------------------------------------------- notebook
-
 type RightTab = 'decks' | 'quizzes' | 'notes';
 type Center =
   | { kind: 'chat' }
@@ -319,7 +310,6 @@ type Center =
   | { kind: 'source'; id: number; unit?: number }
   | { kind: 'note'; id: number };
 
-/** Tabs with an underline that slides to the active one. */
 export function Tabs<T extends string>({ tabs, value, onChange, label }: { tabs: T[]; value: T; onChange: (t: T) => void; label: (t: T) => React.ReactNode }) {
   const i = Math.max(0, tabs.indexOf(value));
   return (
@@ -334,7 +324,7 @@ export function Tabs<T extends string>({ tabs, value, onChange, label }: { tabs:
 
 const store = {
   get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } },
-  set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } },
+  set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { } },
 };
 
 export function NotebookPage({ notebook, subject, actions, target }: { notebook: NotebookSummary; subject: SubjectNode; actions: StudyActions; target?: NotebookTarget }) {
@@ -347,12 +337,6 @@ export function NotebookPage({ notebook, subject, actions, target }: { notebook:
   });
   const [decks, setDecks] = useState<Deck[]>([]);
   const [quizzes, setQuizzes] = useState<QuizSummary[]>([]);
-  /**
-   * Decks and quizzes written since the notebook was opened and not looked at
-   * yet, with a note if part of the material could not be written. They are
-   * marked in the list rather than thrown open: the student may be in the
-   * middle of something else when one lands.
-   */
   const [fresh, setFresh] = useState<Record<SetKind, Record<number, string>>>({ cards: {}, quiz: {} });
   const seen = useCallback((kind: SetKind, id: number) => setFresh((f) => {
     if (!(id in f[kind])) return f;
@@ -369,8 +353,6 @@ export function NotebookPage({ notebook, subject, actions, target }: { notebook:
   const firstThreads = useRef(true);
   const [generating, setGenerating] = useState<{ kind: 'cards' | 'quiz' | 'notes'; thread?: number | null } | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
-  // A deck or quiz being written shows on its tab, so it can be seen from
-  // the others.
   const writingDeck = useSetBusy('cards', notebook.id);
   const writingQuiz = useSetBusy('quiz', notebook.id);
   const [chatReload, setChatReload] = useState(0);
@@ -396,14 +378,12 @@ export function NotebookPage({ notebook, subject, actions, target }: { notebook:
     studyApi.chatList(notebook.id).then((all) => {
       const t = dropEmpty(all, firstThreads.current ? (target?.type === 'chat' ? target.id : null) : threadRef.current);
       setThreads(t);
-      // Open the most recent chat once; later reloads keep the user's choice.
       if (firstThreads.current) { firstThreads.current = false; setThread(target?.type === 'chat' ? target.id : t[0]?.id ?? null); }
       setThreadsLoaded(true);
     }).catch(() => setThreadsLoaded(true));
   }, [notebook.id]);
 
   useEffect(() => { reloadDecks(); reloadQuizzes(); reloadSources(); reloadThreads(); reloadNotes(); }, [reloadDecks, reloadQuizzes, reloadSources, reloadThreads, reloadNotes]);
-  // Switching chats drops the one left behind if nothing was ever said in it.
   const lastThread = useRef(thread);
   useEffect(() => {
     if (lastThread.current !== thread) { lastThread.current = thread; if (!firstThreads.current) reloadThreads(); }
@@ -419,16 +399,12 @@ export function NotebookPage({ notebook, subject, actions, target }: { notebook:
 
   const runGeneration = async (kind: 'cards' | 'quiz' | 'notes', src: GenSource, instructions: string, options: QuizOptions & CardOptions) => {
     if (kind === 'notes') {
-      // The note opens straight away and fills in as it is written.
       setTab('notes');
       void writeNote(ctx, notebook.id, src, instructions, (n) => { reloadNotes(); setCenter({ kind: 'note', id: n.id }); })
         .catch(() => {})
         .finally(reloadNotes);
       return 'Writing your notes…';
     }
-    // Decks and quizzes run in the background, and are saved as soon as they
-    // are written: the dialog closes, the list shows the one being written,
-    // and clicking it shows how far it has got.
     const setKind: SetKind = kind === 'cards' ? 'cards' : 'quiz';
     startSet(
       setKind,
@@ -460,8 +436,6 @@ export function NotebookPage({ notebook, subject, actions, target }: { notebook:
     if (center.kind === 'deck' || center.kind === 'play') seen('cards', center.kind === 'deck' ? center.id : center.deckId);
     if (center.kind === 'quiz' || center.kind === 'quizrun') seen('quiz', center.id);
   }, [center, seen]);
-  // The quiz itself (its questions) is loaded on demand; the pane only has
-  // the summary rows.
   const [openQuiz, setOpenQuiz] = useState<Quiz | null>(null);
   const quizId = center.kind === 'quiz' ? center.id : null;
   const reloadQuiz = useCallback(() => {
@@ -538,8 +512,6 @@ export function NotebookPage({ notebook, subject, actions, target }: { notebook:
             system={system}
             retrieve={readySelected.length ? retriever : undefined}
             agent="notebook"
-            // The hard boundary of this chat: the agent can search and read
-            // these sources and nothing else, however it is asked.
             sourceIds={readySelected.map((s) => s.id)}
             onCite={openCitation}
             reloadToken={chatReload}
@@ -694,7 +666,6 @@ export function NotebookPage({ notebook, subject, actions, target }: { notebook:
   );
 }
 
-/** What the notebook covers, written by the model from its sources; refreshed when they change. */
 function Overview({ notebook, subject, sources, onChanged }: { notebook: NotebookSummary; subject: SubjectNode; sources: Source[]; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -710,7 +681,6 @@ function Overview({ notebook, subject, sources, onChanged }: { notebook: Noteboo
     finally { setBusy(false); }
   }, [notebook, subject.name, onChanged]);
 
-  // Written on its own the first time it is needed (once per visit, never while sources are still being read).
   useEffect(() => {
     if (stale && !reading && !busy && !tried.current) { tried.current = true; void run(); }
   }, [stale, reading, busy, run]);

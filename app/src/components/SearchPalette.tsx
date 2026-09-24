@@ -6,7 +6,6 @@ import type { Route } from '../study/pages';
 const KIND_LABEL: Record<Found['kind'], string> = { source: 'Sources', note: 'Notes', card: 'Flashcards', chat: 'Chats' };
 const KIND_ICON = { source: FileText, note: NotebookPen, card: Layers, chat: MessageSquare } as const;
 
-/** Where a search result lives, as a route. */
 export function routeFor(f: Found): Route {
   if (f.kind === 'chat' && f.notebookId === null) return { kind: 'chat', id: f.id };
   const id = f.notebookId!;
@@ -16,7 +15,6 @@ export function routeFor(f: Found): Route {
   return { kind: 'notebook', id, open: { type: 'chat', id: f.id } };
 }
 
-/** ⌘K: one search over every notebook's sources, notes, cards and chats. */
 export function SearchPalette({ tree, onClose, open }: { tree: SubjectNode[]; onClose: () => void; open: (r: Route) => void }) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Found[]>([]);
@@ -47,7 +45,6 @@ export function SearchPalette({ tree, onClose, open }: { tree: SubjectNode[]; on
     else if (e.key === 'Enter' && results[active]) { e.preventDefault(); go(results[active]); }
   };
 
-  // Keep result order, but show a heading where the kind changes.
   let lastKind: string | null = null;
   return (
     <div className="modal-backdrop cmdk-backdrop" onMouseDown={onClose}>
@@ -85,7 +82,6 @@ export function SearchPalette({ tree, onClose, open }: { tree: SubjectNode[]; on
   );
 }
 
-/** Full-text snippets mark matches as [word]; show those highlighted. */
 function renderSnippet(s: string) {
   return s.split(/(\[[^\]]+\])/g).map((part, i) => (/^\[[^\]]+\]$/.test(part) ? <mark key={i}>{part.slice(1, -1)}</mark> : part));
 }

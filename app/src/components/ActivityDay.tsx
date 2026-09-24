@@ -3,14 +3,6 @@ import { BookOpen, FileText, Layers, ListChecks, MessageSquare, Timer } from 'lu
 import { Modal } from './Dialogs';
 import { studyApi, type ActivityEntry } from '../study/api';
 
-/**
- * What a day on the activity map was actually made of.
- *
- * The map answers "did I study?"; this answers "on what?". Grouped by subject
- * and notebook, because that is the question behind the click — not how many
- * actions there were, but which course got the time.
- */
-
 const ICONS = {
   card: Layers, quiz: ListChecks, chat: MessageSquare, note: FileText, source: BookOpen, focus: Timer,
 } as const;
@@ -20,7 +12,6 @@ const NAMES = {
 } as const;
 
 export function ActivityDay({ day, onClose, onOpenNotebook }: {
-  /** Local midnight of the day to show. */
   day: number;
   onClose: () => void;
   onOpenNotebook?: (notebookId: number) => void;
@@ -37,7 +28,6 @@ export function ActivityDay({ day, onClose, onOpenNotebook }: {
 
   const date = new Date(day).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
-  // subject → notebook → what happened there
   const bySubject = new Map<string, Map<string, { id: number | null; counts: Map<ActivityEntry['kind'], number> }>>();
   for (const entry of entries ?? []) {
     const subject = entry.subject ?? 'Not in a notebook';

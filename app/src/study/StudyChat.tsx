@@ -7,28 +7,10 @@ import { makeReference, referencedSources, referenceTag, type Reference } from '
 import { resolveAll } from '../lib/referenceContent';
 import { studyApi, type Card, type Quiz, type QuizQuestion } from './api';
 
-/**
- * Asking Salem about whatever is on screen.
- *
- * Three ways in, one component: a quiz question, a flashcard, or the button in
- * the top bar that opens a chat wherever the student happens to be. Each is a
- * normal Salem chat they can take anywhere, and each hands the AI the thing
- * they were looking at, so the first reply already knows what they mean.
- *
- * What the chat was opened from is written into the first message as a visible
- * tag, so the conversation still makes sense months later in the chat list.
- */
-
-// ------------------------------------------------------------ thread memory
-//
-// The same question, card or notebook reopens the same conversation. The link
-// is kept here rather than in the database: losing it costs a new thread, and
-// the conversation itself is a real chat that is saved either way.
-
 const key = (scope: string) => `wa.askchat.${scope}`;
 
 function rememberThread(scope: string, threadId: number) {
-  try { localStorage.setItem(key(scope), String(threadId)); } catch { /* ignore */ }
+  try { localStorage.setItem(key(scope), String(threadId)); } catch { }
 }
 
 function recallThread(scope: string): number | null {
@@ -42,14 +24,11 @@ function recallThread(scope: string): number | null {
 }
 
 function forgetThread(scope: string) {
-  try { localStorage.removeItem(key(scope)); } catch { /* ignore */ }
+  try { localStorage.removeItem(key(scope)); } catch { }
 }
-
-// ------------------------------------------------------------- the briefings
 
 const label = (q: QuizQuestion, i: number) => (q.type === 'mcq' || q.type === 'multi' ? `${String.fromCharCode(65 + i)}. ` : '');
 
-/** Everything about the question, written for the model rather than the page. */
 export function questionBriefing(quiz: Quiz, index: number, answer: QuizAnswer | undefined): string {
   const q = quiz.questions[index];
   const lines: string[] = [
@@ -109,7 +88,6 @@ export function questionBriefing(quiz: Quiz, index: number, answer: QuizAnswer |
   return lines.join('\n');
 }
 
-/** Everything about a flashcard, written for the model rather than the page. */
 export function cardBriefing(card: Card, deckTitle: string): string {
   const lines = [
     `The student is revising with a flashcard deck called "${deckTitle}" and has asked about one of the cards.`,
@@ -142,13 +120,6 @@ export function cardBriefing(card: Card, deckTitle: string): string {
   return lines.join('\n');
 }
 
-/**
- * What the student is looking at right now, for the top-bar chat button.
- *
- * Less than a full question briefing on purpose: they opened a general chat,
- * not "explain this question", so the AI knows where they are without being
- * steered into answering something they did not ask.
- */
 export function quizBriefing(quiz: Quiz, index: number | undefined): string {
   const q = index === undefined ? undefined : quiz.questions[index];
   const lines = [
@@ -163,7 +134,6 @@ export function quizBriefing(quiz: Quiz, index: number | undefined): string {
   return lines.join('\n');
 }
 
-/** What the student is looking at, for a deck's top-bar chat button. */
 export function deckBriefing(deckTitle: string, card: Card | undefined): string {
   const lines = [`The student is revising a flashcard deck called "${deckTitle}" and has opened a chat from it.`];
   if (card) {
@@ -174,13 +144,6 @@ export function deckBriefing(deckTitle: string, card: Card | undefined): string 
   return lines.join('\n');
 }
 
-/**
- * What the student is reading, for a note's top-bar chat button.
- *
- * The note itself goes in, clipped: asking about your own notes is the most
- * common reason to open a chat from here, and having to paste the paragraph
- * in is exactly the friction that stops people asking.
- */
 export function noteBriefing(title: string, content: string): string {
   const body = content.trim();
   return [
@@ -197,23 +160,12 @@ export function noteBriefing(title: string, content: string): string {
   ].join('\n');
 }
 
-// ------------------------------------------------------------- what to say
-
 const QUIZ_STARTERS = (correct: boolean) => (correct
   ? ['Why is this the right answer?', 'Why are the other options wrong?', 'Show me the solution step by step', 'Give me a harder version of this']
   : ['Why is my answer wrong?', 'Explain this more simply', 'Show me the solution step by step', 'Give me another example like this']);
 
 const CARD_STARTERS = ['Explain this more simply', 'Why is that the answer?', 'Give me an example', 'How do I remember this?'];
 
-// ------------------------------------------------------------- the modal
-
-/**
- * A chat in a sheet, over whatever the student was doing.
- *
- * `scope` is what makes it the *same* conversation next time, `briefing` is
- * what the AI is told before the student says anything, and `tag` is the label
- * written into their first message so the thread reads properly later.
- */
 export function AskModal({ title, subtitle, scope, briefing, tag, notebookId, sourceIds, starters, chatTitle, backLabel, references, onClose }: {
   title: string;
   subtitle?: string;
@@ -223,17 +175,13 @@ export function AskModal({ title, subtitle, scope, briefing, tag, notebookId, so
   notebookId: number | null;
   sourceIds?: number[];
   starters?: string[];
-  /** What the thread is called in the chat list. */
   chatTitle?: string;
   backLabel?: string;
-  /** Things the student pointed at — shown as attachments, and read by the AI. */
   references?: Reference[];
   onClose: () => void;
 }) {
   const [threadId, setThreadId] = useState<number | null>(null);
   const [ready, setReady] = useState(false);
-  // The material behind each reference, fetched before the first message so
-  // the assistant is handed it rather than having to go and find it.
   const [pointed, setPointed] = useState<Reference[]>(references ?? []);
   const [fetching, setFetching] = useState(!!references?.length);
 
@@ -245,8 +193,7 @@ export function AskModal({ title, subtitle, scope, briefing, tag, notebookId, so
       .then((full) => { if (alive) setPointed(full); })
       .finally(() => { if (alive) setFetching(false); });
     return () => { alive = false; };
-    // The references are fixed for the life of the sheet.
-  }, [JSON.stringify(references ?? [])]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(references ?? [])]);
 
   useEffect(() => {
     let alive = true;
@@ -255,24 +202,18 @@ export function AskModal({ title, subtitle, scope, briefing, tag, notebookId, so
     studyApi.chatMessages(saved)
       .then(() => { if (alive) { setThreadId(saved); setReady(true); } })
       .catch(() => {
-        // The chat was deleted from the Chat tab; start a fresh one.
         forgetThread(scope);
         if (alive) setReady(true);
       });
     return () => { alive = false; };
   }, [scope]);
 
-  // Escape closes the sheet, not whatever is behind it.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [onClose]);
 
-  // The briefing describes the chat. What was pointed at goes with the
-  // *message*, not here: a second question about a different selection in the
-  // same note would otherwise be answered against the first one, which is
-  // exactly what went wrong when this lived in the system prompt.
   const system = useCallback(() => briefing, [briefing]);
   const allowed = [...(sourceIds ?? []), ...referencedSources(pointed)];
 
@@ -318,21 +259,10 @@ export function AskModal({ title, subtitle, scope, briefing, tag, notebookId, so
   );
 }
 
-/**
- * Make an area of the app askable.
- *
- * Wrap whatever is on screen, say what it is, and selecting text inside it
- * gets a context menu with Copy and "Ask AI about this" — which opens the
- * chat with that selection attached. Two lines at each call site; all of the
- * plumbing lives here.
- */
 export function AskableArea({ notebookId, target, title, briefing, starters, className, children }: {
   notebookId: number | null;
-  /** What the selection belongs to. A function when the area holds several. */
   target: SelectionTarget | ((node: Node) => SelectionTarget | undefined);
-  /** The sheet's heading when it opens. */
   title: string;
-  /** What the assistant is told besides the reference itself. */
   briefing?: string;
   starters?: string[];
   className?: string;
@@ -363,8 +293,6 @@ export function AskableArea({ notebookId, target, title, briefing, starters, cla
   );
 }
 
-// ------------------------------------------------------------- entry points
-
 export function AskAboutQuestion({ quiz, index, answer, notebookId, onClose }: {
   quiz: Quiz;
   index: number;
@@ -373,9 +301,6 @@ export function AskAboutQuestion({ quiz, index, answer, notebookId, onClose }: {
   onClose: () => void;
 }) {
   const q = quiz.questions[index];
-  // The briefing below already contains the question, the answer key and
-  // what the student put; this only puts the chip on screen, so they can see
-  // what the assistant was handed.
   const pointer: Reference = {
     ...makeReference('quiz', `Question ${index + 1}`, q.prompt, { quizId: quiz.id, questionIndex: index, notebookId }, quiz.title),
     briefed: true,
@@ -425,17 +350,9 @@ export function AskAboutCard({ card, deckTitle, notebookId, onClose }: {
   );
 }
 
-/**
- * The top-bar button: a chat about this notebook, from wherever you are.
- *
- * Mid-quiz, mid-deck or mid-note is exactly when a question comes up, and
- * having to leave what you are doing to ask it is why it goes unasked.
- */
 export function ChatButton({ notebookId, where, briefing, tag }: {
   notebookId: number | null;
-  /** What the student is looking at, for the tag and the title. */
   where: string;
-  /** Extra context for the AI about what is on screen. */
   briefing?: string;
   tag?: string;
 }) {

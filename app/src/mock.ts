@@ -1,5 +1,3 @@
-// Dev-only fixture backend so the UI can be developed in a plain browser (`npm run dev`).
-// Loaded from main.tsx only when not running inside Tauri.
 import type { api as realApi } from './api';
 import type { Assignment, Box, Question } from './types';
 import { toMathML, toText } from './lib/mathpad.js';

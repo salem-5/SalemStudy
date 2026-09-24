@@ -1,15 +1,3 @@
-// Text, symbol and MathML conversion for the LaTeX export.
-//
-// Everything WebAssign sends is HTML or MathML written for a browser, so the
-// exporter has to turn three things into TeX: plain text with Unicode symbols,
-// MathML formulas, and fragments that mix the two (a radicand, a subscript, a
-// stacked equation cell). `asMath` is what stitches the last case together.
-
-// ---------------------------------------------------------------------------
-// Symbols
-// ---------------------------------------------------------------------------
-
-/** Math-mode replacements for the Unicode WebAssign puts inside formulas. */
 const OPS: Record<string, string> = {
   '×': '\\times', '·': '\\cdot', '⋅': '\\cdot', '∙': '\\cdot', '÷': '\\div', '∗': '*',
   '±': '\\pm', '∓': '\\mp', '≤': '\\le', '≥': '\\ge', '≦': '\\le', '≧': '\\ge',
@@ -43,7 +31,6 @@ const GREEK: Record<string, string> = {
   Σ: '\\Sigma', Υ: '\\Upsilon', Φ: '\\Phi', Ψ: '\\Psi', Ω: '\\Omega',
 };
 
-/** Digits and letters WebAssign writes as pre-composed super/subscripts. */
 const SCRIPTS: Record<string, string> = {
   '⁰': '^{0}', '¹': '^{1}', '²': '^{2}', '³': '^{3}', '⁴': '^{4}', '⁵': '^{5}',
   '⁶': '^{6}', '⁷': '^{7}', '⁸': '^{8}', '⁹': '^{9}', '⁺': '^{+}', '⁻': '^{-}',
@@ -58,10 +45,6 @@ const VULGAR: Record<string, string> = {
   '⅜': '\\frac{3}{8}', '⅝': '\\frac{5}{8}', '⅞': '\\frac{7}{8}',
 };
 
-/**
- * Math letters (𝐚, 𝑥, 𝔸 …) map back to a plain letter plus the style they
- * encode, so `\mathbf{a}` survives instead of being dropped as non-ASCII.
- */
 const MATH_ALPHA: [number, number, string][] = [
   [0x1d400, 0x1d433, '\\mathbf'], [0x1d434, 0x1d467, '\\mathit'],
   [0x1d468, 0x1d49b, '\\mathbf'], [0x1d504, 0x1d537, '\\mathfrak'],
@@ -87,7 +70,6 @@ const FUNCS = new Set([
   'ker', 'hom', 'Pr',
 ]);
 
-/** Escape for math mode: TeX specials, then Unicode to math commands. */
 export const escMath = (s: string): string =>
   s.replace(/([&%$#_{}])/g, '\\$1')
     .replace(/\\/g, '\\backslash ')
@@ -97,17 +79,12 @@ export const escMath = (s: string): string =>
     })
     .replace(/\s+/g, ' ');
 
-/**
- * Map Unicode to TeX without escaping anything else — for LaTeX source
- * WebAssign already wrote (MathJax's `script[type="math/tex"]`).
- */
 export const texUnicode = (s: string): string =>
   s.replace(/[^\x00-\x7F]/gu, (ch) => {
     const m = OPS[ch] ?? GREEK[ch] ?? SCRIPTS[ch] ?? VULGAR[ch] ?? mathAlpha(ch);
     return m ? `${m} ` : '';
   });
 
-/** Text-mode replacements; anything mathematical drops into its own `$…$`. */
 const UNI_TEXT: Record<string, string> = {
   '—': '---', '–': '--', '‐': '-', '’': "'", '‘': '`', '“': '``', '”': "''",
   '„': ',,', '•': '\\textbullet{}', '·': '$\\cdot$', '§': '\\S{}', '¶': '\\P{}',
@@ -118,7 +95,6 @@ const UNI_TEXT: Record<string, string> = {
   'ñ': '\\~n', 'á': "\\'a", 'í': "\\'i", 'ó': "\\'o", 'ú': "\\'u", 'ç': '\\c{c}',
 };
 
-/** Escape for text mode, moving symbols that need math into inline math. */
 export const escText = (s: string): string =>
   s.replace(/\\/g, '\\textbackslash{}')
     .replace(/([&%$#_{}])/g, '\\$1')
@@ -130,18 +106,9 @@ export const escText = (s: string): string =>
       return m ? `$${m}$` : '';
     });
 
-// ---------------------------------------------------------------------------
-// Mixed fragments -> math mode
-// ---------------------------------------------------------------------------
-
 const PLAIN_MATH = /^[0-9\s.,;:+\-*/()[\]|<>=!'`]*$/;
 const SAFE_IN_MATH = /^(\\(times|cdot|div|pm|mp|le|ge|ne|approx|to|infty|pi|theta|alpha|beta|gamma|delta|lambda|mu|omega|Delta|Sigma|Omega|circ|langle|rangle|mathbf|mathit|frac|sqrt|left|right|,|;|:|!)\b|[{}^_])/;
 
-/**
- * Splice a rendered text-mode fragment into math mode: `$…$` islands lose their
- * delimiters and the prose between them becomes `\text{…}`, so a radicand or a
- * subscript built from HTML still typesets as real math.
- */
 export function asMath(fragment: string): string {
   const parts = fragment.split(/\$([^$]*)\$/g);
   let out = '';
@@ -156,12 +123,7 @@ export function asMath(fragment: string): string {
   return body || '\\;';
 }
 
-/** True when a fragment is only whitespace/empty markup. */
 export const blank = (s: string) => !s.replace(/\\[,;:!]|\s|\\;/g, '').trim();
-
-// ---------------------------------------------------------------------------
-// MathML -> LaTeX
-// ---------------------------------------------------------------------------
 
 const OPEN: Record<string, string> = { '(': '(', '[': '[', '{': '\\{', '⟨': '\\langle', '|': '|', '‖': '\\|', '⌊': '\\lfloor', '⌈': '\\lceil' };
 const CLOSE: Record<string, string> = { ')': ')', ']': ']', '}': '\\}', '⟩': '\\rangle', '|': '|', '‖': '\\|', '⌋': '\\rfloor', '⌉': '\\rceil' };
@@ -173,7 +135,6 @@ const ACCENTS: Record<string, string> = {
   '⌢': '\\overset{\\frown}', '↔': '\\overleftrightarrow',
 };
 
-/** Characters MathML uses for grouping/invisible operators. */
 const INVISIBLE = /^[⁡-⁤​﻿]+$/;
 
 export function mathmlToLatex(mathml: string): string {
@@ -182,7 +143,6 @@ export function mathmlToLatex(mathml: string): string {
   return tidy(mml(doc.documentElement));
 }
 
-/** Drop the padding `mrow`s leave behind and collapse runs of spaces. */
 const tidy = (s: string) => s.replace(/\s+/g, ' ').replace(/\{ +/g, '{').replace(/ +\}/g, '}').trim();
 
 function mml(el: Element | undefined | null): string {
@@ -261,7 +221,6 @@ function mml(el: Element | undefined | null): string {
       return out;
     }
     case 'mmultiscripts': {
-      // base, then (sub, sup) pairs; `mprescripts` switches to leading scripts.
       const b = mml(kids[0]);
       let sub = ''; let sup = ''; let pre = false; let i = 1;
       let preSub = ''; let preSup = '';
@@ -296,7 +255,6 @@ function mml(el: Element | undefined | null): string {
   }
 }
 
-/** A script base needs braces unless it is already a single token. */
 function base(el: Element | undefined): string {
   const s = mml(el);
   if (!s) return '{}';
@@ -304,11 +262,6 @@ function base(el: Element | undefined): string {
   return `{${s}}`;
 }
 
-/**
- * Render a row, turning matching outer delimiters into `\left…\right…` so
- * fractions and matrices get brackets that grow with them, like the app's
- * MathML rendering does.
- */
 function fenced(kids: Element[]): string {
   const items = kids.filter((k) => !INVISIBLE.test((k.textContent ?? '').trim()) || k.children.length > 0);
   if (items.length >= 2) {

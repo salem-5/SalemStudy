@@ -8,7 +8,6 @@ import {
 import { studyApi } from '../study/api';
 import { POPOVER_OPEN, Select } from './Select';
 
-/** While a picker is open, Esc is its to close, not the dialog's. */
 function useHoldsEscape(open: boolean) {
   useEffect(() => {
     if (!open) return;
@@ -16,15 +15,6 @@ function useHoldsEscape(open: boolean) {
     return () => document.documentElement.removeAttribute(POPOVER_OPEN);
   }, [open]);
 }
-
-/**
- * Which model answers — chosen the way opencode does it: a provider, the key
- * for that provider, then a model from its list.
- *
- * Every choice is saved the moment it is made, so there is nothing to forget
- * to save and no half-configured state (a provider with another provider's
- * model). Keys are kept per provider, so switching back and forth keeps them.
- */
 
 const errText = (e: unknown) => String(e instanceof Error ? e.message : e);
 
@@ -49,8 +39,6 @@ export function ProviderSettings({ solverOn, onChanged }: { solverOn: boolean; o
 
   const providers = useMemo(() => (catalog ? orderedProviders(catalog) : []), [catalog]);
 
-  // On Ollama with a model that is not installed (or none), move onto one
-  // that is, as soon as Ollama says what it has.
   useEffect(() => {
     if (!cfg || cfg.provider !== OLLAMA || !ollama?.models.length) return;
     const ids = ollama.models.map((m) => m.id);
@@ -68,7 +56,6 @@ export function ProviderSettings({ solverOn, onChanged }: { solverOn: boolean; o
     try { const c = await f(); if (c) apply(c); } catch (e) { setErr(errText(e)); } finally { setBusy(null); }
   };
 
-  /** Switch provider, and straight onto a sensible model of its own. */
   const pickProvider = (p: CatalogProvider) => run('provider', async () => {
     setPicking(false);
     setKey('');
@@ -82,8 +69,6 @@ export function ProviderSettings({ solverOn, onChanged }: { solverOn: boolean; o
     return setAiConfig({
       provider: p.id,
       baseUrl: p.id === OLLAMA ? '' : p.base ?? '',
-      // Never keep the last provider's model: with nothing to pick yet (Ollama
-      // with no models pulled) the choice is cleared, and asking for one says so.
       ...(first
         ? { flashModel: first.id, proModel: first.id, modelsInfo: { [first.id]: infoOf(first) } }
         : { flashModel: '', proModel: '' }),
@@ -184,7 +169,6 @@ export function ProviderSettings({ solverOn, onChanged }: { solverOn: boolean; o
   );
 }
 
-/** A provider's logo from models.dev, drawn in the text colour; its initial if there is none. */
 export function ProviderLogo({ id, name, big }: { id: string; name: string; big?: boolean }) {
   const [ok, setOk] = useState<boolean | null>(null);
   useEffect(() => {

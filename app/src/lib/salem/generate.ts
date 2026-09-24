@@ -6,57 +6,21 @@ import type { Stop } from '../cancel.ts';
 import { toolLoop, type LoopTool } from '../toolLoop';
 import type { RunTelemetry, SalemEvent } from './types';
 
-/**
- * Structured generation: quizzes, flashcards, notes, titles, image reading.
- *
- * These are *plain model calls*. Generation is always handed its material in
- * the prompt — the excerpts, the slice of slides, the conversation — so there
- * is nothing to go and find, and putting an agent loop in front of it only
- * re-sent that material on every step. It cost a minute or more per deck and
- * produced nothing better.
- *
- * The agent is still there, and chat reaches for it when a turn genuinely
- * needs it (see `chatTurn.ts`). Nothing here does.
- *
- * Two things the old version did that this one cannot: DeepSeek's models all
- * reason before they answer, and the API refuses a forced tool choice on a
- * thinking model — both `tool_choice: "required"` and naming one function come
- * back as HTTP 400. So the shape is asked for as JSON instead, checked here
- * against the schema, and a reply that does not fit is retried with the
- * reason. Study material stays inside the material it was given: no tools
- * means no web, by construction.
- */
-
 const ATTEMPTS = 3;
 
 export type GenerateOptions = {
-  /** Usage tag, e.g. 'quiz' or 'flashcards'. */
   feature: string;
-  /** What this generator is for. */
   system: string;
-  /** The material and the instruction. A list of parts carries images too. */
   instruction: string | unknown[];
-  /** The shape the answer has to take. Checked before it comes back. */
   schema: unknown;
-  /** Supply the run id when the caller needs to be able to stop it. */
   run?: string;
-  /** Let it work in the sandbox before it answers. The solver needs this;
-   *  nothing that is only rearranging material it was given does. */
   python?: { fileIds?: number[]; timeout?: number; maxCalls?: number };
   onEvent?: (event: SalemEvent) => void;
-  /** What the run cost, once it is over. For the app's own usage counters. */
   onTelemetry?: (telemetry: RunTelemetry) => void;
-  /** Adds what the calls cost to the piece of work they belong to. */
   meter?: Meter;
-  /** Stops it part-way, cancelling the request in flight. */
   stop?: Stop;
 };
 
-/**
- * One model call that a Stop can cut short: refused if already stopped,
- * cancelled where it waits if stopped meanwhile, and "stopped" either way —
- * never an answer that arrived after the student said stop.
- */
 async function stoppable<R>(stop: Stop | undefined, call: (id?: string) => Promise<R>): Promise<R> {
   if (!stop) return call();
   stop.throwIfStopped();
@@ -72,15 +36,10 @@ async function stoppable<R>(stop: Stop | undefined, call: (id?: string) => Promi
 
 const feature = (name: string) => name as AiFeature;
 
-/** What to ask for, given there is no tool call to put the shape in. */
 const schemaAsk = (schema: unknown) =>
   'Answer with a single JSON object matching this schema exactly, and nothing else — '
   + `no prose, no code fence:\n${JSON.stringify(schema).slice(0, 6000)}`;
 
-/**
- * `run_python` as a plain tool: the same sandbox, called from here rather
- * than from the runtime, so a solve can compute without an agent around it.
- */
 function pythonTool(
   spec: NonNullable<GenerateOptions['python']>,
   timeout: number,
@@ -123,10 +82,6 @@ export async function generate<T>(options: GenerateOptions): Promise<T> {
     : (options.instruction as ApiContent);
   let problem = '';
 
-  // With Python in play the answer is worked out over several calls, so it
-  // cannot come back in JSON mode; the shape is asked for in the prompt and
-  // the reply is parsed. One retry in JSON mode catches a model that wrote
-  // the right answer in the wrong wrapper.
   if (options.python) {
     let offStream = () => {};
     const worked = await toolLoop({
@@ -196,14 +151,8 @@ export async function generate<T>(options: GenerateOptions): Promise<T> {
   throw new Error(`The model could not produce anything usable (${problem}). Try again.`);
 }
 
-/** Kept for callers that want to say out loud that one pass is enough. */
 export const generateQuick = <T>(options: GenerateOptions) => generate<T>(options);
 
-/**
- * Prose rather than data: an overview, a set of notes, a summary.
- *
- * Streamed, so a note appears as it is written.
- */
 export async function generateText(options: Omit<GenerateOptions, 'schema'> & { stream?: boolean }): Promise<string> {
   const config = await getAiConfig();
   if (!config.hasKey) throw new Error('No API key for the chosen provider yet. Add one in Settings → Model.');
@@ -251,17 +200,10 @@ export async function generateText(options: Omit<GenerateOptions, 'schema'> & { 
   return text;
 }
 
-/**
- * Reading an image: a scanned page, a photo of handwriting, a diagram.
- *
- * A page that cannot be read fails visibly rather than coming back as empty
- * text that looks like a blank page.
- */
 export async function generateVision(options: {
   feature: string;
   system?: string;
   prompt: string;
-  /** A data URL the model can accept; convert with `toSupportedImage` first. */
   image: string;
   notebookId?: number | null;
 }): Promise<string> {

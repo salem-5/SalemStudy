@@ -1,8 +1,3 @@
-/**
- * Reading a student's instructions into pages to use. The model says which
- * pages it thinks they mean; this is what turns that into real pages, and
- * what keeps a muddled answer from leaving the deck with nothing to read.
- */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { choosePages, narrowWalk, outlineForInstructions, toBrief } from './instructions.ts';

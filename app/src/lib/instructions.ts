@@ -1,58 +1,21 @@
-/**
- * What the student asked for, read before a deck or quiz is written.
- *
- * The walk is built to cover every page, evenly, in reading order — the right
- * thing for "make me flashcards on these lectures", and exactly the wrong
- * thing for "only the true/false questions on the last page of each past
- * paper, with full proofs". Told that as a line of "focus" at the end of a
- * prompt that also says "every page gets at least one" and "keep explanations
- * to one or two sentences", a model does what the rest of the prompt says.
- *
- * So instructions are read first, once, against an outline of the material:
- * which pages they mean, whether they ask for particular items to be
- * collected (every question of a kind) or for a set written about the
- * material, how many, and of what kind. The walk then reads only those pages,
- * and every pass is told the instructions come before its own rules.
- *
- * Pure: no model, no Tauri. `studyGen` makes the one call.
- */
-
 import type { QuestionType } from '../study/api';
 import { pageId, type WalkSource } from './deckPlan.ts';
 
 export type Brief = {
-  /** The student's words, as they wrote them. */
   text: string;
-  /** The pages to read, by `pageId`; null when the instructions mean all of it. */
   pages: Set<string> | null;
-  /**
-   * The student wants particular items collected from those pages — every
-   * true/false question, every worked example — one card or question each,
-   * however many that comes to, rather than a set sized by a setting.
-   */
   everyItem: boolean;
-  /** A number the student asked for. */
   count?: number;
-  /** Question types the instructions call for (quizzes). */
   types?: QuestionType[];
-  /** The instructions spelled out for the writer: what each item is and must contain. */
   rules: string;
 };
 
-/** Instructions read as nothing more than themselves: all pages, no selection. */
 export const plainBrief = (text: string): Brief => ({ text, pages: null, everyItem: false, rules: '' });
 
 const QUESTION_TYPES: QuestionType[] = ['mcq', 'multi', 'tf', 'numeric', 'short', 'blank'];
 
-/** Longest a page's line in the outline gets: enough to tell what the page is. */
 const OUTLINE_LINE = 140;
 
-/**
- * Every source, every page, a line or two each — what the instructions are
- * read against. The last page is marked, since "the last page" is how a
- * student points at the end of an exam, and the page count is what makes
- * "the second half" mean something.
- */
 export function outlineForInstructions(walk: WalkSource[]): string {
   return walk.map((s) => {
     const pages = [...s.pages].sort((a, b) => a.ord - b.ord);
@@ -68,16 +31,6 @@ export function outlineForInstructions(walk: WalkSource[]): string {
 const norm = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 const numberIn = (t: string) => /(\d+)/.exec(t)?.[1];
 
-/**
- * The pages a reading of the instructions names, matched to real pages.
- *
- * `use` lists sources by title and, for each, the pages to read — page
- * labels as the outline shows them, a bare number, "last" or "first", or
- * "all" (or nothing) for the whole source. Titles are matched loosely; a
- * source or page that matches nothing is ignored. Null when nothing at all
- * matched, so a muddled reading falls back to the whole material rather than
- * to nothing.
- */
 export function choosePages(walk: WalkSource[], use: { source?: unknown; pages?: unknown }[]): Set<string> | null {
   const chosen = new Set<string>();
   for (const entry of use) {
@@ -104,15 +57,12 @@ export function choosePages(walk: WalkSource[], use: { source?: unknown; pages?:
   return chosen.size ? chosen : null;
 }
 
-/** The walk cut down to the chosen pages, sources with none left dropped. */
 export const narrowWalk = (walk: WalkSource[], pages: Set<string> | null): WalkSource[] =>
   (pages ? walk.map((s) => ({ ...s, pages: s.pages.filter((p) => pages.has(pageId(p))) })).filter((s) => s.pages.length) : walk);
 
-/** Whether a selection leaves out any page of the walk. */
 export const narrows = (walk: WalkSource[], pages: Set<string> | null): boolean =>
   !!pages && walk.some((s) => s.pages.some((p) => !pages.has(pageId(p))));
 
-/** The model's reading of the instructions, checked and made usable. */
 export function toBrief(text: string, walk: WalkSource[], raw: Record<string, unknown> | null): Brief {
   if (!raw) return plainBrief(text);
   const pages = raw.all_pages === true || !Array.isArray(raw.use)
@@ -122,7 +72,6 @@ export function toBrief(text: string, walk: WalkSource[], raw: Record<string, un
   const types = Array.isArray(raw.types) ? QUESTION_TYPES.filter((t) => (raw.types as unknown[]).includes(t)) : [];
   return {
     text,
-    // Everything chosen is the same as no choice at all.
     pages: narrows(walk, pages) ? pages : null,
     everyItem: raw.every_item === true,
     ...(Number.isFinite(count) && count > 0 ? { count } : {}),
@@ -131,7 +80,6 @@ export function toBrief(text: string, walk: WalkSource[], raw: Record<string, un
   };
 }
 
-/** A few words on what was chosen, for the progress line. */
 export function describeChoice(walk: WalkSource[], brief: Brief): string {
   if (!brief.pages) return 'Following your instructions across all of the material';
   const narrowed = narrowWalk(walk, brief.pages);

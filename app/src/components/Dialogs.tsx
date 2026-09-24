@@ -10,10 +10,8 @@ import { SNIPPETS } from './MathEditor';
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    // Keep focus on an autoFocus field inside the dialog; otherwise take it for Escape.
     if (!ref.current?.contains(document.activeElement)) ref.current?.focus();
     const onKey = (e: KeyboardEvent) => {
-      // An open dropdown inside the dialog takes Esc for itself.
       if (e.key === 'Escape' && !document.documentElement.hasAttribute(POPOVER_OPEN)) { e.preventDefault(); onClose(); }
     };
     window.addEventListener('keydown', onKey, true);

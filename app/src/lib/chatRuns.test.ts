@@ -1,7 +1,3 @@
-/**
- * The live-turn store. An answer belongs to the student, not to whichever
- * view happened to start it, so this is what has to survive navigation.
- */
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import {

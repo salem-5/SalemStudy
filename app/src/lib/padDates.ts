@@ -1,9 +1,3 @@
-/**
- * How Notes groups and dates its list, the way Apple Notes does: pinned
- * first, then Today, Yesterday, Previous 7 Days, Previous 30 Days, then by
- * month (and year, once it is not this year). Pure, so it is tested.
- */
-
 export type Dated = { pinned: boolean; updatedAt: number };
 
 const startOfDay = (t: number) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
@@ -20,7 +14,6 @@ export function groupLabel(t: number, now = Date.now()): string {
   return d.getFullYear() === new Date(now).getFullYear() ? month : `${month} ${d.getFullYear()}`;
 }
 
-/** Notes in groups, in order, each group's notes newest first. */
 export function groupNotes<T extends Dated>(notes: T[], now = Date.now()): { label: string; notes: T[] }[] {
   const groups: { label: string; notes: T[] }[] = [];
   const add = (label: string, n: T) => {
@@ -34,7 +27,6 @@ export function groupNotes<T extends Dated>(notes: T[], now = Date.now()): { lab
   return groups;
 }
 
-/** The date in a row: a time today, a weekday this week, a date before. */
 export function rowDate(t: number, now = Date.now()): string {
   const today = startOfDay(now);
   const d = new Date(t);
@@ -44,7 +36,6 @@ export function rowDate(t: number, now = Date.now()): string {
   return d.toLocaleDateString(undefined, { day: 'numeric', month: 'numeric', year: '2-digit' });
 }
 
-/** Above the note: "24 September 2026 at 13:05". */
 export const headerDate = (t: number) => {
   const d = new Date(t);
   return `${d.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })} at ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;

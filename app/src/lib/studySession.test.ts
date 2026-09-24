@@ -1,5 +1,3 @@
-/** Resuming an interrupted quiz or deck, and refusing to resume a stale one. */
-
 import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
 

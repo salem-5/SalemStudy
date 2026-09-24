@@ -1,8 +1,3 @@
-/**
- * The marking rules. A student's score depends on these, so they are tested
- * on their own — no model, no app, no network.
- */
-
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
@@ -135,8 +130,6 @@ describe('hints', () => {
 });
 
 describe('shuffling the choices', () => {
-  // A fixed "random" so the test says something definite rather than
-  // occasionally passing.
   const reversing = () => 0;
 
   it('moves the answer key with the text', () => {

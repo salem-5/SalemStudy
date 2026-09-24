@@ -1,6 +1,3 @@
-//! Notes: Markdown documents in a notebook, generated from sources, a topic
-//! or a chat (with the user's instructions kept for rewrites) and edited by hand.
-
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use tauri::{AppHandle, State};
@@ -14,7 +11,6 @@ pub struct Note {
     pub notebook_id: i64,
     pub title: String,
     pub content: String,
-    /// What the user asked for when it was written ("exam cheat sheet", …).
     pub instructions: String,
     pub created_at: i64,
     pub updated_at: i64,

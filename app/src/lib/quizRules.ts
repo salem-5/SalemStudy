@@ -1,18 +1,5 @@
-/**
- * How a quiz answer is marked, and what makes a hint worth showing.
- *
- * These are the rules a student's score depends on, so they live on their own:
- * no model, no Tauri, no imports beyond the types. `lib/studyGen` and the quiz
- * player both use them, and `studyGen.test.ts` tests them directly.
- */
-
 import type { QuestionType, QuizQuestion } from '../study/api';
 
-/**
- * A hint that names the answer is worse than no hint: the student stops
- * thinking and learns nothing. Anything that gives it away is dropped rather
- * than shown.
- */
 export function usableHint(hint: string, q: { type: QuestionType; answer: string | number; answers?: number[]; choices?: string[]; accept?: string[] }): string {
   const text = hint.trim();
   if (!text) return '';
@@ -22,7 +9,6 @@ export function usableHint(hint: string, q: { type: QuestionType; answer: string
   if (q.type === 'multi') gives.push(...(q.answers ?? []).map((i) => String(q.choices?.[i] ?? '')));
   if (q.type === 'blank') gives.push(String(q.answer), ...(q.accept ?? []));
   if (q.type === 'tf') {
-    // "the statement is true" is the whole answer for a true/false question.
     if (/\bis (true|false)\b|\banswer is\b/i.test(lower)) return '';
   }
   if (q.type === 'numeric') gives.push(String(q.answer));
@@ -36,7 +22,6 @@ export function usableHint(hint: string, q: { type: QuestionType; answer: string
 
 export const defaultTolerance = (n: number) => Math.max(Math.abs(n) * 0.01, 1e-6);
 
-/** "3/2", "-0.5", "1.2e3", "2 m/s" → number. */
 export function parseNumber(s: string): number | null {
   const t = s.trim().replace(/,/g, '').replace(/−/g, '-');
   const frac = t.match(/^(-?\d+(?:\.\d+)?)\s*\/\s*(-?\d+(?:\.\d+)?)/);
@@ -50,7 +35,6 @@ export function parseNumber(s: string): number | null {
   return Number.isFinite(v) ? v : null;
 }
 
-/** Does the check script's last printed line agree with the stated answer? */
 export function checkAgrees(q: QuizQuestion, stdout: string): boolean {
   const last = stdout.trim().split('\n').pop()?.trim() ?? '';
   if (!last) return false;
@@ -65,7 +49,6 @@ export function checkAgrees(q: QuizQuestion, stdout: string): boolean {
   return true;
 }
 
-/** Grade anything except short answers locally. */
 export function gradeLocal(q: QuizQuestion, given: string): boolean {
   if (q.type === 'mcq') return Number(given) === q.answer;
   if (q.type === 'tf') return given === q.answer;
@@ -73,22 +56,17 @@ export function gradeLocal(q: QuizQuestion, given: string): boolean {
   if (q.type === 'blank') return fillsTheGap(q, given);
   if (q.type === 'numeric') {
     const v = parseNumber(given);
-    // The question's own tolerance wins. Widening it to the 1% default would
-    // mark an answer right that the question says is wrong.
     const tolerance = q.tolerance && q.tolerance > 0 ? q.tolerance : defaultTolerance(Number(q.answer));
     return v !== null && Math.abs(v - Number(q.answer)) <= tolerance;
   }
   return false;
 }
 
-/** "0,2" → [0, 2]. The stored form of a multi-select answer. */
 export const picked = (given: string): number[] =>
   [...new Set(
     given
       .split(',')
       .map((part) => part.trim())
-      // An empty answer means nothing was chosen. Without this, Number('')
-      // is 0 and an unanswered question looks like the first choice.
       .filter((part) => part !== '')
       .map(Number)
       .filter((n) => Number.isInteger(n) && n >= 0),
@@ -98,12 +76,6 @@ export const unpick = (indexes: number[]): string => [...indexes].sort((a, b) =>
 
 const sameSet = (a: number[], b: number[]) => a.length === b.length && a.every((v, i) => v === [...b].sort((x, y) => x - y)[i]);
 
-/**
- * Fill-in-the-blank marking. A student typing "mitochondria" when the source
- * said "Mitochondrion" has the right idea, so case, surrounding punctuation,
- * articles and spacing are ignored, and the question may list other forms it
- * accepts. Anything beyond that is a different answer, not a near miss.
- */
 export function fillsTheGap(q: { answer: string | number; accept?: string[] }, given: string): boolean {
   const norm = (text: string) =>
     text
@@ -119,20 +91,11 @@ export function fillsTheGap(q: { answer: string | number; accept?: string[] }, g
     const theirs = norm(candidate);
     if (!theirs) return false;
     if (mine === theirs) return true;
-    // Singular and plural are the same word for marking. Both sides are
-    // reduced the same way, or "ribosomes" would never match "ribosome".
     const stem = (word: string) => word.replace(/(?:es|s)$/, '').replace(/e$/, '');
     return stem(mine) === stem(theirs);
   });
 }
 
-/**
- * Move the right answer somewhere else.
- *
- * Models put the correct choice first far more often than one time in four,
- * and a student who notices that stops reading the other options. Shuffling
- * here — rather than asking the model to do it — means it cannot fail to.
- */
 export function shuffleChoices(q: QuizQuestion, random: () => number = Math.random): QuizQuestion {
   const choices = q.choices;
   if ((q.type !== 'mcq' && q.type !== 'multi') || !choices || choices.length < 2) return q;
@@ -141,7 +104,6 @@ export function shuffleChoices(q: QuizQuestion, random: () => number = Math.rand
     const j = Math.floor(random() * (i + 1));
     [order[i], order[j]] = [order[j], order[i]];
   }
-  // order[newIndex] = oldIndex, so the answer keys move with the text.
   const moved = order.map((old) => choices[old]);
   const place = (old: number) => order.indexOf(old);
   if (q.type === 'multi') {

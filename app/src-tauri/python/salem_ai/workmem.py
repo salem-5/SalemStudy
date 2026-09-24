@@ -1,20 +1,3 @@
-"""Working memory: the compact task state that outlives the conversation.
-
-A long chat is a bad place to keep what a task actually depends on — the due
-date the student mentioned forty messages ago, the four assignments already
-imported, the one page that still failed to parse. This module keeps that as a
-small structured record, saved on the app side under a task id, so a run can:
-
-  * pick up where an interrupted one stopped;
-  * compact the raw history without losing the objective, the constraints or
-    what has already been done;
-  * tell the student what is still outstanding instead of rediscovering it.
-
-The objective is written once, when the task starts, and compaction can only
-*append* to it. A summariser is never allowed to quietly restate what the
-student asked for.
-"""
-
 from __future__ import annotations
 
 import json
@@ -25,8 +8,6 @@ from typing import Any
 from .rpc import HostError
 from .state import RunContext
 
-# Roughly four characters per token; the threshold is deliberately generous, so
-# compaction is rare and recent turns always survive it.
 CHARS_PER_TOKEN = 4
 COMPACT_ABOVE_TOKENS = 24_000
 KEEP_RECENT_TURNS = 8
@@ -50,11 +31,7 @@ class WorkingMemory:
     unresolved: list[str] = field(default_factory=list)
     updated_at: float = 0.0
 
-    # ------------------------------------------------------------- mutation
-
     def start(self, objective: str) -> None:
-        """Set the objective the first time only. Later runs of the same task
-        add to it; nothing overwrites it."""
         text = objective.strip()
         if not text:
             return
@@ -78,7 +55,6 @@ class WorkingMemory:
         self.pending = [p for p in self.pending if p != item.strip()]
 
     def merge(self, patch: dict) -> None:
-        """Fold in a model-written update. The objective is read-only here."""
         for key in ("constraints", "entities", "done", "pending", "tool_results",
                     "decisions", "validations", "unresolved"):
             for item in patch.get(key) or []:
@@ -92,14 +68,11 @@ class WorkingMemory:
         if patch.get("summary"):
             self.summary = str(patch["summary"])
 
-    # ------------------------------------------------------------- rendering
-
     def is_empty(self) -> bool:
         return not any([self.objective, self.constraints, self.done, self.pending,
                         self.dates, self.numbers, self.entities, self.summary])
 
     def as_prompt(self) -> str:
-        """What the agent is shown. Short, ordered by what it needs first."""
         if self.is_empty():
             return ""
         lines = ["## Task state (carried over — trust this over your memory of the conversation)"]
@@ -136,8 +109,6 @@ class WorkingMemory:
         return WorkingMemory(**{k: v for k, v in raw.items() if k in known})
 
 
-# ---------------------------------------------------------------- persistence
-
 
 def load(ctx: RunContext, task_id: str) -> WorkingMemory:
     if not task_id:
@@ -161,8 +132,6 @@ def save(ctx: RunContext, memory: WorkingMemory) -> None:
         ctx.host.log("warn", f"could not save task state: {exc}")
     ctx.emit({"kind": "memory", "state": memory.as_dict()})
 
-
-# ---------------------------------------------------------------- compaction
 
 
 def too_large(messages: list[dict]) -> bool:
@@ -196,12 +165,6 @@ asked for — the objective is recorded separately and must not be changed."""
 
 
 def compact(ctx: RunContext, model, memory: WorkingMemory, messages: list[dict]) -> list[dict]:
-    """Fold everything but the recent turns into working memory.
-
-    Returns the messages to actually send. If the summariser fails the history
-    is simply truncated — the task state already holds what matters, and losing
-    old chat is better than sending a request that cannot succeed.
-    """
     if len(messages) <= KEEP_RECENT_TURNS + 1 or not too_large(messages):
         return messages
     head = [m for m in messages if m.get("role") == "system"]
@@ -222,7 +185,7 @@ def compact(ctx: RunContext, model, memory: WorkingMemory, messages: list[dict])
         if patch:
             memory.merge(patch)
             save(ctx, memory)
-    except Exception as exc:  # compaction must never fail the run
+    except Exception as exc:
         ctx.host.log("warn", f"compaction failed, truncating instead: {exc}")
 
     carried = memory.as_prompt()

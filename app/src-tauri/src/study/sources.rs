@@ -1,8 +1,3 @@
-//! Notebook sources: the uploaded file (or YouTube link), the text extracted
-//! from it as ordered units (pages, slides, time spans), and the chunks that
-//! full-text search runs over. Extraction itself happens in the UI with the
-//! Python sandbox and the vision model; this module stores and searches.
-
 use base64::Engine;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -12,7 +7,6 @@ use tauri::{AppHandle, State};
 use super::{expect_one, now_ms, with_db, StudyDb};
 
 const MAX_SOURCE_BYTES: usize = 200 * 1024 * 1024;
-/// Chunks are cut at unit boundaries or at about this many characters.
 const CHUNK_CHARS: usize = 1400;
 
 #[derive(Serialize, Debug, Clone)]
@@ -31,15 +25,12 @@ pub struct Source {
     pub unit_count: i64,
     pub char_count: i64,
     pub created_at: i64,
-    /// How the reading went: pages that came back empty, pages that had to be
-    /// transcribed, anything that looked wrong. Null until it is read.
     pub report: Option<Value>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct UnitIn {
-    /// "Page 3", "Slide 7", "12:30".
     pub label: String,
     pub text: String,
 }
@@ -83,8 +74,6 @@ fn row_source(r: &rusqlite::Row) -> rusqlite::Result<Source> {
         unit_count: r.get(10)?,
         char_count: r.get(11)?,
         created_at: r.get(12)?,
-        // A report that cannot be parsed is no report; it must never stop the
-        // source itself from loading.
         report: r.get::<_, Option<String>>(13)?.and_then(|s| serde_json::from_str(&s).ok()),
     })
 }
@@ -109,8 +98,6 @@ pub fn add(conn: &Connection, notebook_id: i64, kind: &str, title: &str, filenam
     Ok(get(conn, conn.last_insert_rowid())?.expect("just inserted"))
 }
 
-/// Split units into chunks: a chunk never spans more than a few units, and
-/// long units are cut at paragraph or sentence breaks near CHUNK_CHARS.
 pub fn chunk_units(units: &[UnitIn]) -> Vec<(i64, i64, String)> {
     let mut out: Vec<(i64, i64, String)> = Vec::new();
     let mut cur = String::new();
@@ -151,8 +138,6 @@ pub fn chunk_units(units: &[UnitIn]) -> Vec<(i64, i64, String)> {
     out
 }
 
-/// A byte index ≤ `max` at a paragraph, line or sentence end if there is one
-/// in the last third, always on a char boundary.
 fn split_point(s: &str, max: usize) -> usize {
     if s.len() <= max {
         return s.len();
@@ -200,8 +185,6 @@ pub fn set_content(conn: &Connection, id: i64, units: &[UnitIn]) -> rusqlite::Re
     Ok(true)
 }
 
-/// FTS5 query from free text: significant words, each quoted, OR-ed, so any
-/// overlap ranks and punctuation can never be read as query syntax.
 pub fn fts_query(text: &str) -> Option<String> {
     const STOP: &[&str] = &[
         "the", "and", "for", "are", "but", "not", "you", "all", "any", "can", "had", "her", "was", "one", "our", "out",
@@ -245,14 +228,12 @@ pub fn search(conn: &Connection, source_ids: &[i64], query: &str, limit: usize) 
                 unit_to: r.get(5)?,
                 label: r.get(6)?,
                 text: r.get(7)?,
-                // bm25 is lower-is-better; flip it so callers can sort descending.
                 score: -r.get::<_, f64>(8)?,
             })
         })?
         .collect()
 }
 
-/// Evenly spaced chunks across the given sources, for "make a deck from these".
 pub fn sample(conn: &Connection, source_ids: &[i64], max_chars: usize) -> rusqlite::Result<Vec<Hit>> {
     let mut all: Vec<Hit> = Vec::new();
     for id in source_ids {
@@ -276,13 +257,10 @@ pub fn sample(conn: &Connection, source_ids: &[i64], max_chars: usize) -> rusqli
     if total <= max_chars {
         return Ok(all);
     }
-    // Keep every k-th chunk so the whole span of every source is represented.
     let keep = (max_chars as f64 / total as f64).clamp(0.01, 1.0);
     let step = (1.0 / keep).ceil() as usize;
     Ok(all.into_iter().enumerate().filter(|(i, _)| i % step == 0).map(|(_, h)| h).collect())
 }
-
-// ------------------------------------------------------------------ commands
 
 fn decode(data: &str) -> Result<Vec<u8>, String> {
     let raw = data.split_once(";base64,").map(|(_, b)| b).unwrap_or(data);
@@ -332,12 +310,6 @@ pub fn source_set_status(app: AppHandle, db: State<'_, StudyDb>, id: i64, status
     expect_one(changed, "Source")
 }
 
-/// Record how reading a source went.
-///
-/// Extraction is the step most likely to be quietly wrong — a scanned page
-/// that transcribed to nothing still looks like a page. The report is what
-/// lets the student, and the agents, see that rather than assume the document
-/// simply had nothing on it.
 #[tauri::command]
 pub fn source_set_report(app: AppHandle, db: State<'_, StudyDb>, id: i64, report: Value) -> Result<(), String> {
     with_db(&app, &db, |c| {
@@ -368,7 +340,6 @@ pub fn source_units(app: AppHandle, db: State<'_, StudyDb>, id: i64) -> Result<V
     })
 }
 
-/// The original file as a data: URL (PDF viewer, images).
 #[tauri::command]
 pub fn source_data(app: AppHandle, db: State<'_, StudyDb>, id: i64) -> Result<String, String> {
     let row: Option<(String, Option<Vec<u8>>)> =
@@ -396,8 +367,6 @@ pub struct SourceImage {
     pub caption: String,
 }
 
-/// A picture found in a source (a slide image, a PDF page with a figure), with
-/// what the vision model saw in it.
 #[tauri::command]
 pub fn source_image_add(app: AppHandle, db: State<'_, StudyDb>, source_id: i64, unit_ord: i64, mime: String, data: String, caption: String) -> Result<i64, String> {
     let bytes = decode(&data)?;
@@ -410,7 +379,6 @@ pub fn source_image_add(app: AppHandle, db: State<'_, StudyDb>, source_id: i64, 
     })
 }
 
-/// Forget a source's pictures (before it is read again).
 #[tauri::command]
 pub fn source_images_clear(app: AppHandle, db: State<'_, StudyDb>, source_id: i64) -> Result<(), String> {
     with_db(&app, &db, |c| c.execute("DELETE FROM source_image WHERE source_id = ?1", [source_id]).map(|_| ()))
@@ -433,7 +401,6 @@ pub fn source_image_data(app: AppHandle, db: State<'_, StudyDb>, id: i64) -> Res
     Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(data)))
 }
 
-/// Filename and bytes of each source that has a file, for the Python sandbox.
 pub fn source_files(app: &AppHandle, db: &StudyDb, ids: &[i64]) -> Result<Vec<(String, Vec<u8>)>, String> {
     if ids.is_empty() {
         return Ok(Vec::new());

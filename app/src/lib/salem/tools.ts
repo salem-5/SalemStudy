@@ -6,33 +6,14 @@ import type { Route } from '../../study/pages';
 import type { NotebookSummary, SubjectNode } from '../../study/api';
 import type { SalemTool, ToolInput, ToolOutcome } from './types';
 
-/**
- * The Salem tool registry.
- *
- * One declaration per tool, in one place, whoever ends up running it:
- *
- *  - most run here, in the webview, where the study space already lives;
- *  - a few (`run_python`, `web_search`, `web_fetch`) are served by Rust so
- *    they keep working while the window is busy — those are declared without
- *    a body and dispatched on the other side.
- *
- * Every tool is narrowly scoped, typed, marked read-only or mutating, and
- * reached only through the runtime. None of them hands the agent a database
- * handle: they take names and ids and return shaped results.
- */
-
 export type ToolEnv = {
   tree: () => SubjectNode[];
   refresh: () => Promise<SubjectNode[]>;
   open: (route: Route) => void;
-  /** The notebook a notebook-scoped run is bound to, if any. */
   notebookId?: number | null;
-  /** The sources a source-restricted run may read. Empty means "all ready
-   *  sources of `notebookId`"; a non-empty list is a hard boundary. */
   sourceIds?: number[];
 };
 
-/** Which scope each app tool belongs to, and whether it changes anything. */
 const META: Record<string, { scopes: string[]; mutating?: boolean; label: string }> = {
   list_study: { scopes: ['study'], label: 'Looking through your study space' },
   read_syllabus: { scopes: ['study'], label: 'Reading the syllabus' },
@@ -61,7 +42,6 @@ type FunctionDef = {
   };
 };
 
-/** An OpenAI-style function declaration in the runtime's vocabulary. */
 function convert(def: FunctionDef): { name: string; description: string; inputs: Record<string, ToolInput> } {
   const { name, description, parameters } = def.function;
   const required = new Set(parameters.required ?? []);
@@ -71,8 +51,6 @@ function convert(def: FunctionDef): { name: string; description: string; inputs:
     inputs[key] = {
       type: (['string', 'number', 'integer', 'boolean', 'array', 'object'].includes(type) ? type : 'string') as ToolInput['type'],
       description: String(raw.description ?? key),
-      // Anything not required has to be declared nullable, or the runtime
-      // makes the model supply it.
       ...(required.has(key) ? {} : { nullable: true }),
       ...(Array.isArray(raw.enum) ? { enum: raw.enum.map(String) } : {}),
       ...(raw.items ? { items: { type: String((raw.items as { type?: unknown }).type ?? 'string') } } : {}),
@@ -80,10 +58,6 @@ function convert(def: FunctionDef): { name: string; description: string; inputs:
   }
   return { name, description, inputs };
 }
-
-// ---------------------------------------------------------------------------
-// Tools the app serves on the Rust side
-// ---------------------------------------------------------------------------
 
 const NATIVE: SalemTool[] = [
   {
@@ -126,13 +100,8 @@ const NATIVE: SalemTool[] = [
   },
 ];
 
-// ---------------------------------------------------------------------------
-// Source tools — the notebook agent's retrieval loop
-// ---------------------------------------------------------------------------
-
 const clip = (text: string, n: number) => (text.length > n ? `${text.slice(0, n)}…` : text);
 
-/** The sources a run may read: its explicit list, or the notebook's ready ones. */
 async function allowed(env: ToolEnv): Promise<number[]> {
   if (env.sourceIds?.length) return env.sourceIds;
   if (env.notebookId == null) return [];
@@ -177,7 +146,6 @@ function sourceTools(env: ToolEnv): SalemTool[] {
       async run(args) {
         const ids = await allowed(env);
         const only = Number(args.sourceId);
-        // A source id the run was not given is refused, not quietly widened.
         const scope = Number.isFinite(only) && only > 0 ? ids.filter((id) => id === only) : ids;
         if (Number.isFinite(only) && only > 0 && !scope.length) {
           throw new Error(`Source ${only} is not one of the sources this question may use (${ids.join(', ') || 'none'}).`);
@@ -218,8 +186,6 @@ function sourceTools(env: ToolEnv): SalemTool[] {
         const to = Math.min(from + 59, Number(args.to) || from + 19);
         const slice = units.filter((u) => u.ord >= from && u.ord <= to);
         return {
-          // Document order is preserved: a downstream agent must be able to
-          // trust that page 4 came after page 3.
           result: slice.sort((a, b) => a.ord - b.ord).map((u) => ({ page: u.ord, label: u.label, text: clip(u.text, 6000) })),
           detail: slice.length
             ? `pages ${from}–${Math.min(to, units.length)} of ${units.length}${to < units.length ? ' — call again for the rest' : ''}`
@@ -230,11 +196,6 @@ function sourceTools(env: ToolEnv): SalemTool[] {
   ];
 }
 
-// ---------------------------------------------------------------------------
-// The study material the student has already made
-// ---------------------------------------------------------------------------
-
-/** Every notebook the run may look in: its own, or all of them. */
 function reachableNotebooks(env: ToolEnv): { id: number; name: string; subject: string }[] {
   const all = env.tree().flatMap((s) => s.notebooks.map((n) => ({ id: n.id, name: n.name, subject: s.name })));
   return env.notebookId == null ? all : all.filter((n) => n.id === env.notebookId);
@@ -340,15 +301,9 @@ function madeTools(env: ToolEnv): SalemTool[] {
   ];
 }
 
-// ---------------------------------------------------------------------------
-// Putting material into a notebook
-// ---------------------------------------------------------------------------
-
-/** Split written material into units, so it can be searched and cited. */
 function intoUnits(text: string): { label: string; text: string }[] {
   const body = text.replace(/\r\n/g, '\n').trim();
   if (!body) return [];
-  // Markdown headings are the natural seams; without them, paragraphs are.
   const parts = body.split(/\n(?=#{1,3} )/g).filter((p) => p.trim());
   if (parts.length > 1) {
     return parts.map((part, i) => ({
@@ -428,11 +383,6 @@ function materialTools(env: ToolEnv): SalemTool[] {
   ];
 }
 
-// ---------------------------------------------------------------------------
-// Notes — the student's own writing, which is as much "source" as a lecture PDF
-// ---------------------------------------------------------------------------
-
-/** Every note the run may read: this notebook's, or all of them. */
 async function reachableNotes(env: ToolEnv): Promise<{ id: number; notebookId: number; title: string }[]> {
   if (env.notebookId != null) {
     const notes = await studyApi.notes(env.notebookId);
@@ -514,7 +464,6 @@ function noteTools(env: ToolEnv): SalemTool[] {
           const at = note.content.toLowerCase().indexOf(query);
           const inTitle = note.title.toLowerCase().includes(query);
           if (at < 0 && !inTitle) continue;
-          // Enough either side of the match to read it in context.
           const from = at < 0 ? 0 : Math.max(0, at - 400);
           hits.push({ id: note.id, title: note.title, excerpt: clip(note.content.slice(from, from + 1600), 1600) });
         }
@@ -524,21 +473,8 @@ function noteTools(env: ToolEnv): SalemTool[] {
   ];
 }
 
-// ---------------------------------------------------------------------------
-// Notes (the student's own notes app)
-// ---------------------------------------------------------------------------
-
-/**
- * Notes: folders and notes the student keeps in the Notes tab. The chats may
- * do anything there the student can — make folders, write, rewrite, move,
- * pin, delete (to Recently Deleted, from where it can be recovered).
- *
- * Content goes in and out as Markdown; the page is a rich editor, and the
- * conversion keeps checklists and maths intact.
- */
 function padTools(env: ToolEnv): SalemTool[] {
   const BY = 'assistant';
-  /** A folder named or numbered by the model: id, or a name (any case). */
   const folderId = async (folder: unknown): Promise<number | null> => {
     if (folder === undefined || folder === null || folder === '') return null;
     const all = (await padApi.overview()).folders;
@@ -786,11 +722,6 @@ function padTools(env: ToolEnv): SalemTool[] {
   ];
 }
 
-// ---------------------------------------------------------------------------
-// The registry
-// ---------------------------------------------------------------------------
-
-/** Every tool available in this context, declaration and body together. */
 export function registry(env: ToolEnv): SalemTool[] {
   const app = appTools({ tree: env.tree, refresh: env.refresh, open: env.open });
   const wrapped: SalemTool[] = (APP_TOOL_DEFS as FunctionDef[]).map((def) => {
@@ -815,7 +746,6 @@ export function registry(env: ToolEnv): SalemTool[] {
   return [...wrapped, ...sourceTools(env), ...noteTools(env), ...padTools(env), ...madeTools(env), ...materialTools(env), ...NATIVE];
 }
 
-/** Answer a tool call the Rust side forwarded to us. */
 export async function dispatch(tools: SalemTool[], name: string, args: Record<string, unknown>): Promise<unknown> {
   const tool = tools.find((t) => t.name === name);
   if (!tool) throw new Error(`There is no tool called ${name}.`);
@@ -828,7 +758,6 @@ export async function dispatch(tools: SalemTool[], name: string, args: Record<st
   return { result: outcome.result, label: outcome.label, detail: outcome.detail };
 }
 
-/** Tell the runtime the webview answered a forwarded call. */
 export const answerTool = (call: number, ok: boolean, data?: unknown, error?: string) =>
   invoke<void>('salem_tool_result', { call, ok, data: data ?? null, error: error ?? null });
 

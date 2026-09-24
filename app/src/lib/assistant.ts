@@ -8,22 +8,10 @@ import { studyApi, type EventKind, type NotebookSummary, type SubjectNode } from
 import { notebookMaterial } from './material';
 import type { Route } from '../study/pages';
 
-/**
- * What each app tool does. The declarations here and in `lib/salem/tools`
- * together make the registry the runtime is given; this file is the part that
- * actually acts on the student's study space.
- */
 export type AppTools = {
   defs: unknown[];
   run: (name: string, args: Record<string, unknown>) => Promise<{ ok: boolean; label: string; detail?: string; result: unknown }>;
 };
-
-/**
- * The standalone chat's app tools: with them the assistant can organise the
- * user's study space (subjects, notebooks, notes, decks, quizzes), search a
- * notebook, drive the focus timer and open views. It only acts when asked
- * (see APP_POLICY in prompts); every action shows up in the reply.
- */
 
 const fn = (name: string, description: string, properties: Record<string, unknown>, required: string[] = []) => ({
   type: 'function',
@@ -116,11 +104,6 @@ function findNotebook(tree: SubjectNode[], name: string): { notebook: NotebookSu
   throw new Error(`"${name}" matches several notebooks: ${hits.map((x) => `${x.subject.name} / ${x.notebook.name}`).join(', ')}. Say which.`);
 }
 
-/**
- * What to build from. A deck or quiz walks every page of the notebook's
- * sources in reading order; notes are written from a sample, since they are
- * written in one go.
- */
 async function sourceMaterial(notebookId: number, topic: string, walk = false, instructions = ''): Promise<GenSource> {
   if (topic.trim()) return { kind: 'topic', prompt: topic };
   const ready = (await studyApi.sources(notebookId)).filter((s) => s.status === 'ready');
@@ -129,10 +112,9 @@ async function sourceMaterial(notebookId: number, topic: string, walk = false, i
   return { kind: 'sources', hits, focus: instructions };
 }
 
-/** A number of items the assistant was asked for, if it was asked for one. */
 const countOf = (value: unknown): number | undefined => {
   const n = Math.round(Number(value));
-  return Number.isFinite(n) && n > 0 ? Math.min(96, n) : undefined; // MAX_ITEMS
+  return Number.isFinite(n) && n > 0 ? Math.min(96, n) : undefined;
 };
 
 export function appTools(env: Env): AppTools {
@@ -270,7 +252,6 @@ export function appTools(env: Env): AppTools {
           if (!current) throw new Error(`No event with id ${id}.`);
           let { startAt, endAt, allDay } = current;
           if (str(a.date) || str(a.time)) {
-            // en-CA formats as YYYY-MM-DD in local time (toISOString would use UTC and can shift the day).
             const d = str(a.date) || new Date(current.startAt).toLocaleDateString('en-CA');
             ({ startAt, endAt, allDay } = when(d, str(a.time), str(a.end_time)));
           }
@@ -304,9 +285,6 @@ export function appTools(env: Env): AppTools {
   };
 }
 
-// ---------------------------------------------------------------- dates
-
-/** Local midnight of a YYYY-MM-DD date. */
 function parseDay(d: string): number {
   const m = d.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!m) throw new Error(`"${d}" is not a date (use YYYY-MM-DD).`);

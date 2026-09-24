@@ -16,3 +16,16 @@ Thumbs.db
 # Python
 __pycache__/
 *.pyc
+
+# AI agent files
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
+GEMINI.md
+.cursor/
+.cursorrules
+.windsurfrules
+.aider*
+.github/copilot-instructions.md
+docs/

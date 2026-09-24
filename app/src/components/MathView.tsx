@@ -1,7 +1,6 @@
 import { memo, useMemo } from 'react';
 import { previewExpr, renderable } from '../lib/render';
 
-/** Renders either a typed expression (`expr`) or server MathML (`mathml`). */
 export const MathView = memo(function MathView({ expr, mathml, className }: { expr?: string; mathml?: string; className?: string }) {
   const html = useMemo(() => {
     if (mathml !== undefined) return renderable(mathml);

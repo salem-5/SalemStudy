@@ -1,10 +1,3 @@
-//! The tray icon: Salem keeps running with its window closed.
-//!
-//! Closing the window hides it here rather than quitting (Settings → close to
-//! tray, on by default), which is what keeps tab mode serving the browser tab
-//! and a deck or chat that is still being written going. The menu brings the
-//! window back, opens the browser tab when tab mode is on, or quits for real.
-
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager};
@@ -34,7 +27,6 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
                 let status = crate::tabmode::tab_mode_status(app.clone());
                 match status.get("url").and_then(|u| u.as_str()) {
                     Some(url) => { let _ = crate::open_url(url.to_string()); }
-                    // Not on: bring the window up, where it can be turned on.
                     None => show_main(app),
                 }
             }

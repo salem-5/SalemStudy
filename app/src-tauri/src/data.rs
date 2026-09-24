@@ -1,14 +1,3 @@
-//! Moving all of the user's data: export to one file, import an exact copy,
-//! or reset to a fresh start.
-//!
-//! An export is a gzipped SQLite file: a consistent copy of `study.db` (made with
-//! `VACUUM INTO`, so every source, note, chat and file is inside) plus a small
-//! `salemstudy_export` table holding, optionally, the settings — the AI config
-//! without the API key, and the app's local preferences. Importing replaces
-//! `study.db` with it (the previous one is kept as `study.before-import.db`)
-//! and restores the settings but never the API key. Plain (not gzipped)
-//! exports from before compression still import.
-
 use std::fs;
 use std::io::{self, BufReader, BufWriter, Read};
 use std::path::{Path, PathBuf};
@@ -29,7 +18,6 @@ fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path().app_data_dir().map_err(|e| e.to_string())
 }
 
-/// Close the database so its file can be replaced; the next use reopens it.
 fn close(db: &StudyDb) -> Result<(), String> {
     let mut guard = db.0.lock().map_err(|_| "study database lock poisoned".to_string())?;
     *guard = None;
@@ -60,7 +48,6 @@ fn is_gzip(path: &Path) -> bool {
     fs::File::open(path).and_then(|mut f| f.read_exact(&mut magic)).is_ok() && magic == [0x1f, 0x8b]
 }
 
-/// The export as a plain SQLite file: gzipped ones are unpacked to `scratch`.
 fn plain(path: &Path, scratch: &Path) -> Result<PathBuf, String> {
     if !is_gzip(path) {
         return Ok(path.to_path_buf());
@@ -78,7 +65,6 @@ pub struct ExportResult {
     pub bytes: u64,
 }
 
-/// Write the settings rows into an exported copy.
 pub fn stamp(conn: &Connection, config: Option<&Config>, local: Option<&str>) -> rusqlite::Result<()> {
     conn.execute_batch(&format!("CREATE TABLE IF NOT EXISTS {EXPORT_TABLE} (key TEXT PRIMARY KEY, value TEXT NOT NULL);"))?;
     let put = |k: &str, v: &str| conn.execute(&format!("INSERT OR REPLACE INTO {EXPORT_TABLE} (key, value) VALUES (?1, ?2)"), params![k, v]);
@@ -100,7 +86,6 @@ pub fn stamp(conn: &Connection, config: Option<&Config>, local: Option<&str>) ->
 #[tauri::command]
 pub fn data_export(app: AppHandle, db: State<'_, StudyDb>, path: String, include_settings: bool, local: Option<String>) -> Result<ExportResult, String> {
     let target = PathBuf::from(&path);
-    // Copy and stamp next to the live data, then compress into the chosen file.
     let dir = data_dir(&app)?;
     let staging = dir.join("study.exporting.db");
     if staging.exists() { let _ = fs::remove_file(&staging); }
@@ -133,7 +118,6 @@ pub struct ExportInfo {
     pub bytes: u64,
 }
 
-/// Check a file is a SalemStudy export (or a study.db) this version can read.
 pub fn inspect(path: &Path) -> Result<ExportInfo, String> {
     let bad = || "This file is not a SalemStudy export.".to_string();
     let c = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|_| bad())?;
@@ -172,19 +156,16 @@ pub fn data_inspect(app: AppHandle, path: String) -> Result<ExportInfo, String> 
     let scratch = dir.join("study.inspecting.db");
     let result = plain(Path::new(&path), &scratch).and_then(|p| inspect(&p));
     let _ = fs::remove_file(&scratch);
-    // Report the size of the file the user picked, not the unpacked copy.
     result.map(|info| ExportInfo { bytes: fs::metadata(&path).map(|m| m.len()).unwrap_or(info.bytes), ..info })
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportResult {
-    /// The exported local preferences (JSON), for the webview to restore.
     pub local: Option<String>,
     pub settings: bool,
 }
 
-/// Copy an export into place as `dest`: settings rows removed, settings returned.
 pub fn unpack(src: &Path, dest: &Path) -> Result<(Option<Config>, Option<String>), String> {
     inspect(src)?;
     fs::copy(src, dest).map_err(|e| format!("cannot copy the export: {e}"))?;
@@ -195,7 +176,6 @@ pub fn unpack(src: &Path, dest: &Path) -> Result<(Option<Config>, Option<String>
     let config = get("config").and_then(|v| serde_json::from_str::<Config>(&v).ok());
     let local = get("local");
     c.execute_batch(&format!("DROP TABLE IF EXISTS {EXPORT_TABLE};")).map_err(|e| e.to_string())?;
-    // A copy may still be in WAL mode from where it came; settle it into one file.
     c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").ok();
     drop(c);
     for ext in ["-wal", "-shm"] {
@@ -223,7 +203,6 @@ pub fn data_import(app: AppHandle, db: State<'_, StudyDb>, path: String) -> Resu
     }
     remove_db_files(&dir)?;
     fs::rename(&staging, &live).map_err(|e| format!("cannot put the import in place: {e}"))?;
-    // Reopen now so an older export is migrated straight away.
     with_db(&app, &db, |_| Ok(()))?;
 
     if let Some(mut cfg) = config.clone() {
@@ -235,8 +214,6 @@ pub fn data_import(app: AppHandle, db: State<'_, StudyDb>, path: String) -> Resu
     Ok(ImportResult { settings: config.is_some() || local.is_some(), local })
 }
 
-/// Delete everything: every subject, notebook, source, chat, card, event and
-/// memory. With `forget_key`, the API key and AI settings go too.
 #[tauri::command]
 pub fn data_reset(app: AppHandle, db: State<'_, StudyDb>, forget_key: bool) -> Result<(), String> {
     let dir = data_dir(&app)?;
@@ -293,7 +270,6 @@ mod tests {
         let d = tmp("gzip");
         let live = study::open(&d.join("study.db")).unwrap();
         let s = study::create_subject(&live, "Calculus 2").unwrap();
-        // Something compressible, like real notes and sources.
         for i in 0..200 { study::create_notebook(&live, s, &format!("Week {i} notes"), &"integration by parts ".repeat(20)).unwrap(); }
         let raw = d.join("raw.db");
         live.execute("VACUUM INTO ?1", [raw.to_str().unwrap()]).unwrap();
@@ -305,9 +281,7 @@ mod tests {
 
         let back = plain(&packed, &d.join("scratch.db")).unwrap();
         assert_eq!(inspect(&back).unwrap().notebooks, 200);
-        // Plain files are used as they are.
         assert_eq!(plain(&raw, &d.join("unused.db")).unwrap(), raw);
-        // A gzip of something else is still refused.
         let junk = d.join("junk.txt");
         fs::write(&junk, "hello").unwrap();
         let junk_gz = d.join("junk.salemstudy");

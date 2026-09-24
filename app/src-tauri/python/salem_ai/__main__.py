@@ -1,11 +1,3 @@
-"""Entry point. `python -m salem_ai` and then talk to it over stdin/stdout.
-
-The process is long-lived and handles several runs at once: each `start` gets
-its own thread, so a background generation and a chat reply can be in flight
-together, while the reader thread stays free to deliver `cancel` and the
-replies the workers are parked on.
-"""
-
 from __future__ import annotations
 
 import os
@@ -13,19 +5,16 @@ import sys
 import threading
 import traceback
 
-# smolagents must not reach for the Hub, and nothing here should phone home.
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 
-from . import MIN_PYTHON, VERSION  # noqa: E402
-from .rpc import Host  # noqa: E402
+from . import MIN_PYTHON, VERSION
+from .rpc import Host
 
 
 def main() -> int:
-    # stdout is the protocol. Anything a library prints would corrupt it, so
-    # the real stdout is taken away and given to the Host alone.
     protocol = sys.stdout
     sys.stdout = sys.stderr
     host = Host(stdin=sys.stdin, stdout=protocol)

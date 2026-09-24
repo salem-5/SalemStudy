@@ -3,14 +3,6 @@ import { transcribe } from './ingest';
 import { pythonStatus, runPython, sandboxName } from './python';
 import { studyApi, type EventKind, type SubjectNode } from '../study/api';
 
-/**
- * Course syllabuses: the file is stored with the subject, its text is read
- * like a source (Python for PDF/DOCX/PPTX, vision for images and scans), and
- * one AI pass turns it into a short course summary — which every notebook in
- * the subject reads as course context — plus the dated events for Schedule.
- */
-
-/** What the notebook chats, cards and quizzes know about the course. */
 export function courseContextOf(s: Pick<SubjectNode, 'context' | 'syllabusSummary'>): string {
   const summary = s.syllabusSummary?.trim();
   return [s.context.trim(), summary ? `Course syllabus (summary):\n${summary}` : ''].filter(Boolean).join('\n\n');
@@ -25,7 +17,6 @@ const readDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
   r.readAsDataURL(file);
 });
 
-/** Pages with less text than this are treated as scans and read with vision. */
 const SCAN_CHARS = 80;
 const MAX_SCAN_PAGES = 8;
 
@@ -37,7 +28,6 @@ async function py(code: string, attachmentId: number) {
   return JSON.parse(r.stdout.trim().split('\n').pop() ?? 'null');
 }
 
-/** Store the file and read its text. */
 export async function readSyllabus(file: File, stage: (t: string) => void): Promise<{ attachmentId: number; text: string }> {
   if (file.size > 60 * 1024 * 1024) throw new Error('That file is larger than 60 MB.');
   stage('saving the file');
@@ -96,7 +86,6 @@ print(json.dumps(out))`, info.id) as string[];
 export type SyllabusEvent = {
   title: string;
   kind: EventKind;
-  /** Local date, YYYY-MM-DD. */
   date: string;
   start: string | null;
   end: string | null;
@@ -120,7 +109,6 @@ events: every dated item the student would put in a calendar: exams and quizzes 
 - title: short, e.g. "Midterm 1", "Lab 3 report due". notes: what it covers or where, one line, or "".
 - If the syllabus has no dates, return an empty events list.`;
 
-/** The shape the runtime validates the reading against before it is used. */
 const SYLLABUS_SCHEMA = {
   type: 'object',
   required: ['summary', 'events'],
@@ -147,10 +135,6 @@ const SYLLABUS_SCHEMA = {
 export async function analyzeSyllabus(subject: string, text: string, instructions = ''): Promise<{ summary: string; events: SyllabusEvent[] }> {
   const today = new Date().toLocaleDateString('en-CA');
   const clipped = text.length > 80_000 ? `${text.slice(0, 80_000)}\n[… truncated]` : text;
-  // A syllabus is a structured-data job: dates have to parse, and a date the
-  // agent is unsure of must be reported rather than invented. The runtime
-  // gives it Python for the date arithmetic and checks the shape before this
-  // ever touches the student's schedule.
   const obj = await generate<Record<string, unknown>>({
     feature: 'sources',
     system: SYLLABUS_SYSTEM,
@@ -174,7 +158,6 @@ export async function analyzeSyllabus(subject: string, text: string, instruction
   return { summary: typeof obj.summary === 'string' ? obj.summary.trim() : '', events };
 }
 
-/** Put the chosen events on the calendar, linked to the course (which gives them its colour). */
 export async function addSyllabusEvents(subject: Pick<SubjectNode, 'id' | 'name'>, events: SyllabusEvent[]): Promise<number> {
   const prefix = `${subject.name}:`.toLowerCase();
   for (const e of events) {

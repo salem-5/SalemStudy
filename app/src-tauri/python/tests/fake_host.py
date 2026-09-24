@@ -1,10 +1,3 @@
-"""A stand-in for the Rust host, so the runtime can be tested without the app.
-
-It speaks the same protocol over a real pipe to a real `python -m salem_ai`
-process: scripted model replies, tools that actually run, and a sandbox that
-actually executes the code it is given. Nothing here mocks the runtime itself.
-"""
-
 from __future__ import annotations
 
 import json
@@ -39,8 +32,6 @@ class FakeHost:
         threading.Thread(target=self._read, daemon=True).start()
         self._hello.wait(20)
 
-    # ------------------------------------------------------------- protocol
-
     def send(self, message: dict) -> None:
         assert self.proc.stdin is not None
         self.proc.stdin.write(json.dumps(message) + "\n")
@@ -62,8 +53,6 @@ class FakeHost:
             elif kind == "done":
                 self._done.put(message)
             elif kind == "call":
-                # The real host answers on its own threads; a tool that blocks
-                # must not stop cancels from getting through.
                 threading.Thread(target=self._dispatch, args=(message,), daemon=True).start()
 
     def _dispatch(self, message: dict) -> None:
@@ -97,8 +86,6 @@ class FakeHost:
             return {"ok": True}
         raise RuntimeError(f"unknown host method {method}")
 
-    # ----------------------------------------------------------------- runs
-
     def run(self, payload: dict, run: str = "r1", timeout: float = 90) -> dict:
         self.send({"t": "start", "run": run, "input": payload})
         return self._done.get(timeout=timeout)
@@ -126,8 +113,6 @@ class FakeHost:
             except Exception:
                 pass
 
-    # --------------------------------------------------------------- probes
-
     def states(self) -> list[str]:
         return [e["state"] for e in self.events if e.get("kind") == "state"]
 
@@ -137,8 +122,6 @@ class FakeHost:
     def model_calls(self) -> int:
         return sum(1 for method, _ in self.calls if method == "model.complete")
 
-
-# ---------------------------------------------------------------- reply shapes
 
 
 def says(text: str, prompt_tokens: int = 10, completion_tokens: int = 5) -> dict:
@@ -155,13 +138,11 @@ def calls(name: str, args: dict, call_id: str = "c1") -> dict:
 
 
 def writes_code(code: str) -> dict:
-    """A code agent's reply: a thought and a Python block."""
     return {"content": f"Thought: I will work this out.\n```py\n{code}\n```<end_code>",
             "usage": {"promptTokens": 10, "completionTokens": 8}}
 
 
 def real_sandbox(code: str) -> dict:
-    """Runs the code for real, the way the app's sandbox does."""
     proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
     tail = (proc.stderr.strip().splitlines() or [""])[-1]
     return {"ok": proc.returncode == 0, "stdout": proc.stdout, "stderr": proc.stderr,

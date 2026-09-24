@@ -5,79 +5,46 @@ import { asMath, blank, escMath, escText, mathmlToLatex, texUnicode } from './te
 
 export { mathmlToLatex };
 
-// ---------------------------------------------------------------------------
-// The export turns an assignment into a worksheet: the question exactly as
-// WebAssign renders it (math, figures, sub-parts, option lists), every answer
-// widget replaced by a named placeholder, an answer box per part to write in,
-// and a compact mark scheme at the end.
-// ---------------------------------------------------------------------------
-
 export type ExportImage = { file: string; url: string; alt: string };
 export type LatexExport = { tex: string; images: ExportImage[] };
 export type ExportMeta = {
   course?: string; section?: string; term?: string; date?: Date;
-  /** Title on the sheet and in the PDF metadata; the assignment name by default. */
   title?: string;
-  /** Add a blank area under each question to work the answer out in. */
   workings?: boolean;
-  /** Print the Name / Class / Date line (default on). */
   nameFields?: boolean;
-  /** Embed the invisible plain-text transcript (default on). */
   transcript?: boolean;
 };
 
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-/** A, B, … Z, AA, AB … — the "variable name" a placeholder and its box share. */
 const letter = (i: number): string =>
   (i < 26 ? '' : LETTERS[Math.floor(i / 26) - 1]) + LETTERS[i % 26];
 
 export const boxLabel = (index: number, sub: number | null = null) =>
   letter(index - 1) + (sub === null ? '' : String(sub + 1));
 
-/** WebAssign figures, as opposed to watex glyphs and grading icons. */
 export const isFigure = (url: string) =>
   /^https?:/i.test(url) && !/\/watex\/img\//i.test(url)
   && !/mathtype|overlay|mcorrect|mincorrect|mpartial/i.test(url);
 
-// Only whitespace that HTML collapses; U+00A0 is spacing the question meant.
 export const collapse = (s: string) => s.replace(/[ \t\r\n\f]+/g, ' ');
-
-// ---------------------------------------------------------------------------
-// Answer parts
-// ---------------------------------------------------------------------------
 
 export type Part = {
   label: string;
   kind: BoxKind | 'static';
-  /** One answer box per sub-slot (a multiselect renders several dropdowns). */
   subs: number;
   marks: number | null;
-  /** Listed above the box when the question itself does not print them. */
   options: string[] | null;
-  /** The question already prints tick boxes for this part, so ticking is the answer. */
   inline: boolean;
-  /** The answer, when WebAssign graded it correct. */
   answer: string | null;
 };
 
 
-// ---------------------------------------------------------------------------
-// Question markup -> LaTeX
-// ---------------------------------------------------------------------------
-
-/** Per-question bookkeeping shared by the pre-pass and the renderer. */
 export type Plan = {
-  /** Display number of each option marker, restarting per choice group. */
   optNo: Map<Element, number>;
-  /** Label for the n-th `.wa-static` in document order. */
   staticLabels: string[];
-  /** Answer boxes a question without WebAssign boxes still needs. */
   synthetic: Part[];
-  /** Sub-slot count per box index, for multiselect dropdowns. */
   subs: Map<number, number>;
-  /** Boxes whose options the question itself prints as tick boxes. */
   inlineOpts: Set<number>;
-  /** Label for a closed question's group of read-only options. */
   groupLabel: Map<Element, string>;
 };
 
@@ -86,7 +53,6 @@ export type Ctx = {
   boxes: Box[];
   imgRef: (url: string, alt: string) => string | null;
   seen: { statics: number };
-  /** Depth of inline-block ancestors: their block children stay on the line. */
   inline: number;
 };
 
@@ -98,11 +64,6 @@ const parse = (html: string): Element => {
 const groupOf = (el: Element): Element =>
   el.closest('.multBox, .questionRadio, .wa1ans, ul, ol, table') ?? el.parentElement ?? el;
 
-/**
- * Walk the markup once before rendering: number the option markers, decide
- * which box each static answer belongs to, and invent parts for closed
- * questions that come back without any boxes.
- */
 export function planQuestion(root: Element, q: Question): Plan {
   const optNo = new Map<Element, number>();
   const counters = new Map<unknown, number>();
@@ -130,8 +91,6 @@ export function planQuestion(root: Element, q: Question): Plan {
   const synthetic: Part[] = [];
 
   if (q.boxes.length) {
-    // Statics stand in for math boxes, one each, in document order — the same
-    // pairing lib/placeholders.ts uses to recover their values.
     const mathBoxes = q.boxes.filter((b) => b.kind === 'math');
     const slots = Array.from(root.querySelectorAll<HTMLElement>('.wa-slot[data-box], .wa-static'))
       .filter((el) => el.classList.contains('wa-static') || q.boxes[Number(el.dataset.box) - 1]?.kind === 'math');
@@ -142,8 +101,6 @@ export function planQuestion(root: Element, q: Question): Plan {
       staticLabels[i] = zip ? boxLabel(zip.index) : boxLabel(q.boxes.length + i + 1);
     });
   } else {
-    // A closed question: every static answer and every group of read-only
-    // options becomes a part of its own so the sheet can still be answered.
     const answers = staticAnswerTexts(statics);
     statics.forEach((_, i) => {
       staticLabels[i] = letter(i);
@@ -166,7 +123,6 @@ export function planQuestion(root: Element, q: Question): Plan {
   return { optNo, staticLabels, synthetic, subs, inlineOpts, groupLabel };
 }
 
-/** The rendered answers inside `.wa-static` spans, in document order. */
 export function staticAnswerTexts(statics: Element[]): (string | null)[] {
   return statics.map((el) => {
     const math = el.querySelector('math');
@@ -189,7 +145,6 @@ const CLASS_RULES: [string, (el: Element, ctx: Ctx) => string][] = [
     const box = ctx.boxes[Number(el.getAttribute('data-box')) - 1];
     return `${optMark(box?.kind === 'checkboxes' || box?.display === 'checkbox')}{${ctx.plan.optNo.get(el) ?? 1}}`;
   }],
-  // A closed question keeps the original input's type on the marker.
   ['static-opt', (el, ctx) => `${optMark(el.classList.contains('checkbox'))}{${ctx.plan.optNo.get(el) ?? 1}}`],
   ['wa-static', (_el, ctx) => `\\wavar{${ctx.plan.staticLabels[ctx.seen.statics++] ?? '?'}}`],
   ['wa-tex', (el) => {
@@ -221,15 +176,9 @@ const CLASS_RULES: [string, (el: Element, ctx: Ctx) => string][] = [
 ];
 
 const BLOCK = new Set(['p', 'div', 'section', 'article', 'tr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'pre', 'center', 'figure', 'figcaption', 'dl', 'dt', 'dd']);
-// Spans WebAssign lays out as blocks (one choice per line, one line per step).
 const BLOCK_CLASS = ['ms', 'wa1par', 'wa1ans', 'wa1given', 'fitb', 'figure', 'multBox', 'watexline'];
 const SKIP = new Set(['script', 'style', 'noscript', 'select', 'input', 'textarea', 'button', 'option']);
 
-/**
- * WebAssign lays a formula out as inline-block boxes, each holding a block
- * `div`. The browser keeps them side by side on one line, so a block child of
- * an inline-block must not become a paragraph of its own.
- */
 const isInlineBox = (el: Element): boolean =>
   el.classList.contains('watexinlineblock')
   || /display\s*:\s*inline(-block|-table|-flex)?\b/i.test(el.getAttribute('style') ?? '');
@@ -237,11 +186,9 @@ const isInlineBox = (el: Element): boolean =>
 const kids = (el: Element, ctx: Ctx): string =>
   Array.from(el.childNodes).map((c) => node(c, ctx)).join('');
 
-/** Bold/italic markup around one letter is a variable, so typeset it as math. */
 const styled = (body: string, cmd: 'mathbf' | 'mathit', text: 'textbf' | 'textit'): string => {
   const m = /^\s*([A-Za-z])\s*$/.exec(body);
   if (m) return `$\\${cmd}{${m[1]}}$`;
-  // WebAssign nests its style spans; one variable is enough.
   if (/^\s*\$\\math(it|bf|rm)\{[A-Za-z]\}\$\s*$/.test(body)) return body.trim();
   return blank(body) ? body : `\\${text}{${body}}`;
 };
@@ -292,15 +239,6 @@ function node(n: Node, ctx: Ctx): string {
   return body;
 }
 
-// ---------------------------------------------------------------------------
-// Figures
-// ---------------------------------------------------------------------------
-
-/**
- * The app shows figures at their natural pixel size in a 13px/1.2-zoom column,
- * so a pixel is 0.85pt next to 11pt type. Fixed CSS sizes are converted the
- * same way; everything else keeps the image's own size (\wafig scales it).
- */
 const PX_TO_PT = 0.85;
 
 export function cssSize(el: Element): { w?: number; h?: number } {
@@ -315,7 +253,7 @@ export function cssSize(el: Element): { w?: number; h?: number } {
     if (m[2] === 'px') return n;
     if (m[2] === 'pt') return n * (96 / 72);
     if (m[2] === 'em') return n * 13;
-    return undefined; // percentages depend on the column, not the image
+    return undefined;
   };
   return { w: read('width'), h: read('height') };
 }
@@ -328,25 +266,14 @@ function image(el: Element, ctx: Ctx): string {
   const g = w ? `\\wafigw{${pt(w)}}{${file}}`
     : h ? `\\wafigh{${pt(h)}}{${file}}`
       : `\\wafig{${file}}`;
-  // An image inside an option is part of that choice, not a figure of its own.
   return el.closest('.wa-opt-label, label') ? `${g}\\quad ` : `\\wafigblock{${g}}`;
 }
-
-// ---------------------------------------------------------------------------
-// Tables and stacked equations
-// ---------------------------------------------------------------------------
 
 const rowsOf = (el: Element): Element[] =>
   Array.from(el.querySelectorAll(':scope > tr, :scope > thead > tr, :scope > tbody > tr, :scope > tfoot > tr'));
 
-/** Cell text cannot contain row breaks or paragraphs. */
 const cell = (s: string) => s.replace(/\\\\\n?/g, ' ').replace(/\n{2,}/g, ' ').replace(/\s+/g, ' ').trim();
 
-/**
- * WebAssign draws a fraction as a little table — numerator row, a rule row,
- * denominator row — which flattens into nonsense ("y + 3 2") unless it is put
- * back together as a real fraction.
- */
 function watexFraction(el: Element, ctx: Ctx): string | null {
   const build = (num: Element, den: Element) =>
     `$\\frac{${asMath(cell(kids(num, ctx)))}}{${asMath(cell(kids(den, ctx)))}}$`;
@@ -360,22 +287,17 @@ function watexFraction(el: Element, ctx: Ctx): string | null {
   if (rows.length < 2 || rows.length > 3 || rows.some((r) => r.children.length !== 1)) return null;
   const cells = rows.map((r) => r.children[0]);
   const bar = (c: Element) => !collapse(c.textContent ?? '').trim() && !c.querySelector('.wa-slot, .wa-static, math');
-  // Three rows: the middle one draws the bar. Two rows: a cell border does.
   if (rows.length === 3 && !bar(cells[1])) return null;
   if (rows.length === 2 && !/frac/i.test(el.className)) return null;
   if (bar(cells[0]) || bar(cells[cells.length - 1])) return null;
   return build(cells[0], cells[cells.length - 1]);
 }
 
-/** The column alignment WebAssign gives a watexarray cell. */
 const cellAlign = (c: Element | undefined): string =>
   c?.classList.contains('watexright') ? 'r'
     : c?.classList.contains('watexcenter') ? 'c' : 'l';
 
 function table(el: Element, ctx: Ctx): string {
-  // watex builds layout out of tables. A fraction is put back together as
-  // \frac; an aligned array is a real grid, so keep its cells and alignment.
-  // Anything else is layout and its cells are already glyphs and spans.
   if (/watex/.test(el.className)) {
     const frac = watexFraction(el, ctx);
     if (frac) return frac;
@@ -394,24 +316,15 @@ function table(el: Element, ctx: Ctx): string {
   const spec = ruled ? `|${'l|'.repeat(cols)}`
     : array ? `@{}${Array.from({ length: cols }, (_, i) => cellAlign(rows[0]?.children[i])).join('')}@{}`
       : `@{}${'l@{\\hspace{1.4em}}'.repeat(cols - 1)}l@{}`;
-  // A bordered table gets a rule under every row, the way the browser draws it.
   const grid = ruled ? body.replace(/ \\\\\n/g, ' \\\\\n\\hline\n') : body;
   return `\n\\par\\noindent{\\renewcommand{\\arraystretch}{1.3}%
 \\begin{tabular}{${spec}}\n${ruled ? '\\hline\n' : ''}${grid}${ruled ? ' \\\\\n\\hline' : ''}\n\\end{tabular}}\\par\n`;
 }
 
-/** A square when several options can be chosen, a circle when only one can. */
 const optMark = (many: boolean | undefined) => (many ? '\\waopts' : '\\waoptc');
 
-/** Roughly how wide a rendered option is, ignoring TeX markup. */
 const visualLen = (s: string) => s.replace(/\\[a-zA-Z]+\*?|[{}$~\\]/g, '').trim().length;
 
-/**
- * Lay a choice list out as a grid: short options share a line, long ones and
- * picture choices get one each. A loose run of tick boxes down the page reads
- * badly and wastes half the sheet.
- */
-/** Lay rendered options out in as many columns as they comfortably fit. */
 function optionGrid(cells: string[]): string {
   const rich = cells.some((c) => /\\wafig|\\begin\{/.test(c));
   const widest = Math.max(...cells.map(visualLen));
@@ -424,7 +337,6 @@ function optionGrid(cells: string[]): string {
     while (row.length < cols) row.push('');
     rows.push(row.join(' & '));
   }
-  // `[t]`: the first row's baseline lines up with the letter and the marks.
   return `{\\renewcommand{\\arraystretch}{1.5}%
 \\begin{tabular}[t]{@{}${`p{${w}}`.repeat(cols)}@{}}
 ${rows.join(' \\\\\n')}
@@ -437,15 +349,12 @@ function optionGroup(el: Element, ctx: Ctx): string {
   const cells = items.map((i) => cell(kids(i, ctx))).filter(Boolean);
   if (cells.length < 2) return kids(el, ctx);
   const grid = optionGrid(cells);
-  // Ticking one of these boxes is the answer, so the part's letter belongs
-  // here rather than over an empty box further down the page.
   const label = optionLabel(el, ctx);
   return label
     ? `\n\\waoptset{${label}}{}{${grid}}\n`
     : `\n\\par\\vspace{0.2em}\\noindent${grid}\\par\\vspace{0.25em}\n`;
 }
 
-/** The answer letter a group of inline options belongs to. */
 function optionLabel(el: Element, ctx: Ctx): string | null {
   const opt = el.querySelector('.wa-opt[data-box]');
   if (opt) return boxLabel(Number(opt.getAttribute('data-box')));
@@ -453,11 +362,6 @@ function optionLabel(el: Element, ctx: Ctx): string | null {
   return stat ? ctx.plan.groupLabel.get(groupOf(stat)) ?? null : null;
 }
 
-/**
- * `.stackblock` is WebAssign's equation layout: one row per line, with the
- * expression, the relation and the answer in their own cells. Keep the
- * alignment — that is what makes a list of answers readable.
- */
 function stack(el: Element, ctx: Ctx): string {
   const lines = Array.from(el.querySelectorAll(':scope > .stackline, :scope > * > .stackline'));
   if (!lines.length) return kids(el, ctx);
@@ -484,19 +388,7 @@ function list(el: Element, ctx: Ctx, ordered: boolean): string {
   return `\n\\begin{${env}}[leftmargin=1.6em,itemsep=0.15em,topsep=0.25em]\n${body}\n\\end{${env}}\n`;
 }
 
-// ---------------------------------------------------------------------------
-// Question body
-// ---------------------------------------------------------------------------
-
-/**
- * WebAssign wraps every symbol in its own span, so a formula arrives as a run
- * of one-token math islands. Fuse the neighbours back into one formula: TeX
- * then spaces the operators like the browser's math layout does.
- */
 function joinMath(s: string): string {
-  // Digits, operators and brackets between two formulas belong to the formula;
-  // a sentence break (". ") or any word does not.
-  // `\$` is a printed dollar sign, never a formula delimiter.
   const D = String.raw`(?<!\\)\$`;
   const GAP = new RegExp(`${D}([^$\\n]+)${D}([ \\t0-9.,;:+\\-=/*<>()[\\]|]*)${D}([^$\\n]+)${D}`, 'g');
   let out = s;
@@ -506,20 +398,12 @@ function joinMath(s: string): string {
     if (next === out) break;
     out = next;
   }
-  // A number or bracket written right against a formula is part of it
-  // ("30" + "^\circ", "(" + "a \cdot b"), and so is one that follows a
-  // dangling operator ("z -" + " 4"), which would otherwise be set as a
-  // trailing sign with no space after it.
   return out
     .replace(new RegExp(`(^|[^\\\\\\w])([0-9]+(?:\\.[0-9]+)?|[([])${D}([^$\\n]+)${D}`, 'g'), '$1$$$2 $3$$')
     .replace(new RegExp(`${D}([^$\\n]+)${D}([0-9]+(?:\\.[0-9]+)?)`, 'g'), '$$$1 $2$$')
     .replace(new RegExp(`${D}([^$\\n]*[-+*/=<>])${D} ?([0-9]+(?:\\.[0-9]+)?)`, 'g'), '$$$1 $2$$');
 }
 
-/**
- * A `\\` where a paragraph ends is a LaTeX error ("there's no line here to
- * end"), and blank lines inside a group are just noise; tidy both away.
- */
 function cleanBody(s: string): string {
   return joinMath(s)
     .replace(/[ \t]+/g, ' ')
@@ -532,7 +416,6 @@ function cleanBody(s: string): string {
     .trim();
 }
 
-/** The plain-text question, used when no markup came through. */
 export function textBody(q: Question): string {
   return q.text
     .replace(/Press Space or Enter to edit this math answer\.?/gi, '')
@@ -547,13 +430,8 @@ export function textBody(q: Question): string {
     .replace(/\n/g, '\n\n');
 }
 
-// ---------------------------------------------------------------------------
-// Answers
-// ---------------------------------------------------------------------------
-
 const choiceLabel = (b: Box, v: string) => b.choices?.find((c) => c.value === v)?.label ?? v;
 
-/** An option label, with its own markup when it carries math or a figure. */
 export function optionText(c: Choice, ctx: Ctx): string {
   if (c.html && /<(img|math|table|span|sub|sup)/i.test(c.html)) {
     const body = cleanBody(kids(parse(sanitizeQuestionHtml(c.html)), ctx));
@@ -581,7 +459,6 @@ export function boxAnswer(b: Box): string | null {
 }
 
 
-/** Past assignments arrive without boxes, so fall back to the score. */
 export function isCorrect(q: Question): boolean {
   if (q.boxes.length) return questionStatus(q) === 'correct';
   return q.score != null && q.total != null && q.total > 0 && q.score >= q.total;
@@ -591,7 +468,6 @@ export function partsOf(q: Question, plan: Plan, ctx: Ctx): Part[] {
   if (!q.boxes.length) {
     const parts = plan.synthetic.map((p, _i, all) => ({
       ...p,
-      // Without boxes there is no per-part score; a lone part carries them all.
       marks: all.length === 1 ? q.total : p.marks,
       answer: isCorrect(q) ? p.answer : null,
     }));
@@ -600,7 +476,6 @@ export function partsOf(q: Question, plan: Plan, ctx: Ctx): Part[] {
       : [{ label: 'A', kind: 'static', subs: 1, marks: q.total, options: null, inline: false, answer: null }];
   }
   return q.boxes.map((b) => {
-    // Options the question prints itself as tick boxes are answered there.
     const inline = plan.inlineOpts.has(b.index);
     const listed = !!b.choices && !inline && (b.kind === 'choice' || b.kind === 'checkboxes' || b.kind === 'multiselect');
     return {

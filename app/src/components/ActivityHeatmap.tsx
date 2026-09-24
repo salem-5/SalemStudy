@@ -1,11 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 
-/**
- * GitHub-style activity: one square per day, columns are weeks (Monday on
- * top), shade grows with the number of study actions. It shows as many recent
- * weeks as fit the width (up to a year), ending with this week on the right.
- */
-
 const DAY = 864e5;
 const MAX_WEEKS = 53;
 const CELL = 11;
@@ -15,7 +9,6 @@ const startOfDay = (t: number) => { const d = new Date(t); d.setHours(0, 0, 0, 0
 
 export function ActivityHeatmap({ times, onPickDay }: {
   times: number[];
-  /** Clicking a day asks for its breakdown. Omit it and the squares are inert. */
   onPickDay?: (day: number) => void;
 }) {
   const wrap = useRef<HTMLDivElement>(null);
@@ -35,7 +28,6 @@ export function ActivityHeatmap({ times, onPickDay }: {
     const counts = new Map<number, number>();
     for (const t of times) counts.set(startOfDay(t), (counts.get(startOfDay(t)) ?? 0) + 1);
     const today = startOfDay(Date.now());
-    // The grid ends with the week containing today; weeks start on Monday.
     const dow = (new Date(today).getDay() + 6) % 7;
     const start = today - dow * DAY - (WEEKS - 1) * 7 * DAY;
     const weeks: { t: number; n: number; future: boolean }[][] = [];
@@ -59,7 +51,6 @@ export function ActivityHeatmap({ times, onPickDay }: {
       if (w === 0 || first.getDate() <= 7) {
         const label = first.toLocaleDateString(undefined, { month: 'short' });
         const prev = months[months.length - 1];
-        // A partial first month would crowd the next label; drop it.
         if (prev && w - prev.w < 3) months.pop();
         if (!prev || prev.label !== label) months.push({ w, label });
       }
@@ -67,7 +58,6 @@ export function ActivityHeatmap({ times, onPickDay }: {
     return { weeks, max: Math.max(1, ...counts.values()), total, streak, best, months };
   }, [times, WEEKS]);
 
-  // Four shades by quartile of the busiest day; 0 stays empty.
   const level = (n: number) => (n === 0 ? 0 : Math.min(4, Math.ceil((n / max) * 4)));
 
   return (

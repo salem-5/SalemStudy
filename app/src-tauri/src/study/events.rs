@@ -1,6 +1,3 @@
-//! The study calendar: exams, deadlines, study sessions and anything else,
-//! each tied to a course (subject) or to none, and optionally to a notebook.
-
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
@@ -13,13 +10,11 @@ pub struct Event {
     pub id: i64,
     pub title: String,
     pub notes: String,
-    /// exam, deadline, study, class, other.
     pub kind: String,
     pub start_at: i64,
     pub end_at: Option<i64>,
     pub all_day: bool,
     pub notebook_id: Option<i64>,
-    /// The course it belongs to (a notebook's events always take its course).
     pub subject_id: Option<i64>,
     pub done: bool,
 }
@@ -66,7 +61,6 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<Event> {
     })
 }
 
-/// Events that overlap [from, to).
 pub fn between(conn: &Connection, from: i64, to: i64) -> rusqlite::Result<Vec<Event>> {
     conn.prepare(&format!(
         "SELECT {COLS} FROM event WHERE start_at < ?2 AND COALESCE(end_at, start_at) >= ?1 ORDER BY all_day DESC, start_at, id"
@@ -85,7 +79,6 @@ fn validate(e: &EventIn) -> Result<(), String> {
     Ok(())
 }
 
-/// A notebook's course wins over the one given, so the two never disagree.
 const SUBJECT: &str = "COALESCE((SELECT n.subject_id FROM notebook n WHERE n.id = ?7), ?10)";
 
 pub fn add(conn: &Connection, e: &EventIn) -> rusqlite::Result<Event> {
@@ -103,15 +96,6 @@ pub fn update(conn: &Connection, id: i64, e: &EventIn) -> rusqlite::Result<usize
     )
 }
 
-/// Everything in the calendar that belonged to a course.
-///
-/// Must run *before* the subject row goes. Both links are `ON DELETE SET
-/// NULL`, so once it is gone there is nothing left to recognise its exams and
-/// deadlines by — they would stay in the calendar as unattached entries the
-/// student never put there and cannot tell apart from their own.
-///
-/// A notebook's events count as the course's: the notebooks go with the
-/// subject, and their deadlines were never separate from it.
 pub fn delete_for_subject(conn: &Connection, subject_id: i64) -> rusqlite::Result<usize> {
     conn.execute(
         "DELETE FROM event
@@ -182,7 +166,6 @@ mod tests {
         add(&c, &EventIn { subject_id: Some(phys), ..ev("Physics lab", 30, None) }).unwrap();
         add(&c, &ev("Dentist", 40, None)).unwrap();
 
-        // Before the subject row goes, while the links still say whose it is.
         assert_eq!(delete_for_subject(&c, calc).unwrap(), 2);
         c.execute("DELETE FROM subject WHERE id = ?1", [calc]).unwrap();
 
@@ -200,7 +183,6 @@ mod tests {
         add(&c, &EventIn { subject_id: Some(phys), ..ev("Physics lab", 30, None) }).unwrap();
         add(&c, &ev("Dentist", 40, None)).unwrap();
 
-        // A course with nothing in the calendar takes nothing out of it.
         assert_eq!(delete_for_subject(&c, calc).unwrap(), 0);
         assert_eq!(between(&c, 0, 100).unwrap().len(), 2);
     }
@@ -260,7 +242,6 @@ mod tests {
             ("Quiz".into(), Some(2)),
             ("Lab report".into(), Some(3)),
             ("Dentist".into(), None),
-            // Nothing after the prefix: the title is kept as it was.
             ("Calculus 2:".into(), Some(1)),
         ]);
     }

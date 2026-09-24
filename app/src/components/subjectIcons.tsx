@@ -4,7 +4,6 @@ import {
   Sigma, Stethoscope, Telescope, Zap, type LucideIcon,
 } from 'lucide-react';
 
-/** Icons a subject can wear, by the name stored in the database. */
 export const SUBJECT_ICONS: Record<string, LucideIcon> = {
   'book-open': BookOpen, sigma: Sigma, radical: Radical, pi: Pi, infinity: InfinityIcon, calculator: Calculator, 'chart-line': ChartLine,
   atom: Atom, orbit: Orbit, magnet: Magnet, zap: Zap, rocket: Rocket, telescope: Telescope,
@@ -14,10 +13,8 @@ export const SUBJECT_ICONS: Record<string, LucideIcon> = {
   'graduation-cap': GraduationCap,
 };
 
-/** Accent colours for subjects (the chart palette's categorical steps). */
 export const SUBJECT_COLORS = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#9085e9', '#e66767', '#6f8f9f'];
 
-/** A reasonable icon from the subject's name, until the user picks one. */
 export function guessIcon(name: string): string {
   const n = name.toLowerCase();
   const rules: [RegExp, string][] = [
@@ -36,5 +33,4 @@ export function SubjectIcon({ icon, name, className }: { icon: string; name: str
   return <Icon className={className} />;
 }
 
-/** Colour for a subject: its own, or a stable default from its id. */
 export const subjectColor = (s: { id: number; color: string }) => s.color || SUBJECT_COLORS[s.id % SUBJECT_COLORS.length];

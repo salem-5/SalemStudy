@@ -1,17 +1,10 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
-/**
- * The sandboxed Python the solver hands to the model (see src-tauri/python.rs).
- * Code runs in a private virtualenv, in a throwaway folder, with no network,
- * no subprocesses and a hard timeout.
- */
-
 export type PythonPackage = { name: string; version: string | null };
 
 export type PythonStatus = {
   ready: boolean;
-  /** 'venv' = the app's managed environment, 'custom' = WA_PYTHON or a path in settings. */
   source: 'venv' | 'custom' | 'none';
   interpreter: string | null;
   version: string | null;
@@ -19,7 +12,6 @@ export type PythonStatus = {
   missing: string[];
   error: string | null;
   help: string;
-  /** Whether an interpreter exists that could build the environment. */
   canInstall: boolean;
 };
 
@@ -27,7 +19,6 @@ export type PythonResult = {
   ok: boolean;
   stdout: string;
   stderr: string;
-  /** Value of a trailing expression, echoed the way a REPL would. */
   result: string | null;
   error: string | null;
   timed_out?: boolean;
@@ -36,13 +27,11 @@ export type PythonResult = {
   exitCode?: number | null;
   loaded?: string[];
   missing?: string[];
-  /** Open matplotlib figures and images the code saved, as data URLs. */
   figures?: { name: string; dataUrl: string }[];
 };
 
 export const pythonStatus = () => invoke<PythonStatus>('python_status');
 export const pythonSetup = (repair = false) => invoke<PythonStatus>('python_setup', { repair });
-/** `files` (attachment ids) and `sources` (source ids) are copied into the run folder first. */
 export const runPython = (code: string, timeout?: number, files?: number[], extra?: { sources?: number[]; maxOutput?: number; maxFigures?: number }) =>
   invoke<PythonResult>('run_python', {
     code,
@@ -55,13 +44,11 @@ export const runPython = (code: string, timeout?: number, files?: number[], extr
 
 export type PythonProgress = { stage: 'stage' | 'log' | 'done'; line: string };
 
-/** Install progress, for the settings dialog. */
 export const onPythonProgress = (fn: (p: PythonProgress) => void) =>
   listen<PythonProgress>('python://progress', (e) => fn(e.payload));
 
 const clip = (s: string, max: number) => (s.length <= max ? s : `${s.slice(0, max)}\n… [cut]`);
 
-/** What the model gets back as the tool result. Plain text reads better to it than JSON. */
 export function formatResult(r: PythonResult): string {
   const parts: string[] = [];
   if (r.stdout.trim()) parts.push(`stdout:\n${clip(r.stdout.trimEnd(), 6000)}`);
@@ -74,14 +61,12 @@ export function formatResult(r: PythonResult): string {
   return parts.join('\n\n');
 }
 
-/** One line for the chat log. */
 export function summarize(r: PythonResult): string {
   if (r.error) return r.timed_out ? 'timed out' : r.error.split('\n').slice(-1)[0].slice(0, 120);
   const out = (r.result ?? r.stdout.trim().split('\n').slice(-1)[0] ?? '').trim();
   return out ? out.slice(0, 160) : 'ok';
 }
 
-/** The name a file gets inside the sandbox folder; mirrors safe_file_name in python.rs. */
 export function sandboxName(name: string): string {
   const base = name.split(/[\\/]/).pop() ?? '';
   const cleaned = base.replace(/[^\p{L}\p{N}._\- ]/gu, '_').trim().replace(/^[._]+/, '');

@@ -1,6 +1,3 @@
-//! Saved chats: standalone threads (`notebook_id` NULL) and notebook chats,
-//! their messages, and the files attached to them or produced by Python.
-
 use base64::Engine;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
@@ -9,7 +6,6 @@ use tauri::{AppHandle, State};
 
 use super::{expect_one, now_ms, with_db, StudyDb};
 
-/// Uploads larger than this are refused rather than bloating study.db.
 const MAX_ATTACHMENT_BYTES: usize = 25 * 1024 * 1024;
 
 #[derive(Serialize, Debug)]
@@ -29,8 +25,6 @@ pub struct ChatMessage {
     pub id: i64,
     pub role: String,
     pub content: String,
-    /// Python runs, figure and attachment ids, citations: whatever the UI
-    /// needs to redraw the message exactly.
     pub meta: Value,
     pub created_at: i64,
 }
@@ -43,7 +37,6 @@ pub struct AttachmentInfo {
     pub name: String,
     pub mime: String,
     pub size: i64,
-    /// Extracted text, when there is any (text files, PDFs).
     pub text: Option<String>,
 }
 
@@ -110,7 +103,6 @@ pub fn add_message(conn: &Connection, conversation_id: i64, role: &str, content:
     Ok(ChatMessage { id, role: role.into(), content: content.into(), meta: meta.clone(), created_at: t })
 }
 
-/// Accepts plain base64 or a `data:` URL.
 fn decode(data: &str) -> Result<Vec<u8>, String> {
     let raw = data.split_once(";base64,").map(|(_, b)| b).unwrap_or(data);
     base64::engine::general_purpose::STANDARD
@@ -142,7 +134,6 @@ pub fn chat_delete(app: AppHandle, db: State<'_, StudyDb>, id: i64) -> Result<()
     expect_one(changed, "Chat")
 }
 
-/// Empty a chat: its messages and files go, the thread (and its title) stays.
 pub fn clear(conn: &Connection, id: i64) -> rusqlite::Result<usize> {
     conn.execute("DELETE FROM attachment WHERE conversation_id = ?1", [id])?;
     conn.execute("DELETE FROM message WHERE conversation_id = ?1", [id])
@@ -153,8 +144,6 @@ pub fn chat_clear(app: AppHandle, db: State<'_, StudyDb>, id: i64) -> Result<(),
     with_db(&app, &db, |c| clear(c, id)).map(|_| ())
 }
 
-/// Drop a message and everything after it in its thread (regenerating a
-/// reply, or editing an earlier question). Returns how many went.
 pub fn truncate(conn: &Connection, conversation_id: i64, from_id: i64) -> rusqlite::Result<usize> {
     conn.execute("DELETE FROM message WHERE conversation_id = ?1 AND id >= ?2", [conversation_id, from_id])
 }
@@ -164,8 +153,6 @@ pub fn chat_truncate(app: AppHandle, db: State<'_, StudyDb>, conversation_id: i6
     with_db(&app, &db, |c| truncate(c, conversation_id, from_id))
 }
 
-/// Delete every chat in one place: the standalone Chat tab (`notebook_id`
-/// null) or one notebook.
 #[tauri::command]
 pub fn chat_delete_all(app: AppHandle, db: State<'_, StudyDb>, notebook_id: Option<i64>) -> Result<usize, String> {
     with_db(&app, &db, |c| c.execute("DELETE FROM conversation WHERE notebook_id IS ?1", [notebook_id]))
@@ -220,14 +207,12 @@ pub fn attachment_add(
     })
 }
 
-/// Text pulled out of an attachment after upload (a PDF read with PyMuPDF).
 #[tauri::command]
 pub fn attachment_set_text(app: AppHandle, db: State<'_, StudyDb>, id: i64, text: String) -> Result<(), String> {
     let changed = with_db(&app, &db, |c| c.execute("UPDATE attachment SET text = ?2 WHERE id = ?1", params![id, text]))?;
     expect_one(changed, "Attachment")
 }
 
-/// Metadata (and extracted text) of several attachments, in the order asked.
 #[tauri::command]
 pub fn attachments_info(app: AppHandle, db: State<'_, StudyDb>, ids: Vec<i64>) -> Result<Vec<AttachmentInfo>, String> {
     with_db(&app, &db, |c| {
@@ -247,7 +232,6 @@ pub fn attachments_info(app: AppHandle, db: State<'_, StudyDb>, ids: Vec<i64>) -
     })
 }
 
-/// The attachment as a `data:` URL, for `<img>` and downloads.
 #[tauri::command]
 pub fn attachment_data(app: AppHandle, db: State<'_, StudyDb>, id: i64) -> Result<String, String> {
     let row: Option<(String, Vec<u8>)> = with_db(&app, &db, |c| {
@@ -257,7 +241,6 @@ pub fn attachment_data(app: AppHandle, db: State<'_, StudyDb>, id: i64) -> Resul
     Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(data)))
 }
 
-/// Name and bytes of each attachment, for copying into the Python sandbox.
 pub fn attachment_files(app: &AppHandle, db: &StudyDb, ids: &[i64]) -> Result<Vec<(String, Vec<u8>)>, String> {
     if ids.is_empty() {
         return Ok(Vec::new());

@@ -1,19 +1,3 @@
-/**
- * A printable worksheet from a WebAssign assignment.
- *
- * Exports used to be built as LaTeX and handed to pdflatex or Tectonic, which
- * meant a student could not save a worksheet without installing a TeX
- * distribution first. They are now built as HTML and laid out by Salem's own
- * Python (`src-tauri/python/salem_pdf.py`), which the app already carries for
- * reading PDFs and drawing figures.
- *
- * The hard part — working out what a WebAssign question is actually asking,
- * which boxes belong to which part, and what the options are — is unchanged
- * and still lives in `lib/latex`. This only decides how that comes out on a
- * page, and HTML is a far shorter trip from the source than LaTeX was: the
- * questions are HTML to begin with.
- */
-
 import { sanitizeQuestionHtml } from './sanitize';
 import {
   collapse, cssSize, isFigure, mathmlToLatex, partsOf, planQuestion, textBody,
@@ -24,11 +8,8 @@ import type { Assignment, Question } from '../types';
 
 export type WorksheetExport = { html: string; images: ExportImage[] };
 
-/** Tags that carry nothing a printed sheet wants. */
 const SKIP = new Set(['script', 'style', 'noscript', 'button', 'input', 'select', 'textarea', 'svg', 'iframe', 'head']);
-/** Tags that pass through with their meaning intact. */
 const KEEP = new Set(['b', 'strong', 'i', 'em', 'u', 'sub', 'sup', 'table', 'thead', 'tbody', 'tr', 'td', 'th', 'ul', 'ol', 'li', 'p', 'div', 'span', 'br', 'hr', 'blockquote', 'pre', 'code']);
-/** What a WebAssign answer box becomes: a rule to write on. */
 const BOX_HEIGHT: Record<string, string> = {
   math: '2.4em', text: '2em', number: '2em', choice: '2em', checkboxes: '2em',
   multiselect: '2em', essay: '6em', unsupported: '2em', static: '2em',
@@ -46,7 +27,6 @@ function emit(node: Node, ctx: Ctx): string {
   const tag = el.localName;
   if (SKIP.has(tag)) return '';
 
-  // Maths goes over as LaTeX in the renderer's delimiters; it draws it.
   if (tag === 'math') {
     const tex = mathmlToLatex(new XMLSerializer().serializeToString(el));
     return tex ? `\\(${tex}\\)` : '';
@@ -58,18 +38,11 @@ function emit(node: Node, ctx: Ctx): string {
   const inner = Array.from(el.childNodes).map((c) => emit(c, ctx)).join('');
   if (!KEEP.has(tag)) return inner;
   if (tag === 'div' || tag === 'span') {
-    // A bare wrapper adds nothing on paper; a block one becomes a paragraph.
     return /display\s*:\s*block/i.test(el.getAttribute('style') ?? '') ? `<p>${inner}</p>` : inner;
   }
   return inner.trim() ? `<${tag}>${inner}</${tag}>` : '';
 }
 
-/**
- * A figure, at roughly the size the app shows it.
- *
- * WebAssign gives pixel sizes for a 13px column; the sheet is 10.5pt, so a
- * pixel is about 0.85pt. An image with no stated size keeps its own.
- */
 function figure(el: Element, ctx: Ctx): string {
   const file = ctx.imgRef(el.getAttribute('src') ?? '', collapse(el.getAttribute('alt') ?? '').trim());
   if (!file) return '';
@@ -77,12 +50,10 @@ function figure(el: Element, ctx: Ctx): string {
   const attrs = [`src="${file}"`];
   if (w) attrs.push(`width="${Math.round(w * 0.85)}"`);
   if (h) attrs.push(`height="${Math.round(h * 0.85)}"`);
-  // An image inside an option belongs to that choice, not to the question.
   const inOption = !!el.closest('.wa-opt-label, label');
   return inOption ? `<img ${attrs.join(' ')} />` : `<p class="figure"><img ${attrs.join(' ')} /></p>`;
 }
 
-/** Where the student writes the answer. */
 function answerArea(parts: Part[]): string {
   if (parts.every((p) => p.inline)) return '';
   const rows: string[] = ['<p class="answers-head">Answers</p>'];
@@ -93,7 +64,6 @@ function answerArea(parts: Part[]): string {
       continue;
     }
     if (part.options?.length) {
-      // Chosen from a list: tick one, rather than copying the wording out.
       const boxes = part.options
         .map((o, i) => `<td class="opt">${part.kind === 'checkboxes' ? '☐' : '◯'} ${i + 1}. ${o}</td>`)
         .join('');
@@ -118,7 +88,6 @@ function answerArea(parts: Part[]): string {
   return rows.join('\n');
 }
 
-/** The answers, for whoever is marking. */
 function markScheme(rows: { q: number; parts: Part[] }[]): string {
   const withAnswers = rows.filter((r) => r.parts.some((p) => p.answer));
   if (!withAnswers.length) return '';
@@ -177,6 +146,5 @@ export function assignmentToWorksheet(a: Assignment, meta: ExportMeta = {}): Wor
   return { html, images };
 }
 
-/** The subtitle line: course, section, term. */
 export const worksheetSubtitle = (meta: ExportMeta): string =>
   [meta.course, meta.section && `Section ${meta.section}`, meta.term].filter(Boolean).join(' · ');

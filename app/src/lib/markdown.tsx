@@ -7,23 +7,11 @@ import 'katex/dist/katex.min.css';
 import { repairTex } from './mathText';
 export { asMath } from './mathText';
 
-/**
- * Markdown with LaTeX for model output, cards and quiz questions. Maths is
- * pulled out before Markdown sees it (so `_` and `*` inside formulas survive),
- * rendered with KaTeX, and put back; the result is sanitised because it comes
- * from a model.
- */
-
 const MATH = [
   { re: /\$\$([\s\S]+?)\$\$/g, display: true },
   { re: /\\\[([\s\S]+?)\\\]/g, display: true },
   { re: /\\\(([\s\S]+?)\\\)/g, display: false },
-  // Inline $…$ that ends in a space before its closing $ — "$\mathbf a\cdot
-  // \mathbf a = $ _____", where a fill-the-gap card stops the maths short of
-  // its gap. Pandoc's rule would leave it as raw LaTeX; a LaTeX command inside
-  // says it is maths, and a price never has one.
   { re: /(?<![\\$\w])\$(?!\s)([^$\n]*?\\[a-zA-Z]+[^$\n]*?)\s+\$(?![\w$])/g, display: false },
-  // Inline $…$: not $ followed by a digit-and-space (prices), no newline inside.
   { re: /(?<![\\$\w])\$(?!\s)([^$\n]+?)(?<!\s)\$(?![\w$])/g, display: false },
 ];
 
@@ -34,13 +22,10 @@ function renderMath(tex: string, display: boolean): string {
   try {
     return katex.renderToString(repairTex(tex.trim()), options);
   } catch {
-    // Maths that still will not parse is shown as the text it is, quietly,
-    // rather than as KaTeX's red error — the student can still read it.
     return `<span class="math-raw" title="This formula could not be typeset">${escHtml(tex.trim())}</span>`;
   }
 }
 
-/** Fenced code: a header with the language and a copy control, then highlighted code. */
 const md = new Marked({
   gfm: true,
   breaks: true,
@@ -58,16 +43,11 @@ const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 
 export function renderMarkdown(src: string, cites?: CiteRef[]): string {
   const slots: string[] = [];
-  // Placeholders are wrapped in U+E000 (private use): Markdown and DOMPurify
-  // leave it alone, unlike NUL, which DOMPurify strips.
-  // Leave code alone: fenced blocks and inline code are protected first.
   const code: string[] = [];
   let text = src.replace(/```[\s\S]*?```|`[^`\n]+`/g, (m) => `\uE000C${code.push(m) - 1}\uE000`);
   for (const { re, display } of MATH) {
     text = text.replace(re, (_, tex: string) => `\uE000M${slots.push(renderMath(tex, display)) - 1}\uE000`);
   }
-  // Citation markers like [2] or [1, 3] become chips, but only for numbers the
-  // answer was actually given; anything else stays literal text.
   const known = new Map((cites ?? []).map((c) => [c.n, c]));
   if (known.size) {
     text = text.replace(/\[(\d+(?:\s*,\s*\d+)*)\]/g, (m, list: string) => {
@@ -77,21 +57,15 @@ export function renderMarkdown(src: string, cites?: CiteRef[]): string {
   }
   text = text.replace(/\uE000C(\d+)\uE000/g, (_, i) => code[Number(i)]);
   let html = md.parse(text, { async: false }) as string;
-  // Wide tables scroll sideways in their own box instead of squeezing their columns.
   html = html.replace(/<table>/g, '<div class="table-wrap"><table>').replace(/<\/table>/g, '</table></div>');
   html = html.replace(/\uE000M(\d+)\uE000/g, (_, i) => slots[Number(i)]);
   const clean = DOMPurify.sanitize(html, { ADD_ATTR: ['aria-hidden', 'preserveAspectRatio'], FORBID_TAGS: ['style', 'form', 'input', 'button'] });
-  // Chips go in after sanitising; their text comes from our own citation list.
   return clean.replace(/\uE000R(\d+)\uE000/g, (_, n) => {
     const c = known.get(Number(n))!;
     return `<button type="button" class="cite" data-cite="${c.n}" title="${esc(`${c.title} — ${c.label}`)}">${c.n}</button>`;
   });
 }
 
-/**
- * Split long Markdown into top-level blocks (never inside a code fence or a
- * $$ display), so a streaming note only re-renders the block still growing.
- */
 export function splitBlocks(text: string): string[] {
   const out: string[] = [];
   let cur: string[] = [];
@@ -122,12 +96,10 @@ async function copyText(text: string, el: HTMLElement) {
     el.textContent = 'Copied';
     el.classList.add('done');
     window.setTimeout(() => { el.textContent = 'Copy'; el.classList.remove('done'); }, 1400);
-  } catch { /* clipboard unavailable */ }
+  } catch { }
 }
 
 export function Markdown({ text, className, cites, onCite }: { text: string; className?: string; cites?: CiteRef[]; onCite?: (n: number) => void }) {
-  // Long text is rendered block by block; short text in one go (lists and
-  // paragraphs then share one parse, which keeps loose lists together).
   const blocks = useMemo(() => (text.length > 2500 ? splitBlocks(text) : [text]), [text]);
   return (
     <div

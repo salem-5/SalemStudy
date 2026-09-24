@@ -1,8 +1,3 @@
-/**
- * How a browser tab gets hold of its key — and, more importantly, where it
- * does not leave it lying about.
- */
-
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 
@@ -24,7 +19,6 @@ function install(href: string, { tauri = false, session = new Map<string, string
 }
 
 async function load() {
-  // A fresh copy each time: the module reads the globals as it goes.
   return import(`./tabClient.ts?${Math.random()}`);
 }
 
@@ -77,14 +71,12 @@ describe('deciding whether this is a tab', () => {
   });
 
   it('is still a tab once it has put its own stand-in for Tauri in place', async () => {
-    // The tab's transport defines __TAURI_INTERNALS__ too. Asked after boot,
-    // the old check said "desktop", and the tab showed the desktop's lock screen.
     install('http://127.0.0.1:8790/?t=abc123');
     const g = globalThis as Record<string, unknown>;
     let ping = 0;
     g.fetch = async (url: string) => {
       if (String(url).includes('/salem/ping')) { ping++; return { ok: true, status: 200, json: async () => ({}) }; }
-      return new Promise(() => {}); // the event poll: never answers in a test
+      return new Promise(() => {});
     };
     (g.window as Record<string, unknown>).addEventListener = () => {};
     const { inTabMode, installTabTransport } = await load();

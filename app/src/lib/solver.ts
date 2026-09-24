@@ -21,7 +21,6 @@ export type ChatEntry = {
   answers?: Record<string, unknown> | null;
   model?: string;
   tone?: 'info' | 'ok' | 'bad' | 'muted';
-  /** kind === 'python': the snippet, its output, and whether it is still running. */
   code?: string;
   output?: string;
   running?: boolean;
@@ -39,14 +38,6 @@ export type SolverDeps = {
   onQueueDone: (usage: { flash: Agg; pro: Agg }) => void;
 };
 
-/**
- * The question and everything this thread has already said, as one task.
- *
- * The solver's thread is not a chat: it is one question worked at across
- * several attempts, with corrections and grader feedback appended. Folding it
- * into a single instruction keeps that order and keeps the question itself at
- * the top, which is what the model needs to read first.
- */
 function threadText(question: ApiContent, thread: ApiMessage[]): unknown[] {
   const head = typeof question === 'string'
     ? question
@@ -64,7 +55,6 @@ function threadText(question: ApiContent, thread: ApiMessage[]): unknown[] {
   ];
 }
 
-/** One line about a Python run, for the solver's log. */
 function summarizeOutput(output: string): string {
   const line = output.split('\n').map((l) => l.trim()).filter(Boolean).find((l) => !l.startsWith('stdout:')) ?? '';
   return line ? line.slice(0, 160) : 'Ran Python';
@@ -93,17 +83,6 @@ function parseManual(q: Question, text: string): Record<string, unknown> | null 
   return Object.keys(out).length ? out : null;
 }
 
-/**
- * Drives the DeepSeek solve loop: attempt 1 on Flash (with vision when the
- * question has figures), later attempts on the Pro model with a transcription
- * of those figures. After `pauseAfter` misses it parks in `awaiting` until the
- * user continues. Max `maxAttempts` submissions, then it gives up and lets the
- * user type the answer.
- *
- * It also remembers which parts are already correct and which choices have
- * been ruled out, so a single-choice box with one option left is picked
- * directly, and reports token usage per question and per assignment run.
- */
 export function useSolver(deps: SolverDeps) {
   const depsRef = useRef(deps);
   depsRef.current = deps;
@@ -125,7 +104,6 @@ export function useSolver(deps: SolverDeps) {
   const transcriptRef = useRef<string | null>(null);
   const imagesRef = useRef<string[]>([]);
   const stopRef = useRef(false);
-  /** The runtime run in flight, so Stop reaches it and not only the loop. */
   const runRef = useRef<string | null>(null);
   const stopRun = () => { if (runRef.current) void cancelRun(runRef.current); };
   const approveRef = useRef(true);
@@ -139,9 +117,7 @@ export function useSolver(deps: SolverDeps) {
   const runSizeRef = useRef(0);
   const hasLogRef = useRef(false);
   const pythonRef = useRef<PythonStatus | null>(null);
-  /** Did this question's attempts actually run Python? */
   const pyUsedRef = useRef(false);
-  /** Attempts that were worked out by hand and still came back wrong. */
   const handMissesRef = useRef(0);
 
   const setStat = (s: SolverStatus) => { statusRef.current = s; setStatus(s); };
@@ -178,7 +154,6 @@ export function useSolver(deps: SolverDeps) {
 
   useEffect(() => { void reloadConfig(); void reloadPython(); }, [reloadConfig, reloadPython]);
 
-  /** The sandbox is only offered when it is installed and switched on. */
   const pythonOn = () => Boolean(pythonRef.current?.ready && configRef.current?.pythonEnabled);
 
   function trackUsage(model: string, usage: unknown) {
@@ -266,8 +241,6 @@ export function useSolver(deps: SolverDeps) {
         const model = a === 0 ? cfg.flashModel : cfg.proModel;
         const useVision = a === 0 && imagesRef.current.length > 0;
         const py = pythonOn();
-        // Insist on Python when the question needs calculating, and always
-        // after the model has tried to do it in its head and been wrong.
         const forcePython = py && (
           (cfg.pythonAuto && needsPython(q)) || handMissesRef.current >= 1 || (a > 0 && !pyUsedRef.current)
         );
@@ -288,9 +261,6 @@ export function useSolver(deps: SolverDeps) {
           text: `Attempt ${a + 1}/${cfg.maxAttempts} · ${model}${useVision ? ' · images' : ''}${py ? (forcePython ? ' · python (required)' : ' · python') : ''}`,
         });
 
-        // One run of the Salem runtime: it works the question out, running
-        // Python for the maths as often as its budget allows, and returns
-        // answers already checked against the shape the app can submit.
         const budget = py ? Math.max(1, cfg.pythonMaxCalls || 6) : 0;
         const runId = crypto.randomUUID();
         runRef.current = runId;
@@ -315,8 +285,6 @@ export function useSolver(deps: SolverDeps) {
                 tone: event.status === 'ok' ? 'ok' : 'bad',
                 code: event.code, output: event.output,
               });
-              // What was computed belongs to the thread, so the next attempt
-              // does not work it out again.
               convoRef.current.push({
                 role: 'assistant',
                 content: `[ran Python:\n${event.code}\n→ ${event.output.slice(0, 800)}]`,
@@ -339,12 +307,9 @@ export function useSolver(deps: SolverDeps) {
           answers: (solved?.answers && typeof solved.answers === 'object' ? solved.answers : null) as Record<string, unknown> | null,
         };
         const proposed = parsed.answers ? normalizeAnswers(q, parsed.answers) : {};
-        // Strip anything the question already prints around a box before it
-        // can cost a submission.
         const cleaned = fixAnswers(q, proposed);
         const { answers, notes } = applyDeduction(q, cleaned.answers, correctRef.current, elimRef.current);
         notes.unshift(...cleaned.notes);
-        // Tell the model, so the next attempt in this thread does it right.
         if (cleaned.notes.length) {
           convoRef.current.push({
             role: 'user',
@@ -353,16 +318,12 @@ export function useSolver(deps: SolverDeps) {
         }
         const hasAnswers = Object.keys(answers).length > 0;
         push({ role: 'assistant', kind: 'solve', text: parsed.message || '(no explanation)', answers: hasAnswers ? answers : null, model });
-        // The answer arrived as structured data; the thread keeps a plain
-        // transcript of it.
         convoRef.current.push({ role: 'assistant', content: JSON.stringify({ message: parsed.message, answers }) });
         for (const note of notes) push({ role: 'system', kind: 'feedback', tone: 'muted', text: note });
         attemptRef.current = a + 1;
         setAttempt(a + 1);
 
         if (!hasAnswers) {
-          // A malformed reply poisons the thread; a clean session reliably fixes
-          // it, so drop the conversation and retry from the question prompt.
           convoRef.current = [];
           push({ role: 'system', kind: 'feedback', tone: 'bad', text: 'No answers in the reply — resetting the conversation and retrying.' });
           continue;
@@ -393,8 +354,6 @@ export function useSolver(deps: SolverDeps) {
           setStat('done');
           return 'done';
         }
-        // A miss that was worked out by hand is what makes the next attempt
-        // insist on Python.
         if (!usedPythonHere) handMissesRef.current += 1;
         const fb = gradeFeedback(r.results.map((x) => ({ index: x.index, status: x.status, message: x.message })));
         push({ role: 'system', kind: 'feedback', tone: 'bad', text: fb });
@@ -476,7 +435,6 @@ export function useSolver(deps: SolverDeps) {
     if (pendingAdvanceRef.current) { pendingAdvanceRef.current = false; await advanceQueue(); }
   }
 
-  /** Start solving a list of questions in order. */
   async function start(list: number[]) {
     if (!list.length || runningRef.current) return;
     runUsageRef.current = emptyPair();
@@ -487,7 +445,6 @@ export function useSolver(deps: SolverDeps) {
     await afterSolve(res);
   }
 
-  /** Approve continuing past the pause point. */
   async function continueSolve() {
     if (statusRef.current !== 'awaiting') return;
     approveRef.current = true;
@@ -495,7 +452,6 @@ export function useSolver(deps: SolverDeps) {
     await afterSolve(res);
   }
 
-  /** Skip the current question and continue with the queue. */
   async function nextQuestion() {
     if (runningRef.current) { pendingAdvanceRef.current = true; stopRef.current = true; stopRun(); return; }
     finalizeQuestion();
@@ -512,7 +468,6 @@ export function useSolver(deps: SolverDeps) {
     if (!runningRef.current) { finalizeQuestion(); setStat('stopped'); }
   }
 
-  /** Focus the panel on a question (only while idle; never disturbs a run). */
   function focus(n: number) {
     if (statusRef.current === 'running' || statusRef.current === 'awaiting') return;
     if (qnumRef.current === n) return;
@@ -533,7 +488,6 @@ export function useSolver(deps: SolverDeps) {
     setStat('idle');
   }
 
-  /** A chat message: extra instruction, correction, or a free-form question. */
   async function send(text: string) {
     const t = text.trim();
     if (!t) return;
@@ -546,7 +500,7 @@ export function useSolver(deps: SolverDeps) {
       await afterSolve(res);
       return;
     }
-    if (statusRef.current === 'running') return; // folded into the next attempt
+    if (statusRef.current === 'running') return;
 
     const cfg = configRef.current;
     if (!cfg?.hasKey) { push({ role: 'system', kind: 'error', tone: 'bad', text: 'No API key for the chosen provider.' }); return; }
@@ -557,8 +511,6 @@ export function useSolver(deps: SolverDeps) {
     const runId = crypto.randomUUID();
     runRef.current = runId;
     try {
-      // Talking about the question is a chat, not a solve: the runtime can
-      // still compute, but nothing here touches the answer boxes.
       const text = await generateText({
         feature: 'solver',
         system: systemPrompt(py),
@@ -587,7 +539,6 @@ export function useSolver(deps: SolverDeps) {
     }
   }
 
-  /** Fill the boxes from a typed answer; optionally submit it. */
   async function manualFill(text: string, submit: boolean) {
     const n = qnumRef.current;
     const q = n != null ? depsRef.current.questionOf(n) : undefined;

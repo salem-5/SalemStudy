@@ -1,7 +1,3 @@
-// Dev-only stand-in for the Tauri commands the AI features call (DeepSeek,
-// Python, settings), so chat, flashcards and quizzes can be exercised with
-// `npm run dev` in a plain browser. Loaded from main.tsx only outside Tauri.
-
 type Args = Record<string, unknown>;
 type Msg = { role: string; content: unknown; tool_calls?: unknown };
 
@@ -47,7 +43,7 @@ async function chat(a: Args) {
     const db = JSON.parse(localStorage.getItem(KEY) || '{}');
     db.usage = [...(db.usage ?? []), { at: Date.now(), model: 'deepseek-flash', feature: String(a.feature ?? 'other'), tokens: 1800, cost: 0.0004 }];
     localStorage.setItem(KEY, JSON.stringify(db));
-  } catch { /* ignore */ }
+  } catch { }
   const messages = a.messages as Msg[];
   const forced = (a.choice as { function?: { name?: string } } | null)?.function?.name;
   if (forced === 'save_flashcards') {
@@ -88,7 +84,6 @@ async function chat(a: Args) {
         { title: 'Midterm 2', kind: 'exam', date: `${y}-11-12`, start: '18:30', end: '20:00', notes: 'Sequences and series' },
         { title: 'No class (reading week)', kind: 'class', date: `${y}-11-03`, start: null, end: null, notes: '' },
         { title: 'Final exam', kind: 'exam', date: `${y}-12-14`, start: '09:00', end: '12:00', notes: 'Cumulative' },
-        // A long tail of weekly homework, to exercise long review lists.
         ...Array.from({ length: 14 }, (_, i) => ({ title: `Homework ${i + 1} due`, kind: 'deadline', date: new Date(y, 8, 26 + i * 7).toLocaleDateString('en-CA'), start: '23:59', end: null, notes: '' })),
       ],
     }));
@@ -154,7 +149,6 @@ function python(a: Args) {
   return { ok: true, stdout: out ? `${out}\n` : '', stderr: '', result: null, error: null, figures, duration_ms: 42 };
 }
 
-/** Preview only: a few providers, the shape models.dev's list comes in. */
 const model = (id: string, name: string, o: Partial<Record<string, unknown>> = {}) => ({
   id, name, reasoning: false, effort: false, tools: true, vision: false, input: 0.5, output: 1.5, cacheRead: 0.05,
   context: 128_000, maxOutput: 16_384, status: '', released: '2026-01-01', ...o,
@@ -259,8 +253,6 @@ export function installDevAi() {
       return null;
     },
   };
-  // Minimal event plumbing so `listen('ai://stream')` works, and a streamed
-  // reply that arrives word by word.
   const callbacks = new Map<number, (e: unknown) => void>();
   const listeners = new Map<string, Set<number>>();
   let nextCb = 1;
@@ -269,12 +261,6 @@ export function installDevAi() {
   };
   const cancelled = new Set<string>();
   const tabMode = { running: false, port: null as number | null, url: null as string | null, origin: null as string | null };
-
-  // ------------------------------------------------------------ Salem mock
-  //
-  // Enough of the runtime to exercise the real plumbing in the browser: the
-  // execution states the UI renders, streamed text, and a tool call that
-  // actually goes out to the webview and waits for its answer.
 
   let nextToolCall = 1;
   const toolWaiters = new Map<number, (a: Args) => void>();
@@ -333,8 +319,6 @@ export function installDevAi() {
     state('planning', 'Working out how to do this');
     await wait(300);
 
-    // A request that mentions the study space gets a real tool round trip, so
-    // the tool layer is exercised rather than faked.
     const asked = String(input.objective ?? '').toLowerCase();
     if (/notebook|calendar|schedule|deck|quiz|note/.test(asked)) {
       const name = /calendar|schedule|due|exam/.test(asked) ? 'list_events' : 'list_study';
@@ -356,8 +340,6 @@ export function installDevAi() {
       });
     }
 
-    // A request that asked for structured data gets structured data back, so
-    // quiz and flashcard generation can be exercised in the preview too.
     const schema = input.schema as { properties?: Record<string, unknown> } | null;
     if (schema) {
       state('validating', 'Checking the result against the schema');
@@ -418,7 +400,6 @@ export function installDevAi() {
   };
   handlers['plugin:event|unlisten'] = (a) => { for (const set of listeners.values()) set.delete(Number(a.eventId)); };
   handlers.ai_cancel = (a) => { cancelled.add(String(a.id)); };
-  // Native file dialogs and the data commands, faked for the browser preview.
   handlers['plugin:dialog|save'] = () => '/Users/you/Documents/SalemStudy 2026-09-21.salemstudy';
   handlers['plugin:dialog|open'] = () => '/Users/you/Documents/SalemStudy 2026-09-01.salemstudy';
   handlers.data_export = async (a) => { await wait(600); return { path: String(a.path), bytes: 48_213_504 }; };
@@ -428,7 +409,6 @@ export function installDevAi() {
   handlers.deepseek_stream = async (a) => {
     const r = (await chat(a)) as { content: string; reasoning: string; tool_calls: unknown };
     const id = String(a.id);
-    // Thinking mode: stream some reasoning first.
     if (a.thinking) {
       const thought = 'The student is asking about convergence. I should state the ratio test precisely, say what each case means, and mention the inconclusive case L = 1 with an example. Keep it tight.';
       for (const w of thought.split(/(?<=\s)/)) {
@@ -448,7 +428,6 @@ export function installDevAi() {
     }
     return r;
   };
-  // listen()'s unlisten calls into the event plugin's internals.
   (window as unknown as { __TAURI_EVENT_PLUGIN_INTERNALS__: unknown }).__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
   (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
     invoke: async (cmd: string, args: Args) => {

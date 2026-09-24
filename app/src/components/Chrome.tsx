@@ -104,7 +104,6 @@ export function ConnectPanel({ status, statusError, bridge, onRestart }: {
   );
 }
 
-/** The app needs userscript 0.3.0+ (question HTML placeholders, grading marks). */
 export const MIN_USERSCRIPT = '0.3.2';
 
 export function scriptCurrent(v: string | null | undefined): boolean {

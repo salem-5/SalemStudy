@@ -1,10 +1,3 @@
-/**
- * What the assistant is told about what the student pointed at.
- *
- * This is the text that decides whether "explain this" is answered about the
- * thing under the cursor or about something else in the same note, so it is
- * worth pinning down.
- */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { describeReferences, makeReference, referencedSources, referenceTag, type Reference } from './reference.ts';
@@ -26,7 +19,6 @@ describe('describing a reference', () => {
     })]);
     assert.match(text, /The note “Series”, in full/);
     assert.match(text, /Everything the note says\./);
-    // And it must not send the assistant off to fetch what it already has.
     assert.doesNotMatch(text, /read_note\(/);
   });
 

@@ -6,8 +6,6 @@ import type {
 
 type Answers = Record<string, Draft>;
 
-// 'http' is for `npm run dev` in a browser with ?live: Vite proxies /api to the
-// bridge (stripping the Origin header the bridge refuses).
 let transport: 'tauri' | 'http' = 'tauri';
 export const useHttpTransport = () => { transport = 'http'; };
 
@@ -48,8 +46,6 @@ export const api = {
     return { ...r, question: normalizeQuestion(r.question) };
   },
   dryRun: (dep: number, n: number, answers: Answers) => call<DryRun>('POST', `${q(dep, n)}/submit?dryRun=1`, { answers }),
-  /** `job` labels this document's progress lines when a batch compiles in parallel. */
-  /** Render a document to PDF with the app's own Python. */
   exportPdf: (name: string, html: string, images: { file: string; data: string }[], subtitle?: string, job?: string) =>
     invoke<{ tex: string | null; pdf: string | null }>('export_pdf', {
       name, html, subtitle: subtitle ?? null, images, job: job ?? null,

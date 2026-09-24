@@ -1,7 +1,3 @@
-/**
- * The walk a deck or quiz takes through the material. It decides what gets a
- * card and in what order, so it is tested on its own — no model involved.
- */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
@@ -50,7 +46,6 @@ describe('the position a title claims', () => {
 
 describe('reading order', () => {
   it('puts lectures uploaded newest-first back in order', () => {
-    // Exactly how the Calculus notebook was built: Lecture 5 went in first.
     const uploaded = [
       { id: 1, title: 'Lecture 5, Equations of Planes', createdAt: 1 },
       { id: 2, title: 'Lecture 4, Equations of Lines', createdAt: 2 },
@@ -78,7 +73,6 @@ describe('reading order', () => {
       { id: 3, title: 'Lecture 3', createdAt: 3 },
     ];
     assert.deepEqual(applyOrder(all, [3, 1]).map((s) => s.id), [3, 1, 2]);
-    // A source deleted since is simply gone from the order.
     assert.deepEqual(applyOrder(all, [9, 2]).map((s) => s.id), [2, 1, 3]);
   });
 });
@@ -122,7 +116,6 @@ describe('bringing a walk under the ceiling', () => {
   });
 
   it('keeps at least one item from every page, the last page included', () => {
-    // 49 pages, some wildly over-written, 200 items in all.
     const items = Array.from({ length: 49 }, (_, p) => Array.from({ length: p === 15 ? 26 : 4 }, (_, n) => card(p + 1, n))).flat();
     const kept = balancedTrim(items, pageOf, 128);
     assert.equal(kept.length, 128);
@@ -138,7 +131,6 @@ describe('bringing a walk under the ceiling', () => {
   });
 
   it('lets a dense page keep more than a sparse one instead of flattening them', () => {
-    // Twenty pages: five dense ones that wrote 10 each, fifteen that wrote 3.
     const items = Array.from({ length: 20 }, (_, p) => Array.from({ length: p % 4 === 0 ? 10 : 3 }, (_, n) => card(p + 1, n))).flat();
     const kept = balancedTrim(items, pageOf, 50);
     assert.equal(kept.length, 50);
@@ -166,7 +158,6 @@ describe('bringing a walk under the ceiling', () => {
   });
 
   it('drops the details before anything core', () => {
-    // A page whose core point was written last still keeps it.
     const items = [
       { page: 'Page 1', n: 0, core: false }, { page: 'Page 1', n: 1, core: false }, { page: 'Page 1', n: 2, core: true },
       { page: 'Page 2', n: 0, core: true }, { page: 'Page 2', n: 1, core: false },
@@ -269,8 +260,6 @@ describe('what each pass is shown', () => {
 
 describe('how thorough a pass is', () => {
   it('writes fewer exactly like standard — the difference is made afterwards', () => {
-    // Asked for "only the essentials" beside a dozen lines about leaving
-    // nothing out, a model writes everything anyway; so it is not asked.
     assert.equal(sizeRule('fewer', 'cards'), sizeRule('standard', 'cards'));
     assert.match(sizeRule('standard', 'cards'), /Do not summarise/);
   });

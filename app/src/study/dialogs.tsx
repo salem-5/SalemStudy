@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Modal } from '../components/Dialogs';
 
-/** Name (and optionally description) prompt for subjects and notebooks. */
 export function NameDialog({ title, label, initial = '', withDescription, initialDescription = '', submitLabel, onSubmit, onClose }: {
   title: string;
   label: string;

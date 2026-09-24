@@ -1,11 +1,3 @@
-"""Execution state, budgets and the per-run context every agent shares.
-
-`RunContext` is the thing that makes a run observable and bounded: it carries
-the cancellation flag, the wall-clock deadline, the token / tool-call /
-sub-agent budgets, and the channel the UI reads its progress from. Agents and
-tools take one; nothing in the runtime runs without it.
-"""
-
 from __future__ import annotations
 
 import threading
@@ -15,8 +7,6 @@ from typing import Any
 
 from .rpc import Cancelled, Host
 
-# The states the UI is allowed to show. They describe *what the runtime is
-# doing*, never what the model is thinking: private reasoning stays private.
 PLANNING = "planning"
 EXECUTING = "executing"
 WAITING_TOOL = "waiting_tool"
@@ -37,9 +27,6 @@ STATES = {
 
 @dataclass
 class Budget:
-    """Hard limits on one run. Exhausting one ends the run with a real,
-    observable failure rather than letting it spin."""
-
     seconds: float = 300.0
     steps: int = 12
     tool_calls: int = 40
@@ -78,13 +65,11 @@ class Spend:
 
 
 class BudgetError(RuntimeError):
-    """A budget ran out. The run stops and says which one."""
+    pass
 
 
 @dataclass
 class RunContext:
-    """Everything one run needs to be observed, bounded and stopped."""
-
     run_id: str
     host: Host
     budget: Budget = field(default_factory=Budget)
@@ -95,8 +80,6 @@ class RunContext:
     _cancel: threading.Event = field(default_factory=threading.Event)
     _state: str = EXECUTING
 
-    # ------------------------------------------------------------ lifecycle
-
     def cancel(self) -> None:
         self._cancel.set()
 
@@ -105,7 +88,6 @@ class RunContext:
         return self._cancel.is_set()
 
     def check(self) -> None:
-        """Called at every step boundary and before every tool call."""
         if self._cancel.is_set():
             raise Cancelled("stopped")
         if self.elapsed > self.budget.seconds:
@@ -122,11 +104,7 @@ class RunContext:
         return max(0.0, self.budget.seconds - self.elapsed)
 
     def call(self, method: str, args: dict, timeout: float | None = None) -> Any:
-        """A host call bound to this run: it gives up the moment the run is
-        cancelled, instead of holding a worker thread on a slow tool."""
         return self.host.call(method, args, timeout=timeout, abort=self._cancel)
-
-    # --------------------------------------------------------------- output
 
     def state(self, state: str, detail: str = "") -> None:
         if state not in STATES:
@@ -146,10 +124,7 @@ class RunContext:
             self.emit({"kind": "text", "text": chunk})
 
     def note(self, message: str) -> None:
-        """A short, user-safe line about what is happening."""
         self.emit({"kind": "note", "text": message})
-
-    # ------------------------------------------------------------ telemetry
 
     def charge_tokens(self, input_tokens: int, output_tokens: int) -> None:
         self.spend.input_tokens += max(0, input_tokens)
@@ -164,8 +139,6 @@ class RunContext:
             **self.spend.as_dict(),
             **extra,
         }
-
-    # -------------------------------------------------------------- budgets
 
     def spend_tool(self) -> None:
         self.check()
@@ -186,8 +159,6 @@ class RunContext:
             raise BudgetError("this task used too many sub-agents")
 
     def child(self, depth_delta: int = 1) -> "RunContext":
-        """A context for a sub-agent: same budgets and the same stop switch,
-        one level deeper, with the time already spent counted against it."""
         kid = RunContext(
             run_id=self.run_id,
             host=self.host,

@@ -4,16 +4,7 @@ import { generateVision } from './salem/generate';
 import { pythonStatus, runPython, sandboxName } from './python';
 import { studyApi, type Source, type SourceKind } from '../study/api';
 
-/**
- * Turning an uploaded source into text units (pages, slides, time spans).
- * Files are stored first, then read here: PDFs and slides with Python in the
- * sandbox, images and scanned pages with the Flash vision model, YouTube with
- * yt-dlp captions. The job store lets the Sources pane show live progress.
- */
-
 type Unit = { label: string; text: string };
-
-// ------------------------------------------------------------ job store
 
 const jobs = new Map<number, string>();
 const listeners = new Set<() => void>();
@@ -21,12 +12,9 @@ let snapshot: ReadonlyMap<number, string> = new Map();
 const emit = () => { snapshot = new Map(jobs); listeners.forEach((l) => l()); };
 const setStage = (id: number, stage: string | null) => { if (stage === null) jobs.delete(id); else jobs.set(id, stage); emit(); };
 
-/** Source id → what it is doing right now. */
 export function useIngestJobs(): ReadonlyMap<number, string> {
   return useSyncExternalStore((l) => { listeners.add(l); return () => listeners.delete(l); }, () => snapshot);
 }
-
-// -------------------------------------------------------------- kinds
 
 const TEXT_EXT = /\.(txt|md|markdown|tex|csv|tsv|json|py|js|ts|tsx|rs|c|cc|cpp|h|hpp|java|kt|m|r|sql|yaml|yml|xml|html|htm|css|ipynb|rst|org)$/i;
 
@@ -50,8 +38,6 @@ const readDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
 });
 
 const stem = (name: string) => name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim() || name;
-
-// ------------------------------------------------------------ extractors
 
 async function python(code: string, sourceId: number, extra: { maxOutput?: number; maxFigures?: number } = {}) {
   const r = await runPython(code, 120, undefined, { sources: [sourceId], maxOutput: extra.maxOutput ?? 6_000_000, maxFigures: extra.maxFigures });
@@ -83,7 +69,6 @@ async function vision(dataUrl: string, prompt: string): Promise<string> {
 export const transcribe = (dataUrl: string) => vision(dataUrl, VISION_PROMPT);
 const describeFigure = (dataUrl: string) => vision(dataUrl, FIGURE_PROMPT).then((t) => (/^none\.?$/i.test(t) ? '' : t));
 
-/** Run `fn` over items, a few at a time (vision calls are slow but independent). */
 async function pool<T>(items: T[], limit: number, fn: (item: T, i: number) => Promise<void>) {
   let next = 0;
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
@@ -108,8 +93,6 @@ for page in doc:
 print(json.dumps(out))`, s.id);
   const pages = JSON.parse(r.stdout.trim().split('\n').pop() ?? '[]') as { text: string; scan: boolean; figure: boolean }[];
   if (!pages.length) throw new Error('The PDF has no pages.');
-  // Pages that are scans, or that carry figures, are rendered and looked at:
-  // scans are transcribed in full, figure pages get their figures described.
   const visual = pages.map((p, i) => (p.scan || p.figure ? i : -1)).filter((i) => i >= 0).slice(0, MAX_VISUAL_PAGES);
   let done = 0;
   for (let b = 0; b < visual.length; b += 8) {
@@ -145,15 +128,6 @@ for i in ${JSON.stringify(batch)}:
   return units;
 }
 
-/**
- * What reading this source was actually like.
- *
- * A page that came back empty looks exactly like a page that was blank, and a
- * scan whose transcription failed looks like a page with nothing on it. That
- * silence is the failure mode worth catching: the report says which pages are
- * empty, which had to be looked at, and whether two pages came back identical
- * — the sign of an extractor repeating itself.
- */
 async function saveReport(
   sourceId: number,
   units: Unit[],
@@ -168,7 +142,6 @@ async function saveReport(
       empty.push(i + 1);
       return;
     }
-    // Identical long pages are the extractor stuttering, not the document.
     if (text.length > 200) {
       const first = seen.get(text);
       if (first !== undefined) duplicated.push(i + 1);
@@ -188,8 +161,6 @@ async function saveReport(
 
 async function extractSlides(s: Source, stage: (t: string) => void): Promise<Unit[]> {
   stage('reading slides');
-  // Text, tables and speaker notes per slide; every sizeable picture is saved
-  // as slide-NNN-K.ext so it can be looked at and shown with its slide.
   const r = await python(`import json
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
@@ -197,7 +168,6 @@ prs = Presentation(${fileArg(s)})
 out = []
 saved = 0
 def pictures(shapes):
-    # Pictures, picture placeholders, and pictures inside groups.
     for sh in shapes:
         if sh.shape_type == MSO_SHAPE_TYPE.GROUP:
             yield from pictures(sh.shapes)
@@ -245,7 +215,6 @@ print(json.dumps(out))`, s.id, { maxFigures: 40 });
 
 async function extractDocx(s: Source, stage: (t: string) => void): Promise<Unit[]> {
   stage('reading document');
-  // A .docx is a zip of XML; the standard library is enough for the text.
   const r = await python(`import zipfile, re, json, html
 xml = zipfile.ZipFile(${fileArg(s)}).read("word/document.xml").decode("utf8")
 paras = []
@@ -258,7 +227,6 @@ print(json.dumps(paras))`, s.id);
   return splitText(paras.join('\n\n'));
 }
 
-/** Markdown/LaTeX headings start a new unit; otherwise about 60 lines each. */
 export function splitText(text: string): Unit[] {
   const lines = text.replace(/\r\n?/g, '\n').split('\n');
   const units: Unit[] = [];
@@ -288,7 +256,6 @@ const fmtTime = (sec: number) => {
   return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
 };
 
-/** Seconds from a unit label like "12:30–14:30". */
 export const labelSeconds = (label: string): number | null => {
   const m = label.match(/^(?:(\d+):)?(\d+):(\d{2})/);
   return m ? (Number(m[1] ?? 0) * 3600 + Number(m[2]) * 60 + Number(m[3])) : null;
@@ -298,7 +265,6 @@ async function extractYoutube(url: string, stage: (t: string) => void): Promise<
   stage('fetching captions');
   const t = await studyApi.youtubeTranscript(url);
   if (!t.segments.length) throw new Error('This video has no captions, so it cannot be read yet.');
-  // Two-minute windows, or chapters when the video has them.
   const cuts = t.chapters.length > 1 ? t.chapters.map((c) => c.start) : [];
   const units: Unit[] = [];
   let cur: string[] = [];
@@ -318,11 +284,8 @@ async function extractYoutube(url: string, stage: (t: string) => void): Promise<
   return { title: t.title, units };
 }
 
-// ---------------------------------------------------------------- driver
-
 const running = new Set<number>();
 
-/** Read a stored source into units and index it. Safe to call again to retry. */
 export async function ingest(s: Source, file?: File): Promise<Source> {
   if (running.has(s.id)) return s;
   running.add(s.id);
@@ -354,8 +317,6 @@ export async function ingest(s: Source, file?: File): Promise<Source> {
       if (yt.title && (s.title === s.url || !s.title)) await studyApi.renameSource(s.id, yt.title.slice(0, 200));
     } else throw new Error('This file type cannot be read.');
     if (!units.some((u) => u.text.trim())) throw new Error('No text could be read from this source.');
-    // Anything that did not write its own report gets the basic one, so every
-    // source can say how its reading went.
     if (s.kind !== 'pdf') await saveReport(s.id, units);
     stage('indexing');
     return await studyApi.setSourceContent(s.id, units);
@@ -369,7 +330,6 @@ export async function ingest(s: Source, file?: File): Promise<Source> {
   }
 }
 
-/** Store the files, then read each one. Unsupported files are reported, not stored. */
 export async function addFiles(notebookId: number, files: File[], onAdded: () => void): Promise<string[]> {
   const problems: string[] = [];
   for (const file of files) {
@@ -383,12 +343,10 @@ export async function addFiles(notebookId: number, files: File[], onAdded: () =>
         mime: file.type || 'application/octet-stream', data: await readDataUrl(file),
       });
     } catch (e) {
-      // Said on the pane, not lost: one bad file should not stop the rest.
       problems.push(`${file.name}: ${e instanceof Error ? e.message : String(e)}`);
       continue;
     }
     onAdded();
-    // .docx is stored as text-kind but read with Python.
     void ingest(s, k === 'docx' ? undefined : file).then(onAdded);
   }
   return problems;

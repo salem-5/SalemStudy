@@ -1,30 +1,10 @@
-/**
- * Remembering WebAssign assignments between looks.
- *
- * The bridge only answers while a logged-in tab is open, and asking it for the
- * whole assignment list is slow. So the list is cached and *reconciled*
- * rather than replaced: a due date that moved is picked up and recorded as a
- * change, an assignment that has gone from WebAssign is marked rather than
- * quietly deleted, and everything keeps working from the cache when the
- * bridge is not there at all.
- *
- * Nothing here guesses. A due date is only ever what WebAssign said; when a
- * date cannot be read, the entry keeps the last one it had and says the
- * reading failed.
- */
-
 export type CachedAssignment = {
   id: number;
   title: string;
-  /** Epoch milliseconds, or null when WebAssign gave no usable date. */
   due: number | null;
-  /** Exactly what WebAssign printed, kept beside the parsed value. */
   dueText: string;
-  /** When we last saw it in a WebAssign listing. */
   seenAt: number;
-  /** Set when it stopped appearing: kept, greyed, not deleted. */
   missingSince?: number;
-  /** The previous due date, when it moved. Shown to the student once. */
   movedFrom?: number | null;
 };
 
@@ -38,14 +18,8 @@ export type Reconciliation = {
 
 export type Incoming = { id: number; title: string; due: number | null; dueText: string };
 
-/** An assignment missing for this long is almost certainly gone for good. */
 export const FORGET_AFTER = 60 * 24 * 60 * 60 * 1000;
 
-/**
- * Fold a fresh WebAssign listing into what we already had.
- *
- * Pure, so the rules can be tested without a bridge or a browser.
- */
 export function reconcile(cached: CachedAssignment[], incoming: Incoming[], now = Date.now()): Reconciliation {
   const before = new Map(cached.map((a) => [a.id, a]));
   const seen = new Set(incoming.map((a) => a.id));
@@ -62,7 +36,6 @@ export function reconcile(cached: CachedAssignment[], incoming: Incoming[], now 
       out.push(entry);
       continue;
     }
-    // A date we could not read this time must not wipe the one we had.
     const due = fresh.due ?? old.due;
     const dueText = fresh.dueText || old.dueText;
     const changed = fresh.due !== null && fresh.due !== old.due;
@@ -82,7 +55,6 @@ export function reconcile(cached: CachedAssignment[], incoming: Incoming[], now 
   const missing: CachedAssignment[] = [];
   for (const old of cached) {
     if (seen.has(old.id)) continue;
-    // Long gone: stop carrying it.
     if (old.missingSince !== undefined && now - old.missingSince > FORGET_AFTER) continue;
     const entry: CachedAssignment = { ...old, missingSince: old.missingSince ?? now };
     missing.push(entry);
@@ -93,7 +65,6 @@ export function reconcile(cached: CachedAssignment[], incoming: Incoming[], now 
   return { assignments: out, added, moved, missing, returned };
 }
 
-/** A line for the student about what changed, or null when nothing did. */
 export function describeChanges(r: Reconciliation): string | null {
   const parts: string[] = [];
   if (r.added.length) parts.push(`${r.added.length} new`);
@@ -106,8 +77,6 @@ export function describeChanges(r: Reconciliation): string | null {
   if (r.missing.length) parts.push(`${r.missing.length} no longer listed`);
   return parts.length ? parts.join(' · ') : null;
 }
-
-// ---------------------------------------------------------------- storage
 
 const KEY = 'wa.assignments.v1';
 
@@ -125,15 +94,12 @@ export function saveCache(assignments: CachedAssignment[]): void {
   try {
     localStorage.setItem(KEY, JSON.stringify(assignments));
   } catch {
-    // A full localStorage costs the cache, not the feature.
   }
 }
 
-/** When the cache was last refreshed from WebAssign. */
 export const lastSeen = (assignments: CachedAssignment[]): number =>
   assignments.reduce((latest, a) => Math.max(latest, a.seenAt), 0);
 
-/** How stale the cache is allowed to get before it is worth asking again. */
 export const REFRESH_AFTER = 10 * 60 * 1000;
 
 export const needsRefresh = (assignments: CachedAssignment[], now = Date.now()): boolean =>

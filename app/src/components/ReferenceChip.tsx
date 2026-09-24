@@ -1,14 +1,6 @@
 import { BookOpen, FileText, Layers, ListChecks, MessageSquare } from 'lucide-react';
 import type { Reference } from '../lib/reference';
 
-/**
- * What the chat has been handed, sitting where an attachment sits.
- *
- * Just the name. Spelling the whole quotation out took up the top of the
- * sheet with something the student had just been reading; hovering gives it
- * back when they want to check exactly what went across.
- */
-
 const ICON = {
   note: FileText,
   quiz: ListChecks,

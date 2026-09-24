@@ -1,10 +1,3 @@
-//! Study: Subject → Notebook → Sources, kept in one SQLite file (`study.db`)
-//! under the app data dir. See docs/study-plan.md.
-//!
-//! Every notebook-owned row carries `notebook_id` (directly or through its
-//! source), so retrieval can be limited to a notebook in SQL rather than by
-//! asking the model to ignore what it was given.
-
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -28,8 +21,6 @@ pub use chat::attachment_files;
 
 pub struct StudyDb(pub Mutex<Option<Connection>>);
 
-/// Each entry moves the schema one version forward; `PRAGMA user_version`
-/// records how many have run.
 const MIGRATIONS: &[&str] = &[r#"
 CREATE TABLE subject (
   id INTEGER PRIMARY KEY,
@@ -148,8 +139,6 @@ CREATE TABLE job (
   error TEXT
 );
 "#,
-// 2: standalone chats (notebook_id NULL), attachments, review and attempt logs.
-// Nothing had been written to conversation/message yet, so they are rebuilt.
 r#"
 DROP TABLE message;
 DROP TABLE conversation;
@@ -207,8 +196,6 @@ CREATE TABLE quiz_attempt (
 );
 CREATE INDEX quiz_attempt_notebook ON quiz_attempt(notebook_id, finished_at);
 "#,
-// 3: flashcards come in decks you replay for a score (no due dates), and
-// sources keep their file and are searchable.
 r#"
 CREATE TABLE deck (
   id INTEGER PRIMARY KEY,
@@ -249,7 +236,6 @@ CREATE TRIGGER chunk_ad AFTER DELETE ON chunk BEGIN
   INSERT INTO chunk_fts(chunk_fts, rowid, text) VALUES ('delete', old.id, old.text);
 END;
 "#,
-// 4: notes, written by the model from sources/topic/chat and edited by hand.
 r#"
 CREATE TABLE note (
   id INTEGER PRIMARY KEY,
@@ -262,8 +248,6 @@ CREATE TABLE note (
 );
 CREATE INDEX note_notebook ON note(notebook_id, updated_at);
 "#,
-// 5: AI usage log, subject icons, notebook overviews, the calendar, and the
-// pictures found inside sources (slide images, figure pages).
 r#"
 CREATE TABLE ai_usage (
   id INTEGER PRIMARY KEY,
@@ -303,7 +287,6 @@ CREATE TABLE source_image (
 );
 CREATE INDEX source_image_source ON source_image(source_id, unit_ord);
 "#,
-// 6: a syllabus per subject (file kept as an attachment, its text and summary).
 r#"
 ALTER TABLE subject ADD COLUMN syllabus_file INTEGER REFERENCES attachment(id) ON DELETE SET NULL;
 ALTER TABLE subject ADD COLUMN syllabus_name TEXT NOT NULL DEFAULT '';
@@ -311,9 +294,6 @@ ALTER TABLE subject ADD COLUMN syllabus_text TEXT NOT NULL DEFAULT '';
 ALTER TABLE subject ADD COLUMN syllabus_summary TEXT NOT NULL DEFAULT '';
 ALTER TABLE subject ADD COLUMN syllabus_at INTEGER NOT NULL DEFAULT 0;
 "#,
-// 7: every event belongs to a course (subject) or to none. Existing events get
-// the course of their notebook, or of the "Course: " prefix syllabus imports
-// put in their titles (the prefix is dropped: the course now shows by colour).
 r#"
 ALTER TABLE event ADD COLUMN subject_id INTEGER REFERENCES subject(id) ON DELETE SET NULL;
 CREATE INDEX event_subject ON event(subject_id);
@@ -329,7 +309,6 @@ UPDATE event SET title = trim(substr(title, (SELECT length(s.name) FROM subject 
         = (SELECT s.name FROM subject s WHERE s.id = event.subject_id) || ':'
     AND length(trim(substr(title, (SELECT length(s.name) FROM subject s WHERE s.id = event.subject_id) + 2))) > 0;
 "#,
-// 8: facts the AI remembers about the student (Settings → Memory).
 r#"
 CREATE TABLE memory (
   id INTEGER PRIMARY KEY,
@@ -339,8 +318,6 @@ CREATE TABLE memory (
   updated_at INTEGER NOT NULL
 );
 "#,
-// 9: the Salem AI runtime's own state — the working memory a long task carries
-// between runs, and the execution metrics behind Settings → AI.
 r#"
 CREATE TABLE salem_task (
   task_id TEXT PRIMARY KEY,
@@ -377,8 +354,6 @@ CREATE TABLE salem_applied (
   created_at INTEGER NOT NULL
 );
 "#,
-// 10: finished focus sessions, so the activity map counts the time the
-// student actually sat down to work, not only what they produced.
 r#"
 CREATE TABLE focus_session (
   id INTEGER PRIMARY KEY,
@@ -390,7 +365,6 @@ CREATE TABLE focus_session (
 );
 CREATE INDEX focus_session_finished ON focus_session(finished_at);
 "#,
-// Notes: the student's own notes app, folders and rich-text notes (pad.rs).
 r#"
 CREATE TABLE pad_folder (
   id INTEGER PRIMARY KEY,
@@ -411,7 +385,6 @@ CREATE TABLE pad_note (
 CREATE INDEX pad_note_folder ON pad_note(folder_id, updated_at);
 "#];
 
-/// How many migrations this build knows; files from a newer build are refused.
 pub(crate) fn schema_version() -> usize {
     MIGRATIONS.len()
 }
@@ -438,7 +411,6 @@ pub(crate) fn prepare(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// Opens the database on first use, so a broken data dir only fails Study.
 pub(crate) fn with_db<T>(app: &AppHandle, db: &StudyDb, f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T, String> {
     let mut guard = db.0.lock().map_err(|_| "study database lock poisoned".to_string())?;
     if guard.is_none() {
@@ -469,7 +441,6 @@ pub struct NotebookSummary {
     pub quiz_count: i64,
     pub deck_count: i64,
     pub note_count: i64,
-    /// AI-written list of what the notebook covers ("" until generated).
     pub overview: String,
     pub overview_at: i64,
     pub updated_at: i64,
@@ -481,10 +452,8 @@ pub struct SubjectNode {
     pub id: i64,
     pub name: String,
     pub context: String,
-    /// Lucide icon name and accent colour chosen for the subject ("" = default).
     pub icon: String,
     pub color: String,
-    /// The syllabus file's name ("" = none) and the AI summary of it.
     pub syllabus_name: String,
     pub syllabus_summary: String,
     pub syllabus_at: i64,
@@ -602,12 +571,6 @@ pub fn study_update_subject(
     expect_one(changed, "Subject")
 }
 
-/// Delete a course and everything that only existed because of it: its
-/// notebooks (by cascade), its syllabus, and its place in the calendar.
-///
-/// One transaction, because the calendar entries can only be recognised while
-/// the subject is still there — losing them without losing the course would
-/// be worse than either on its own.
 #[tauri::command]
 pub fn study_delete_subject(app: AppHandle, db: State<'_, StudyDb>, id: i64) -> Result<(), String> {
     let changed = with_db(&app, &db, |c| {
@@ -671,12 +634,9 @@ pub fn notebook_set_overview(app: AppHandle, db: State<'_, StudyDb>, id: i64, ov
     expect_one(changed, "Notebook")
 }
 
-/// Per-day counts of study activity (card answers, quiz attempts, deck plays,
-/// questions asked, notes written) since `since`, for the activity chart.
 #[tauri::command]
 pub fn activity(app: AppHandle, db: State<'_, StudyDb>, since: i64) -> Result<Vec<i64>, String> {
     with_db(&app, &db, |c| {
-        // Timestamps only: the UI buckets them into local days.
         let mut stmt = c.prepare(
             "SELECT reviewed_at FROM card_review WHERE reviewed_at >= ?1
              UNION ALL SELECT finished_at FROM quiz_attempt WHERE finished_at >= ?1
@@ -690,12 +650,6 @@ pub fn activity(app: AppHandle, db: State<'_, StudyDb>, since: i64) -> Result<Ve
     })
 }
 
-/// What was studied on a given day, and where.
-///
-/// The heatmap knows only that *something* happened; this is what makes a
-/// square worth clicking. One row per action, with the notebook and subject
-/// it belonged to, so the day can be read back as "Calculus II — Midterm
-/// Review: a quiz and nine cards".
 #[tauri::command]
 pub fn activity_detail(app: AppHandle, db: State<'_, StudyDb>, from: i64, to: i64) -> Result<Vec<Value>, String> {
     with_db(&app, &db, |c| {
@@ -754,10 +708,6 @@ pub fn activity_detail(app: AppHandle, db: State<'_, StudyDb>, from: i64, to: i6
     })
 }
 
-/// Record a focus session the student actually finished.
-///
-/// Only completed sessions count: a timer that was reset or skipped is not
-/// study, and counting it would flatter the activity map into uselessness.
 #[tauri::command]
 pub fn focus_session_add(
     app: AppHandle,
@@ -768,7 +718,6 @@ pub fn focus_session_add(
     tasks_done: i64,
 ) -> Result<(), String> {
     if phase != "focus" {
-        // Breaks are part of the method, not study time.
         return Ok(());
     }
     let minutes = ((finished_at - started_at).max(0)) / 60_000;
@@ -784,7 +733,6 @@ pub fn focus_session_add(
     })
 }
 
-/// Focus minutes per day since `since`, for the analytics view.
 #[tauri::command]
 pub fn focus_minutes(app: AppHandle, db: State<'_, StudyDb>, since: i64) -> Result<Vec<(i64, i64)>, String> {
     with_db(&app, &db, |c| {
@@ -806,8 +754,6 @@ mod tests {
         c
     }
 
-    /// Only finished focus sessions count as study, and the activity feed
-    /// has to see them alongside everything else.
     #[test]
     fn focus_sessions_are_recorded_and_show_up_in_activity() {
         let c = mem();

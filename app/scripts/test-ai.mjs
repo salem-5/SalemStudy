@@ -1,10 +1,3 @@
-/**
- * Run the Salem AI runtime's own tests.
- *
- * They need an interpreter with smolagents, which means the app's managed
- * virtualenv (built by AI settings → Install). WA_PYTHON overrides it, which
- * is how you run them against a scratch environment.
- */
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';

@@ -1,24 +1,3 @@
-"""Run the real AI runtime against the real API, end to end.
-
-`scripts/test-ai.mjs` runs the runtime's own tests, and those script the
-model's replies — which is why they stayed green through a bug that had every
-AI feature in the app failing: the API was rejecting the request before it
-ever reached a model. This does the other half. It starts the actual
-`salem_ai` process with the app's own interpreter and answers its calls the
-way `salem.rs` does, except that `model.complete` really goes to DeepSeek with
-the key from the app's config.
-
-It spends tokens, so it is not part of `npm test`. Run it after touching
-anything about the shape of a request — the model adapter, the message
-conversion, the tool specs — or whenever the AI has gone quiet in a way the
-unit tests cannot see.
-
-    python3 scripts/live-ai.py            # every case
-    python3 scripts/live-ai.py chat       # just one
-
-Each case prints the request, what came back, and whether the run completed.
-"""
-
 from __future__ import annotations
 
 import json
@@ -57,13 +36,8 @@ if not Path(PYTHON).exists():
     sys.exit(f"No interpreter at {PYTHON}. Open AI settings -> Install, or set WA_PYTHON.")
 
 
-# --------------------------------------------------------------------- the API
-
 
 def for_deepseek(messages: list) -> list:
-    """The same flattening `salem.rs` does: smolagents gives every message an
-    array of content parts, and only a user message with an image may keep
-    that shape."""
     out = []
     for message in messages:
         message = dict(message)
@@ -113,7 +87,6 @@ def complete(args: dict) -> dict:
     say("  " + (f"called {', '.join(c['function']['name'] for c in calls)}" if calls
                 else repr(str(message.get("content"))[:120])))
     usage = parsed.get("usage") or {}
-    # Exactly the shape `shape()` in salem.rs produces.
     return {
         "content": message.get("content") or "",
         "reasoning": message.get("reasoning_content") or "",
@@ -127,8 +100,6 @@ def complete(args: dict) -> dict:
         },
     }
 
-
-# ----------------------------------------------------------------- the sandbox
 
 WRAPPER = textwrap.dedent("""
     import json, sys, io, traceback
@@ -150,7 +121,6 @@ WRAPPER = textwrap.dedent("""
 
 
 def sandbox(code: str) -> dict:
-    """A real interpreter, capped the way the app's sandbox caps one."""
     say(f"python {code.strip()[:90]!r}")
     with tempfile.TemporaryDirectory() as tmp:
         job, result, script = f"{tmp}/job.json", f"{tmp}/out.json", f"{tmp}/run.py"
@@ -165,8 +135,6 @@ def sandbox(code: str) -> dict:
     say(f"  ok={value['ok']} {value['stdout'][:90]!r}")
     return value
 
-
-# ------------------------------------------------------------------- the tools
 
 TOOLS = [
     {"name": "list_sources", "description": "List the study sources in the current notebook.",
@@ -201,8 +169,6 @@ def invoke(args: dict):
         return {"result": sandbox(payload.get("code") or "")}
     raise RuntimeError(f"no tool called {name}")
 
-
-# ---------------------------------------------------------------- the run cases
 
 BASE = {
     "agent": "chat", "system": "You are helping with a medicine course.",
@@ -240,8 +206,6 @@ CASES: dict[str, dict] = {
     },
 }
 
-
-# ----------------------------------------------------------------------- the run
 
 VERBOSE = os.environ.get("SALEM_VERBOSE") == "1"
 

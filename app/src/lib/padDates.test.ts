@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { groupLabel, groupNotes } from './padDates.ts';
 
-const now = new Date(2026, 8, 24, 15, 0).getTime(); // 24 Sep 2026, 15:00
+const now = new Date(2026, 8, 24, 15, 0).getTime();
 const at = (y: number, m: number, d: number, h = 12) => new Date(y, m, d, h).getTime();
 
 describe('grouping notes by when they were last changed', () => {

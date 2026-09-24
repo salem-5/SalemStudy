@@ -1,10 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
 
-// ---------------------------------------------------------------------------
-// Token usage, persisted locally per assignment and per question. The numbers
-// come straight from DeepSeek's `usage` object on each chat completion.
-// ---------------------------------------------------------------------------
-
 export type Agg = {
   prompt: number;
   completion: number;
@@ -49,7 +44,6 @@ export function addUsage(agg: Agg, usage: unknown): Agg {
   };
 }
 
-// DeepSeek off-peak prices, USD per 1M tokens (peak is double).
 const RATES: Record<ModelBucket, { hit: number; miss: number; out: number }> = {
   flash: { hit: 0.003, miss: 0.15, out: 0.6 },
   pro: { hit: 0.022, miss: 0.66, out: 1.98 },
@@ -97,7 +91,6 @@ export function useUsage() {
     try {
       localStorage.setItem(KEY, JSON.stringify(map));
     } catch {
-      /* storage full or blocked */
     }
   }, [map]);
 

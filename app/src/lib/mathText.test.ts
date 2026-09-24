@@ -8,7 +8,6 @@ const typesets = (tex: string) => {
 };
 
 describe('maths as models write it', () => {
-  // Every one of these came out of a real quiz and was shown in red.
   it('draws a gap inside the maths as a line instead of failing', () => {
     assert.ok(typesets('(0, 0, _____)'));
     assert.ok(typesets('\\mathrm{comp}_{\\mathbf{a}}\\mathbf{b} = \\frac{\\mathbf{a}\\cdot\\mathbf{b}}{_____}'));

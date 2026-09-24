@@ -4,45 +4,24 @@ import { studyApi } from '../../study/api';
 import { dispatch, answerTool, registry, type ToolEnv } from './tools';
 import { toSpec, type AgentKind, type RunMode, type SalemEvent, type SalemResult, type SalemTool } from './types';
 
-/**
- * The Salem AI runtime, from the app's side.
- *
- * This is the only door to the AI. A feature says which agent it wants, what
- * the tools may touch and what shape the answer should be; it gets execution
- * states while the work happens and a result at the end. Whether that took one
- * completion or a dozen agent steps with sub-agents and Python in between is
- * the runtime's business, not the caller's.
- */
-
 export type RunOptions = {
   agent: AgentKind;
-  /** The extra system text for this feature, on top of the agent's own. */
   system?: string;
   messages: { role: 'user' | 'assistant' | 'system'; content: unknown }[];
-  /** Ties a long task to state that survives interruptions. */
   taskId?: string;
   objective?: string;
   mode?: RunMode;
   thinking?: boolean;
   model?: string;
-  /** Which sub-agents this run may delegate to. Omit for the agent's own
-   *  set; a narrower list is how a caller declines to pay for delegation it
-   *  does not need. */
   subagents?: string[];
-  /** Restrict the run to these tools, by name. */
   allow?: string[];
-  /** Attachment ids and source ids the sandbox may see. */
   files?: number[];
   sources?: number[];
-  /** Ask for schema-validated data instead of prose. */
   schema?: unknown;
   budget?: Partial<Record<'seconds' | 'steps' | 'toolCalls' | 'pythonCalls' | 'subagents' | 'subagentDepth' | 'tokens', number>>;
-  /** Usage tag: where the tokens get booked. */
   feature?: string;
   env: ToolEnv;
-  /** A chat to save captured figures into, when Python draws any. */
   conversationId?: number;
-  /** Supply the id when the caller needs to cancel; otherwise one is made. */
   run?: string;
   onEvent?: (event: SalemEvent) => void;
 };
@@ -50,9 +29,7 @@ export type RunOptions = {
 export type RuntimeStatus = {
   ready: boolean;
   error: string | null;
-  /** What Python printed on its way out, when it did not start. */
   details: string | null;
-  /** The interpreter the running process was started with. */
   interpreter: string | null;
   hello: { version?: string; smolagents?: string; python?: string; executable?: string; error?: string } | null;
   nativeTools: string[];
@@ -64,10 +41,6 @@ export const runtimeTelemetry = (since?: number) => invoke<unknown>('salem_telem
 export const clearTaskState = (taskId: string) => invoke<void>('salem_task_clear', { taskId });
 export const cancelRun = (run: string) => invoke<void>('salem_cancel', { run }).catch(() => {});
 
-// ---------------------------------------------------------------------------
-// The one set of listeners
-// ---------------------------------------------------------------------------
-
 type Live = {
   tools: SalemTool[];
   onEvent: (event: SalemEvent) => void;
@@ -77,7 +50,6 @@ type Live = {
 const live = new Map<string, Live>();
 let wired: Promise<UnlistenFn[]> | null = null;
 
-/** One listener per channel for the whole app, fanned out by run id. */
 function wire(): Promise<UnlistenFn[]> {
   wired ??= Promise.all([
     listen<{ run: string; event: SalemEvent }>('salem://event', (e) => {
@@ -90,8 +62,6 @@ function wire(): Promise<UnlistenFn[]> {
       const { call, run, name, args } = e.payload;
       const entry = live.get(run);
       if (!entry) {
-        // The run is gone (cancelled, or the view unmounted). Say so, rather
-        // than leaving the runtime waiting on an answer that cannot come.
         void answerTool(call, false, null, 'that request is no longer running');
         return;
       }
@@ -103,10 +73,6 @@ function wire(): Promise<UnlistenFn[]> {
   return wired;
 }
 
-// ---------------------------------------------------------------------------
-// Running
-// ---------------------------------------------------------------------------
-
 export async function runSalem(options: RunOptions): Promise<SalemResult & { run: string }> {
   const run = options.run ?? crypto.randomUUID();
   const tools = registry(options.env);
@@ -117,8 +83,6 @@ export async function runSalem(options: RunOptions): Promise<SalemResult & { run
     tools,
     onEvent: (event) => options.onEvent?.(event),
     onFigures: (captured) => {
-      // Saved so the reply can show them; a failure here loses a picture, not
-      // the answer.
       if (options.conversationId == null) return;
       for (const figure of captured) {
         void studyApi

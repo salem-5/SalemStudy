@@ -1,45 +1,20 @@
-/**
- * Pointing the assistant at something on screen.
- *
- * A student reading a question, a card or their own notes wants to ask about
- * *that* — not to describe it again in a chat box. A reference is that act of
- * pointing: a short excerpt of what they selected, plus enough of a locator
- * that the assistant can go and fetch the rest of it and what surrounds it.
- *
- * It is deliberately small and serialisable, so it can be carried through the
- * UI, shown as a chip, and written into the briefing the model reads.
- */
-
 export type ReferenceKind = 'note' | 'quiz' | 'card' | 'source' | 'chat';
 
 export type Reference = {
   id: string;
   kind: ReferenceKind;
-  /** What to call it on the chip: "Cell structure", "Question 3". */
   label: string;
-  /** The second line of the chip: "your note", "Convergence tests". */
   detail?: string;
-  /** Exactly what the student selected. Empty when they referenced the whole thing. */
   excerpt: string;
-  /**
-   * The chat was opened *about* this, and its briefing already spells it out
-   * in full. The chip is then only so the student can see what went across;
-   * describing it again would send the same question twice.
-   */
   briefed?: boolean;
-  /** The material itself, fetched before the chat opens (see `resolve`). */
   content?: {
-    /** What it is: "Question 3 of \u201cConvergence tests\u201d". */
     title: string;
-    /** The whole thing the excerpt came from, and what surrounds it. */
     body: string;
   };
-  /** Where it came from, so the assistant can read around it. */
   locator: {
     notebookId?: number | null;
     noteId?: number;
     quizId?: number;
-    /** 0-based. */
     questionIndex?: number;
     deckId?: number;
     cardId?: number;
@@ -75,17 +50,6 @@ const KIND_WORD: Record<ReferenceKind, string> = {
   chat: 'an earlier message',
 };
 
-/**
- * What the model is told about what was pointed at.
- *
- * The material comes with it. A highlighted line is almost never the whole
- * story, and the first version of this handed over the line plus directions
- * for finding the rest — which cost a tool call, sometimes several, before
- * the assistant could start on the actual question. So the surrounding note,
- * question, card or page is fetched while the sheet opens (`resolve`) and
- * written in here. The directions stay only as a fallback, for a reference
- * whose material could not be read.
- */
 export function describeReferences(references: Reference[]): string {
   const describe = references.filter((r) => !r.briefed);
   if (!describe.length) return '';
@@ -111,7 +75,6 @@ export function describeReferences(references: Reference[]): string {
   return lines.join('\n');
 }
 
-/** How to go and read the rest of it, when it could not be fetched here. */
 function fetchInstruction(ref: Reference): string {
   const { noteId, quizId, questionIndex, deckId, sourceId, unit } = ref.locator;
   if (noteId !== undefined) return `Read the whole note with read_note(noteId: ${noteId}).`;
@@ -129,7 +92,6 @@ function fetchInstruction(ref: Reference): string {
   return '';
 }
 
-/** A short tag for the first message, so the thread says what it was about. */
 export const referenceTag = (references: Reference[]): string | undefined => {
   if (!references.length) return undefined;
   const first = references[0];
@@ -137,6 +99,5 @@ export const referenceTag = (references: Reference[]): string | undefined => {
   return `${first.label}${rest > 0 ? ` +${rest}` : ''}`;
 };
 
-/** The sources a reference lets the run read, so a notebook stays bounded. */
 export const referencedSources = (references: Reference[]): number[] =>
   [...new Set(references.map((r) => r.locator.sourceId).filter((id): id is number => typeof id === 'number'))];

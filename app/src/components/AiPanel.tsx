@@ -57,7 +57,6 @@ function AnswerList({ answers, boxes }: { answers: Record<string, unknown>; boxe
   );
 }
 
-/** A sandboxed Python run: the snippet, and its output once it finishes. */
 function PythonEntry({ e }: { e: ChatEntry }) {
   const [open, setOpen] = useState(false);
   const tone = e.running ? 'run' : e.tone === 'bad' ? 'bad' : 'ok';
@@ -151,7 +150,6 @@ export function AiPanel({ solver, question, questions, open, onOpenSettings, onC
       .catch(() => { if (alive) setBalance(null); })
       .finally(() => { if (alive) setBalBusy(false); });
     return () => { alive = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, cfg?.hasKey]);
 
   const sendChat = () => {
@@ -323,11 +321,6 @@ function BalanceRow({ onChanged }: { onChanged?: () => void }) {
   );
 }
 
-/**
- * The Python sandbox: what is installed, and the one button that installs it.
- * The environment is the app's own virtualenv, so nothing on the machine's
- * Python is touched.
- */
 function PythonSection({ cfg, patch, onChanged, solverOn }: {
   solverOn: boolean;
   cfg: { enabled: boolean; auto: boolean; path: string; timeout: number; maxCalls: number };
@@ -344,7 +337,6 @@ function PythonSection({ cfg, patch, onChanged, solverOn }: {
   };
   useEffect(refresh, []);
   useEffect(() => {
-    // Outside Tauri (browser dev mode) there is no event bus; ignore it.
     const un = onPythonProgress((p) => setLine(p.line)).catch(() => null);
     return () => { void un.then((f) => f?.()); };
   }, []);
@@ -354,10 +346,8 @@ function PythonSection({ cfg, patch, onChanged, solverOn }: {
     setErr(null);
     setLine('Starting…');
     try {
-      // The interpreter override has to be on disk before setup reads it.
       await setAiConfig({ pythonPath: cfg.path });
       setStatus(await pythonSetup(repair));
-      // Whatever was installed only reaches the AI runtime after it restarts.
       await invoke('salem_restart').catch(() => {});
       onChanged();
     } catch (e) {
@@ -588,8 +578,6 @@ const FEATURE_LABEL: Record<string, string> = {
   quiz: 'Quizzes', sources: 'Reading sources', overview: 'Notebook overviews', other: 'Other',
 };
 
-/** Closing the window hides Salem to the tray (on by default), so tab mode
- *  and anything still being written keep running. */
 function TrayToggle() {
   const [on, setOn] = useState<boolean | null>(null);
   useEffect(() => { getAiConfig().then((c) => setOn(c.closeToTray)).catch(() => {}); }, []);
@@ -656,14 +644,6 @@ function ThemePicker() {
   );
 }
 
-/**
- * How the AI runtime has actually been behaving.
- *
- * Counts and durations only — never what was asked or answered. This is the
- * page to look at when the AI "feels broken": it says whether tools are
- * failing, whether runs are being retried, and whether the runtime can even
- * start.
- */
 function RuntimeSection() {
   const [health, setHealth] = useState<RuntimeStatus | null>(null);
   const [stats, setStats] = useState<RuntimeStats | null>(null);
@@ -748,8 +728,6 @@ function RuntimeSection() {
           disabled={busy}
           onClick={async () => {
             setBusy(true);
-            // Restarting picks up a changed interpreter or a reinstalled
-            // smolagents without closing the app.
             await restartRuntime().catch(() => {});
             await runtimeStatus().then(setHealth).catch(() => {});
             setBusy(false);
@@ -771,7 +749,6 @@ type RuntimeStats = {
   byFeature: { feature: string; runs: number; failed: number; avgDurationMs: number }[];
 };
 
-/** Every AI call the app makes, totalled: solver, chats, notes, cards, quizzes, reading sources. */
 function UsageSection() {
   const [u, setU] = useState<UsageSummary | null>(null);
   const [confirm, setConfirm] = useState(false);
@@ -818,7 +795,6 @@ function UsageSection() {
   );
 }
 
-/** Custom instructions for the chats (not the solver). */
 function PersonalSection() {
   const p = usePersonal();
   return (
@@ -846,7 +822,6 @@ function PersonalSection() {
   );
 }
 
-/** What the chats have learned about the student: see it, fix it, delete it. */
 function MemorySection() {
   const p = usePersonal();
   const [state, setState] = useState<MemoryState | null>(null);
@@ -919,7 +894,6 @@ function MemorySection() {
   );
 }
 
-/** Export everything to one file, import one (replacing everything), or start over. */
 function DataSection() {
   const [withSettings, setWithSettings] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);

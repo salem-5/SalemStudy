@@ -1,27 +1,3 @@
-//! Tab mode: Salem as a page in the browser, not only as a window.
-//!
-//! The desktop app serves its own UI on `127.0.0.1`, so it can sit in a tab
-//! next to the student's lecture notes and their email. It is the *same*
-//! Salem: the same SQLite file, the same AI runtime, the same settings and the
-//! same state, because the tab does not get its own backend — it talks to the
-//! one that is already running.
-//!
-//! ```text
-//!   browser tab ──POST /rpc──▶ this server ──event──▶ desktop webview
-//!        ▲                          ▲                       │
-//!        └──── GET /events (SSE) ───┴──── tab_mode_reply ────┘
-//! ```
-//!
-//! Relaying through the desktop webview rather than re-implementing every
-//! command means the two never drift apart: a command the app gains works in
-//! the tab the same day.
-//!
-//! **Access.** Anything on the machine can reach a loopback port, so the
-//! server is useless without the token it prints in the URL: `/rpc` and
-//! `/events` refuse every request that does not carry it, and a request with a
-//! website's `Origin` is refused whatever it carries, so a page the student
-//! happens to have open cannot drive their study data.
-
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -38,22 +14,12 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::{oneshot, Notify};
 
-/// Where tab mode listens. The port is the first free one from here up, so a
-/// second copy of the app does not fail to start.
 pub const HOST: &str = "127.0.0.1";
 const FIRST_PORT: u16 = 8790;
 const PORT_TRIES: u16 = 12;
-/// A slow tool or a long agent run still has to answer eventually.
 const RPC_TIMEOUT: Duration = Duration::from_secs(900);
-/// How long an event poll parks before returning empty. Short enough that a
-/// closed tab is noticed, long enough not to be a busy loop.
 const POLL_TIMEOUT: Duration = Duration::from_secs(25);
-/// Events kept for a tab that is briefly between polls.
 const EVENT_BACKLOG: usize = 512;
-/// The largest command a tab may send. Uploading a source sends the file
-/// itself, base64 inside the JSON, so this has to fit the app's 200 MB source
-/// cap plus a third for the encoding — axum's 2 MB default turned away almost
-/// every lecture PDF.
 const RPC_BODY_LIMIT: usize = 300 * 1024 * 1024;
 
 #[derive(Clone)]
@@ -65,20 +31,15 @@ struct Server {
 struct Running {
     port: u16,
     token: String,
-    /// Dropping this stops the server.
     shutdown: Option<oneshot::Sender<()>>,
 }
 
 #[derive(Default)]
 pub struct TabMode {
     running: Mutex<Option<Running>>,
-    /// Calls waiting on the desktop webview.
     pending: Mutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>,
     next_id: AtomicU64,
-    /// Recent events, numbered, so a tab can ask for everything since the
-    /// last one it saw and miss nothing between two polls.
     feed: Mutex<Feed>,
-    /// Wakes every parked poll the moment an event arrives.
     arrived: Arc<Notify>,
 }
 
@@ -97,10 +58,6 @@ impl Feed {
         }
     }
 
-    /// What a tab's poll gets. A tab asking for the first time (`since` 0)
-    /// starts from now: it is handed the current sequence number and nothing
-    /// else. Replaying the backlog gave a new tab the last session's
-    /// "tab mode was turned off", and it shut itself the moment it opened.
     fn poll(&self, since: u64) -> (Vec<Value>, u64, bool) {
         if since == 0 {
             return (Vec::new(), self.next_seq, false);
@@ -108,15 +65,10 @@ impl Feed {
         self.since(since)
     }
 
-    /// Forget everything: a new tab-mode session starts with an empty feed.
     fn clear(&mut self) {
         self.events.clear();
     }
 
-    /// Everything after `since`, and the sequence number to ask from next.
-    ///
-    /// A tab that has been away longer than the backlog is told where the
-    /// feed actually starts rather than being handed a silent gap.
     fn since(&self, since: u64) -> (Vec<Value>, u64, bool) {
         let oldest = self.events.front().map(|(seq, _)| *seq).unwrap_or(self.next_seq + 1);
         let missed = since > 0 && since + 1 < oldest;
@@ -125,10 +77,6 @@ impl Feed {
     }
 }
 
-/// Send an event to the desktop window *and* to every open tab.
-///
-/// The webview gets it through Tauri as before; tabs get it over SSE. Features
-/// call this instead of `emit` for anything a tab needs to see.
 pub fn notify(app: &AppHandle, event: &str, payload: Value) {
     let _ = app.emit(event, payload.clone());
     let Some(state) = app.try_state::<TabMode>() else { return };
@@ -138,14 +86,8 @@ pub fn notify(app: &AppHandle, event: &str, payload: Value) {
     if let Ok(mut feed) = state.feed.lock() {
         feed.push(json!({ "event": event, "payload": payload }));
     }
-    // Everything parked on a poll is released at once; a tab that is between
-    // polls picks the event up by sequence number instead.
     state.arrived.notify_waiters();
 }
-
-// ---------------------------------------------------------------------------
-// The server
-// ---------------------------------------------------------------------------
 
 fn router(server: Server) -> Router {
     Router::new()
@@ -156,8 +98,6 @@ fn router(server: Server) -> Router {
         .with_state(server)
 }
 
-/// A page on the web must not be able to drive the app through the student's
-/// own browser, whatever else it knows.
 fn from_a_website(headers: &HeaderMap) -> bool {
     headers
         .get(header::ORIGIN)
@@ -180,8 +120,6 @@ fn authorised(token: &str, headers: &HeaderMap) -> bool {
                 .and_then(|v| v.strip_prefix("Bearer "))
         })
         .unwrap_or("");
-    // Constant-time-ish: compare every byte rather than bailing on the first
-    // mismatch, so the token cannot be guessed a character at a time.
     let expected = token.as_bytes();
     let given = given.as_bytes();
     given.len() == expected.len() && given.iter().zip(expected).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0
@@ -198,7 +136,6 @@ async fn ping(State(server): State<Server>, headers: HeaderMap) -> Response {
     Json(json!({ "ok": true, "app": "salem" })).into_response()
 }
 
-/// One command, run by the desktop webview on the tab's behalf.
 async fn rpc(State(server): State<Server>, headers: HeaderMap, Json(body): Json<Value>) -> Response {
     if !authorised(&server.token, &headers) {
         return denied();
@@ -232,12 +169,6 @@ async fn rpc(State(server): State<Server>, headers: HeaderMap, Json(body): Json<
     }
 }
 
-/// Everything the app has emitted since the tab last asked.
-///
-/// A long poll rather than a stream: it is the pattern the bridge already
-/// uses, it needs nothing the app does not already depend on, and a sequence
-/// number makes a dropped connection harmless — the tab just asks again from
-/// where it was.
 async fn events(
     State(server): State<Server>,
     Query(query): Query<HashMap<String, String>>,
@@ -257,9 +188,7 @@ async fn events(
     };
 
     let (mut events, mut seq, missed) = answer(&state);
-    // A first poll answers at once, so the tab knows where "now" is.
     if events.is_empty() && !missed && since > 0 {
-        // Nothing yet: park until something happens or the poll ages out.
         let _ = tokio::time::timeout(POLL_TIMEOUT, arrived.notified()).await;
         let fresh = answer(&state);
         events = fresh.0;
@@ -268,13 +197,10 @@ async fn events(
     Json(json!({ "events": events, "seq": seq, "missed": missed })).into_response()
 }
 
-/// The app's own UI, straight out of the bundle the window is running.
 async fn asset(State(server): State<Server>, uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
     let wanted = if path.is_empty() { "index.html" } else { path };
     let resolver = server.app.asset_resolver();
-    // Anything that is not a file is a route: hand back the page and let the
-    // app work out what to show, the way a single-page app expects.
     let found = resolver.get(wanted.to_string()).or_else(|| resolver.get("index.html".into()));
     let Some(found) = found else {
         return (StatusCode::NOT_FOUND, "Salem's interface is not bundled in this build.").into_response();
@@ -282,8 +208,6 @@ async fn asset(State(server): State<Server>, uri: Uri) -> Response {
     let mime = found.mime_type.clone();
     let mut response = Response::builder()
         .header(header::CONTENT_TYPE, mime)
-        // The UI is versioned with the app, and the page must pick up a new
-        // build rather than serving a stale one out of the browser cache.
         .header(header::CACHE_CONTROL, "no-cache")
         .body(Body::from(found.bytes))
         .unwrap();
@@ -291,12 +215,6 @@ async fn asset(State(server): State<Server>, uri: Uri) -> Response {
     response
 }
 
-// ---------------------------------------------------------------------------
-// Commands
-// ---------------------------------------------------------------------------
-
-/// 256 bits from the operating system. Nothing about the token may be
-/// guessable from the time, the port or a previous session.
 fn make_token() -> String {
     let mut bytes = [0u8; 32];
     getrandom::fill(&mut bytes).expect("the operating system has no randomness");
@@ -359,7 +277,6 @@ pub fn tab_mode_start(app: AppHandle) -> Result<Value, String> {
 
     {
         let state = app.state::<TabMode>();
-        // Nothing from a previous session reaches this one's tabs.
         if let Ok(mut feed) = state.feed.lock() { feed.clear(); }
         *state.running.lock().unwrap() = Some(Running { port, token, shutdown: Some(stop_tx) });
     }
@@ -370,9 +287,6 @@ pub fn tab_mode_start(app: AppHandle) -> Result<Value, String> {
 pub fn tab_mode_stop(app: AppHandle) -> Value {
     {
         let state = app.state::<TabMode>();
-        // Open tabs are told first, while the server can still answer their
-        // poll, and the server goes a moment later — stopping it at once cut
-        // the poll that was carrying the news, and the tab never heard.
         if let Ok(mut feed) = state.feed.lock() {
             feed.push(json!({ "event": "tabmode://closed", "payload": {} }));
         }
@@ -390,7 +304,6 @@ pub fn tab_mode_stop(app: AppHandle) -> Value {
     tab_mode_status(app)
 }
 
-/// The desktop webview's answer to a command a tab asked for.
 #[tauri::command]
 pub fn tab_mode_reply(app: AppHandle, id: u64, ok: bool, data: Option<Value>, error: Option<String>) {
     let waiting = app.state::<TabMode>().pending.lock().unwrap().remove(&id);
@@ -432,7 +345,6 @@ mod tests {
         assert!(from_a_website(&headers(&[("origin", "https://example.com")])));
         assert!(from_a_website(&headers(&[("origin", "http://evil.test")])));
         assert!(!from_a_website(&headers(&[("origin", "http://127.0.0.1:8790")])));
-        // curl and the tab's own fetch send no Origin at all.
         assert!(!from_a_website(&HeaderMap::new()));
     }
 
@@ -445,7 +357,6 @@ mod tests {
         assert!(!authorised(token, &headers(&[("x-salem-token", "secret-tokenX")])));
         assert!(!authorised(token, &headers(&[("x-salem-token", "")])));
         assert!(!authorised(token, &HeaderMap::new()));
-        // The token is not enough on its own: a website's Origin is refused.
         assert!(!authorised(token, &headers(&[("x-salem-token", token), ("origin", "https://example.com")])));
     }
 
@@ -472,8 +383,6 @@ mod tests {
         let mut feed = Feed::default();
         feed.push(json!({ "event": "ai://stream", "payload": {} }));
         feed.push(json!({ "event": "tabmode://closed", "payload": {} }));
-        // Tab mode on again: the feed is cleared, and a tab opening now
-        // starts from the current sequence with nothing to replay.
         feed.clear();
         let (first, seq, missed) = feed.poll(0);
         assert!(first.is_empty(), "a new tab must not be told the old session closed");

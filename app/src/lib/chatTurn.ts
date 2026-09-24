@@ -1,17 +1,3 @@
-/**
- * One assistant turn.
- *
- * Normal chat is a plain streaming model call with tools — the loop in
- * `toolLoop.ts`. It answers from the first token, and a question that needs
- * one lookup costs one lookup.
- *
- * The agent is still here, and it is still the whole Salem runtime; it is
- * just not what every turn pays for. A turn earns it by behaving like a
- * demanding one: the model keeps coming back wanting more tools, round after
- * round, which is what importing a year's schedule out of a PDF looks like
- * and what asking a definition does not. At that point the work so far is
- * handed over and the agent takes the turn, in fast mode.
- */
 import { invoke } from '@tauri-apps/api/core';
 import { aiCancel, getAiConfig, type AiFeature, type ApiMessage } from './ai';
 import { formatResult, runPython } from './python';
@@ -22,13 +8,6 @@ import { registry, type ToolEnv } from './salem/tools';
 import type { AgentKind, ExecState, SalemEvent, SalemTool } from './salem/types';
 import { studyApi, type AppAction, type PythonRun, type Step } from '../study/api';
 
-/**
- * What each agent may touch, mirroring `agents.py`.
- *
- * It lives here now because this side does the choosing: the tool list goes
- * to the runtime as `allow`, so when a turn does escalate, the agent gets
- * exactly the tools the loop had and there is only one place that decides.
- */
 const SCOPES: Record<AgentKind, { scopes: string[]; readOnly: boolean }> = {
   chat: {
     scopes: ['study', 'schedule', 'notebooks', 'sources', 'notes', 'cards', 'quizzes',
@@ -47,7 +26,6 @@ const SCOPES: Record<AgentKind, { scopes: string[]; readOnly: boolean }> = {
   generation: { scopes: ['sources', 'notes', 'search', 'python'], readOnly: true },
 };
 
-/** How many rounds of tool calls a turn gets before it counts as demanding. */
 const ROUNDS_BEFORE_THE_AGENT = 4;
 
 export type ChatTurnOptions = {
@@ -58,7 +36,6 @@ export type ChatTurnOptions = {
   model: string;
   feature?: string;
   conversationId?: number;
-  /** Attachments of the whole thread, copied into every Python run. */
   files?: number[];
   sources?: number[];
   allow?: string[];
@@ -69,11 +46,8 @@ export type ChatTurnOptions = {
   onProgress: (progress: {
     steps: Step[]; runs: PythonRun[]; actions: AppAction[]; state: ExecState; stateDetail: string;
   }) => void;
-  /** How to abort the request in flight; null when there is none. The two
-   *  paths are cancelled differently, so the turn hands this out. */
   onRun: (abort: (() => void) | null) => void;
   cancelled: () => boolean;
-  /** What the reply has cost so far, each time it goes up. */
   onCost?: (usd: number) => void;
 };
 
@@ -88,23 +62,18 @@ export type TurnResult = {
   state: ExecState;
   degraded?: boolean;
   reason?: string;
-  /** What the whole turn cost, in USD. */
   cost: number;
 };
 
-/** The registry, filtered the way the chosen agent would filter it. */
 function permitted(all: SalemTool[], options: ChatTurnOptions): SalemTool[] {
   const rule = SCOPES[options.agent];
   return all.filter((tool) => {
     if (options.allow) return options.allow.includes(tool.name);
-    // A notebook's chat may not change the notebook's study material, but the
-    // student's Notes app is theirs to have written in from any chat.
     if (rule.readOnly && tool.mutating && !tool.scopes.includes('pad')) return false;
     return tool.scopes.some((scope) => rule.scopes.includes(scope));
   });
 }
 
-/** A registry tool as something the loop can call. */
 function asLoopTool(tool: SalemTool, options: ChatTurnOptions, say: (e: SalemEvent) => void): LoopTool {
   const required = Object.entries(tool.inputs).filter(([, spec]) => !spec.nullable).map(([key]) => key);
   const properties = Object.fromEntries(
@@ -121,8 +90,6 @@ function asLoopTool(tool: SalemTool, options: ChatTurnOptions, say: (e: SalemEve
     label: tool.label,
     parameters: { type: 'object', properties, ...(required.length ? { required } : {}) },
     async run(args) {
-      // The three the Rust side serves during an agent run are served here
-      // instead; everything else already knows how to run itself.
       if (tool.name === 'run_python') return runPythonTool(args, options, say);
       if (tool.name === 'web_search') {
         const hits = await invoke<unknown[]>('web_search', { query: String(args.query ?? ''), count: args.count ?? null });
@@ -152,7 +119,6 @@ async function runPythonTool(
   const figures: (string | null)[] = [];
   for (const figure of r.figures ?? []) {
     if (options.conversationId == null) continue;
-    // A failure here loses a picture, not the answer.
     const saved = await studyApi.attachmentAdd({
       conversationId: options.conversationId,
       kind: 'figure',
@@ -173,7 +139,6 @@ export async function runChatTurn(options: ChatTurnOptions): Promise<TurnResult>
 
   const all = registry(options.env);
   const tools = permitted(all, options);
-  // Every call this turn makes, the loop's and the agent's, adds up here.
   const meter = createMeter(options.onCost);
   const steps: Step[] = [];
   const runs: PythonRun[] = [];
@@ -199,7 +164,6 @@ export async function runChatTurn(options: ChatTurnOptions): Promise<TurnResult>
       emit();
       return;
     }
-    // Rendering Markdown and maths per token would freeze the window.
     timer ??= window.setTimeout(emit, 80);
   };
   const settle = () => {
@@ -283,9 +247,6 @@ export async function runChatTurn(options: ChatTurnOptions): Promise<TurnResult>
   }
 
   if (result.why === 'cap') {
-    // Four rounds in and still reaching for tools: this is the kind of turn
-    // the agent is for. What has already been worked out goes with it, so
-    // nothing is done twice.
     return agentic(options, result.messages, steps, runs, actions, say, flush, meter);
   }
 
@@ -301,7 +262,6 @@ export async function runChatTurn(options: ChatTurnOptions): Promise<TurnResult>
   };
 }
 
-/** Hand the turn to the Salem runtime, carrying over what the loop found. */
 async function agentic(
   options: ChatTurnOptions,
   sofar: ApiMessage[],
@@ -338,7 +298,6 @@ async function agentic(
     conversationId: options.conversationId,
     files: options.files,
     sources: options.sources,
-    // The loop and the agent get the same tools, decided in one place.
     allow: options.allow ?? permitted(registry(options.env), options).map((t) => t.name),
     thinking: options.thinking,
     taskId: options.taskId,

@@ -2,22 +2,13 @@ import { useSyncExternalStore } from 'react';
 import { fmtClock, pomodoroState, remainingOf } from './pomodoro';
 import type { SubjectNode } from '../study/api';
 
-/**
- * Personalisation for the chats, like custom instructions: who the student is,
- * how they like answers, and a tone preset. Kept on this machine only.
- */
-
 export type Tone = 'default' | 'concise' | 'detailed' | 'tutor' | 'friendly';
 
 export type Personal = {
-  /** What the assistant should know: course, level, goals. */
   about: string;
-  /** How to respond: free text, overrides the defaults. */
   instructions: string;
   tone: Tone;
-  /** Reason before answering in new chats (slower, better on hard problems). */
   think: boolean;
-  /** Let the chats save facts about the student, and read the saved ones. */
   memory: boolean;
 };
 
@@ -42,11 +33,10 @@ export function personal(): Personal {
 
 export function setPersonal(patch: Partial<Personal>) {
   cache = { ...personal(), ...patch };
-  try { localStorage.setItem(KEY, JSON.stringify(cache)); } catch { /* storage unavailable */ }
+  try { localStorage.setItem(KEY, JSON.stringify(cache)); } catch { }
   listeners.forEach((l) => l());
 }
 
-/** Re-read `keys` when the window or a tab changes them (lib/prefSync). */
 const onShared = (keys: string[], fn: () => void) => {
   if (typeof window === 'undefined') return;
   window.addEventListener('wa:prefs', (e) => {
@@ -57,7 +47,6 @@ onShared([KEY], () => { cache = null; listeners.forEach((l) => l()); });
 
 export const usePersonal = () => useSyncExternalStore((l) => { listeners.add(l); return () => listeners.delete(l); }, personal);
 
-/** The prompt section for this student, or '' when nothing is set. */
 export function personalPrompt(p: Personal = personal()): string {
   const parts: string[] = [];
   if (p.about.trim()) parts.push(`## About the student\n${p.about.trim()}`);
@@ -67,10 +56,6 @@ export function personalPrompt(p: Personal = personal()): string {
   return parts.join('\n\n');
 }
 
-/**
- * The memory section of the prompt: what the chats have learned about the
- * student, with ids so a fact can be updated or forgotten.
- */
 export function memoryPrompt(items: { id: number; text: string }[], canSave: boolean): string {
   const known = items.length
     ? `## What you remember about the student\nFacts from earlier conversations (and ones they added). Use them naturally to personalise answers: their courses, level, goals and preferences. Don't recite them or say "I remember that…" unless it matters.\n${items.map((m) => `- [${m.id}] ${m.text}`).join('\n')}`
@@ -88,7 +73,6 @@ Rules:
 - Save quietly alongside your answer; don't ask permission. When they explicitly say "remember…", save it and confirm in a few words.`;
 }
 
-/** What any assistant knows about "now": date, time, time zone, language, device. */
 export function nowPrompt(d = new Date()): string {
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const date = d.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
@@ -97,7 +81,6 @@ export function nowPrompt(d = new Date()): string {
   return `## Current context\nToday is ${date} (${d.toLocaleDateString('en-CA')}); the local time is ${time} (${tz}). The student's language setting is ${navigator.language}; they use SalemStudy on ${os}. Use this for anything about dates, deadlines, "today", "tomorrow" or how long until something.`;
 }
 
-/** The focus timer and its tasks, so the chat can fit its answers around them. */
 export function focusPrompt(): string {
   const p = pomodoroState();
   const open = p.tasks.filter((t) => !t.done).map((t) => t.text);
@@ -109,7 +92,6 @@ export function focusPrompt(): string {
 The Pomodoro timer is ${timer}. Tasks: ${open.length ? open.map((t, i) => `${i === 0 ? '(current) ' : ''}${t}`).join('; ') : 'none planned'}${done ? ` (${done} done)` : ''}.${p.status === 'running' && p.phase === 'focus' ? ' They are mid-session: keep answers focused on the task and brief unless asked for more.' : ''}`;
 }
 
-/** Their subjects and notebooks, with what each holds. */
 export function spacePrompt(tree: SubjectNode[]): string {
   if (!tree.length) return '## Study space\nNo subjects yet.';
   const lines = tree.map((s) => `- ${s.name}${s.syllabusName ? ' (syllabus added)' : ''}: ${s.notebooks.length ? s.notebooks.map((n) => `${n.name} [${n.sourceCount} sources, ${n.deckCount} decks, ${n.quizCount} quizzes, ${n.noteCount} notes]`).join('; ') : 'no notebooks'}`);

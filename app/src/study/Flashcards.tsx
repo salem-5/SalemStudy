@@ -13,21 +13,15 @@ import { SetItem, SetPage } from './StudySets';
 import { KindIcon } from './Sources';
 import { NOTE_PRESETS } from '../lib/prompts';
 
-// ------------------------------------------------------------ deck view
-
-/** One deck: play it, see its scores, and edit its cards. */
 export function DeckView({ deck, notebookId, onBack, onPlay, onChanged }: {
   deck: Deck;
   notebookId: number;
   onBack: () => void;
-  /** `practice` runs (missed cards only) are not saved as scores. */
   onPlay: (cards: Card[], title: string, practice: boolean) => void;
   onChanged: () => void;
 }) {
   const [cards, setCards] = useState<Card[] | null>(null);
   const [editing, setEditing] = useState<Card | 'new' | null>(null);
-  // Whether to shuffle is a habit, not a property of one deck: it is
-  // remembered once and applies everywhere.
   const [shuffle, setShuffle] = useState(() => loadPrefs<boolean>(SHUFFLE_KEY, true));
   useEffect(() => { savePrefs(SHUFFLE_KEY, shuffle); }, [shuffle]);
 
@@ -118,29 +112,19 @@ export function CardEditor({ card, deckId, onClose, onSaved }: { card: Card | nu
   );
 }
 
-// -------------------------------------------------------------- generate
-
 type GenMode = 'sources' | 'topic' | 'chat';
 
-/** What the dialog remembers per notebook and kind. Sources are stored as the
- *  ones switched off, so every source (including new ones) starts ticked. */
 type GenPrefs = {
   mode: GenMode;
   off: number[];
   focus: string;
-  /** No longer asked for: kept so older saved choices still load. */
   count?: number;
   instructions: string;
-  /** Decks and quizzes: how much of the material to cover. */
   size?: CardSize;
-  /** The order the student put the sources in, by id. */
   order?: number[];
-  /** Quizzes only; remembered per notebook like everything else here. */
   difficulty?: Difficulty | 'mixed';
   types?: QuestionType[];
-  /** Notes the student unticked as material. */
   notesOff?: number[];
-  /** Decks and quizzes: fast mode (on unless turned off). */
   fast?: boolean;
 };
 
@@ -160,10 +144,8 @@ const DIFFICULTIES = [
   { value: 'hard', label: 'Hard' },
 ];
 
-/** How the student likes to play decks — the same everywhere, every time. */
 const SHUFFLE_KEY = 'wa.decks.shuffle';
 
-/** The order a deck is played in: shuffled, unless the student turned that off. */
 export const playOrder = <T,>(cards: T[]): T[] =>
   (loadPrefs<boolean>(SHUFFLE_KEY, true) ? [...cards].sort(() => Math.random() - 0.5) : cards);
 
@@ -171,17 +153,14 @@ export function loadPrefs<T>(key: string, fallback: T): T {
   try {
     const saved = JSON.parse(localStorage.getItem(key) || 'null');
     if (saved === null || saved === undefined) return fallback;
-    // A plain value (shuffle on or off) is the value; spread into an object
-    // it came back as {}, which is truthy, so shuffle could never stay off.
     if (typeof fallback !== 'object' || fallback === null) return typeof saved === typeof fallback ? saved : fallback;
     return { ...fallback, ...saved };
   } catch { return fallback; }
 }
 export function savePrefs(key: string, value: unknown) {
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* ignore */ }
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { }
 }
 
-/** What each setting does, in the student's terms. */
 const sizeNote = (size: CardSize, one: 'card' | 'question') => {
   const [lo, hi] = CARD_BANDS[size];
   const range = one === 'card' ? `${size === 'fewer' ? `up to ${hi}` : `${lo}–${hi}`} cards, by how long your material is` : `exactly ${QUIZ_COUNT[size]} questions`;
@@ -192,7 +171,6 @@ const sizeNote = (size: CardSize, one: 'card' | 'question') => {
       : `Everything Standard covers, plus ${one}s that compare, connect and apply, still in page order. ${range[0].toUpperCase()}${range.slice(1)}.`;
 };
 
-/** Shared by decks, quizzes and notes: pick what to build from, and how thoroughly (or, for notes, how). */
 export function GenerateDialog({ kind, notebookId, sources, onClose, run, initialThread }: {
   kind: 'cards' | 'quiz' | 'notes';
   notebookId: number;
@@ -203,11 +181,6 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
 }) {
   const key = `wa.nb.${notebookId}.gen.${kind}`;
   const [prefs] = useState(() => loadPrefs<GenPrefs>(key, { mode: 'sources', off: [], focus: '', instructions: NOTE_PRESETS[0].text }));
-  /**
-   * The sources in the order they will be read: the numbers in their titles,
-   * or the order the student put them in here. A deck follows the lecture, so
-   * the lectures have to be in the right order first.
-   */
   const [order, setOrder] = useState<number[] | undefined>(prefs.order);
   const ready = useMemo(() => applyOrder(sources.filter((s) => s.status === 'ready'), order), [sources, order]);
   const move = (id: number, by: -1 | 1) => {
@@ -229,16 +202,12 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [thread, setThread] = useState<number | null>(initialThread ?? null);
   const [difficulty, setDifficulty] = useState<Difficulty | 'mixed'>(prefs.difficulty ?? 'mixed');
-  // Every type, unless the student narrowed it — an empty list saved by an
-  // older version meant "whatever suits", which is what all of them means now.
   const [types, setTypes] = useState<QuestionType[]>(prefs.types?.length ? prefs.types : QUIZ_TYPES.map((t) => t.type));
   const [fast, setFast] = useState(prefs.fast ?? true);
   const [size, setSize] = useState<CardSize>(prefs.size ?? 'standard');
-  /** The student's own notes count as material too, alongside the sources. */
   const [notes, setNotes] = useState<Note[]>([]);
   const [pickedNotes, setPickedNotes] = useState<Set<number>>(new Set());
 
-  // Remember the choices for next time (not the chat mode opened from a chat).
   useEffect(() => {
     if (initialThread) return;
     savePrefs(key, {
@@ -246,7 +215,7 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
       focus: mode === 'sources' ? prompt : prefs.focus, instructions, difficulty, types, size, order, fast,
       notesOff: notes.filter((n) => !pickedNotes.has(n.id)).map((n) => n.id),
     });
-  }, [key, mode, picked, prompt, instructions, difficulty, types, size, order, fast, notes, pickedNotes]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [key, mode, picked, prompt, instructions, difficulty, types, size, order, fast, notes, pickedNotes]);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -256,12 +225,10 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
     studyApi.notes(notebookId)
       .then((list) => {
         setNotes(list);
-        // Ticked by default, like the sources: this notebook's material is
-        // what the student meant by "from my material".
         setPickedNotes(new Set(list.filter((n) => !(prefs.notesOff ?? []).includes(n.id)).map((n) => n.id)));
       })
       .catch(() => {});
-  }, [notebookId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [notebookId]);
 
   const go = async () => {
     setBusy(true);
@@ -271,9 +238,6 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
       if (mode === 'sources') {
         setStatus('Reading your material…');
         const chosen = ready.filter((x) => picked.has(x.id));
-        // Decks and quizzes walk the pages in the order above — all of them,
-        // unless the instructions point at some — and follow the instructions. Notes are written in one go,
-        // from the passages that bear on what was asked.
         const hits = !picked.size
           ? []
           : kind !== 'notes'
@@ -296,8 +260,6 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
         if (!thread) throw new Error('Pick a chat.');
         src = { kind: 'chat', messages: await studyApi.chatMessages(thread) };
       }
-      // It carries on in the background, shown in the list it will land in,
-      // so the dialog gets out of the way at once.
       await run(src, setStatus, instructions, { difficulty, types, size, fast });
       onClose();
     } catch (e) {
@@ -460,7 +422,6 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
                     key={t.type}
                     className={`chip-btn${types.includes(t.type) ? ' on' : ''}`}
                     disabled={busy}
-                    // The last one cannot be switched off: a quiz of no kind of question.
                     onClick={() => setTypes((cur) => (cur.includes(t.type) ? (cur.length > 1 ? cur.filter((x) => x !== t.type) : cur) : [...cur, t.type]))}
                   >
                     {t.label}
@@ -483,12 +444,6 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
   );
 }
 
-// ---------------------------------------------------------------- player
-
-/**
- * Play a deck: one card at a time, click or Space flips it, then ✗ / ✓
- * (1 / 2, ← / →). At the end: the score, what was missed, play again.
- */
 export function DeckPlayer({ deckId, cards, title, notebookId, practice: startPractice = false, onClose, onFinished }: {
   deckId: number;
   cards: Card[];
@@ -498,14 +453,6 @@ export function DeckPlayer({ deckId, cards, title, notebookId, practice: startPr
   onClose: () => void;
   onFinished: () => void;
 }) {
-  /**
-   * A session that was left half-finished is picked up where it stopped.
-   *
-   * Only real (non-practice) runs are saved, and only against the deck as it
-   * is now: a card deleted meanwhile is dropped from the order, and a deck
-   * that has lost most of its cards starts fresh rather than replaying a
-   * session that no longer means anything.
-   */
   const resumed = useMemo(() => {
     if (startPractice) return null;
     const saved = loadDeckSession(deckId);
@@ -526,7 +473,6 @@ export function DeckPlayer({ deckId, cards, title, notebookId, practice: startPr
     resumed ? Object.entries(resumed.results).map(([id, r]) => ({ cardId: Number(id), correct: r.correct, elapsedMs: r.elapsedMs })) : [],
   );
   const [wasResumed, setWasResumed] = useState(!!resumed && (resumed.pos > 0));
-  /** The card the student has opened a chat about. */
   const [asking, setAsking] = useState<Card | null>(null);
   const started = useRef(resumed?.startedAt ?? Date.now());
   const shownAt = useRef(Date.now());
@@ -534,7 +480,6 @@ export function DeckPlayer({ deckId, cards, title, notebookId, practice: startPr
   const card = round[pos];
   const done = !card;
 
-  // Keep the live session on disk, so quitting mid-deck costs nothing.
   useEffect(() => {
     if (practice || done) return;
     saveDeckSession({
@@ -549,7 +494,6 @@ export function DeckPlayer({ deckId, cards, title, notebookId, practice: startPr
   useEffect(() => {
     if (!done || saved.current || practice || !results.length) return;
     saved.current = true;
-    // The run is over: the session has nothing left to resume.
     clearDeckSession(deckId);
     void studyApi.addDeckRun(deckId, started.current, results).then(onFinished).catch(() => {});
   }, [done, practice, results, deckId, onFinished]);
@@ -566,12 +510,6 @@ export function DeckPlayer({ deckId, cards, title, notebookId, practice: startPr
     }, 240);
   }, [card, flipped, leaving]);
 
-  /**
-   * Move without marking.
-   *
-   * Going back to re-read a card should not count as getting it right or
-   * wrong, so this only moves; only the grade buttons record anything.
-   */
   const goTo = useCallback((next: number) => {
     setPos(Math.max(0, Math.min(round.length, next)));
     setFlipped(false);
@@ -598,7 +536,6 @@ export function DeckPlayer({ deckId, cards, title, notebookId, practice: startPr
       if (e.key === 'Escape') { e.preventDefault(); onClose(); return; }
       if (done) return;
       if (e.code === 'Space' || e.key === 'Enter') { e.preventDefault(); setFlipped((f) => !f); return; }
-      // Shift + arrow moves without marking; a bare arrow still grades.
       if (e.shiftKey && e.key === 'ArrowLeft') { e.preventDefault(); goTo(pos - 1); return; }
       if (e.shiftKey && e.key === 'ArrowRight') { e.preventDefault(); goTo(pos + 1); return; }
       if (e.key === '1' || e.key === 'ArrowLeft') grade(false);

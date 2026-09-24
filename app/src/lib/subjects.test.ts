@@ -1,5 +1,3 @@
-/** Classifying a course, and what that changes about how it is taught. */
-
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
@@ -22,10 +20,8 @@ describe('classifying a course', () => {
   });
 
   it('puts biochemistry and organic chemistry with the life sciences', () => {
-    // They are taught as, and examined as, biology-adjacent courses.
     assert.equal(flavourOf('Biochemistry'), 'life');
     assert.equal(flavourOf('Organic Chemistry'), 'life');
-    // Plain chemistry stays with the calculating subjects.
     assert.equal(flavourOf('General Chemistry'), 'stem');
   });
 

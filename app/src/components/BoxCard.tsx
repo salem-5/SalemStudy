@@ -129,7 +129,6 @@ export function BoxCard({ box, draft, onChange, onNext }: Props) {
   );
 }
 
-/** Option content: WebAssign's label markup when it has any (images, math), else the text. */
 function OptionBody({ c }: { c: Choice }) {
   const rich = !!c.html && /<(img|math|table|span)/i.test(c.html);
   const ref = useRef<HTMLSpanElement>(null);

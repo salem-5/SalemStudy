@@ -1,15 +1,3 @@
-/**
- * Structural validation of generated data, on this side of the wire.
- *
- * Generation is a plain model call again, so the shape has to be checked
- * where the call is made. Deliberately small: it checks shape, required keys
- * and types, which is what actually goes wrong. Meaning is checked elsewhere
- * — a quiz answer by re-deriving it in Python, a card by reading it.
- *
- * It says *what* is wrong in words, because that sentence goes back to the
- * model as the retry instruction.
- */
-
 export type Schema = {
   type?: string;
   required?: string[];
@@ -22,10 +10,8 @@ export type Schema = {
 const kindOf = (v: unknown): string =>
   v === null ? 'null' : Array.isArray(v) ? 'array' : typeof v;
 
-/** The sentence goes back to the model, so it should read like one. */
 const a = (word: string) => (/^[aeiou]/i.test(word) ? `an ${word}` : `a ${word}`);
 
-/** The first JSON object or array in a reply, whatever else surrounds it. */
 export function parseJson(text: string): { value: unknown } | { problem: string } {
   const trimmed = text.trim();
   let start = trimmed.indexOf('{');
@@ -42,7 +28,6 @@ export function parseJson(text: string): { value: unknown } | { problem: string 
   }
 }
 
-/** '' when the value fits, otherwise a sentence saying what does not. */
 export function checkSchema(value: unknown, schema: Schema | undefined, path = '', optional = false): string {
   if (!schema || typeof schema !== 'object') return '';
   const where = path || 'the result';
@@ -73,9 +58,6 @@ export function checkSchema(value: unknown, schema: Schema | undefined, path = '
   }
   if (schema.type === 'string' || schema.type === 'number' || schema.type === 'integer' || schema.type === 'boolean') {
     const actual = kindOf(value);
-    // A number where text was asked for ("answer": 2 for an option index) or
-    // a number written as text is the same answer; the caller reads both. A
-    // whole pass thrown away over the quotes would be the real failure.
     const numeric = typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value));
     const ok = schema.type === 'integer'
       ? (typeof value === 'number' && Number.isInteger(value)) || (numeric && Number.isInteger(Number(value)))
@@ -85,9 +67,6 @@ export function checkSchema(value: unknown, schema: Schema | undefined, path = '
           ? actual === 'string' || actual === 'number' || actual === 'boolean'
           : actual === schema.type;
     if (!ok) return `${where} should be ${a(schema.type)}, got ${actual}`;
-    // An optional field with a value outside its list ("importance":
-    // "medium") is the reader's to drop, one item at a time; failing the
-    // shape here threw away a whole pass of questions over it.
     if (!optional && schema.enum && !schema.enum.includes(value) && !schema.enum.includes(String(value))) {
       return `${where} is ${JSON.stringify(value)}, which is not one of ${JSON.stringify(schema.enum)}`;
     }
@@ -95,7 +74,6 @@ export function checkSchema(value: unknown, schema: Schema | undefined, path = '
   return '';
 }
 
-/** Parse and check in one go. */
 export function fitsSchema(text: string, schema: Schema | undefined): { value: unknown } | { problem: string } {
   const parsed = parseJson(text);
   if ('problem' in parsed) return parsed;

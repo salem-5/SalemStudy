@@ -1,14 +1,9 @@
-//! What the AI has learned about the student, like ChatGPT's memory: short
-//! facts saved from conversations (or typed in Settings), read by every chat
-//! and cleaned up by the student in Settings.
-
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use super::{expect_one, now_ms, with_db, StudyDb};
 
-/// One fact stays short; the whole memory has a budget, shown as "% full".
 pub const MAX_FACT_CHARS: usize = 400;
 pub const CAPACITY_CHARS: usize = 12_000;
 
@@ -17,7 +12,6 @@ pub const CAPACITY_CHARS: usize = 12_000;
 pub struct Memory {
     pub id: i64,
     pub text: String,
-    /// "chat" (saved by the AI) or "user" (typed in Settings).
     pub source: String,
     pub created_at: i64,
     pub updated_at: i64,
@@ -45,7 +39,6 @@ fn clean(text: &str) -> Result<String, String> {
     Ok(t.chars().take(MAX_FACT_CHARS).collect())
 }
 
-/// Save a fact. The same fact twice is kept once; a full memory refuses new ones.
 pub fn add(conn: &Connection, text: &str, source: &str) -> Result<Memory, String> {
     let text = clean(text)?;
     let db = |e: rusqlite::Error| e.to_string();

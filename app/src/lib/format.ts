@@ -1,6 +1,5 @@
 import type { Box, BoxStatus, Question } from '../types';
 
-/** WebAssign sends "2026-09-19T23:59+0300"; Date wants "+03:00". */
 export const parseDue = (s: string) => new Date(s.replace(/([+-]\d\d)(\d\d)$/, '$1:$2'));
 
 export function relTime(d: Date): string {
@@ -26,7 +25,6 @@ export const STATUS_LABEL: Record<BoxStatus, string> = {
 export const attemptsLeft = (b: Box) =>
   b.part.maxSubmissions == null ? null : b.part.maxSubmissions - (b.part.submissions ?? 0);
 
-/** Worst-case status of a question, for the question strip. */
 export function questionStatus(q: Question): BoxStatus {
   const s = q.boxes.map((b) => b.status);
   if (!s.length) return 'unanswered';

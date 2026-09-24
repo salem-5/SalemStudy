@@ -1,15 +1,7 @@
 import { renderable } from './render';
 
-// Question HTML comes from WebAssign through the userscript (already cleaned
-// there). It is cleaned again here because it lands in a webview that can call
-// Tauri commands.
-
 const DROP = [
   'script, style, noscript, iframe, frame, object, embed, link, meta, base, form, button, input, select, textarea',
-  // WebAssign's grading badges and pad chrome; the app shows its own status.
-  // (.waMark itself is unwrapped, not dropped: on closed questions it wraps the choices.)
-  // MathType's accessibility overlay ("Press Space or Enter to edit this math answer"
-  // and its checkmark) must never survive.
   '.badgeWrap, .padMark, .mathtype-sr-only, .mathtype-overlay-trigger, [class*="mathtype-overlay"], .mathtype-help, .latex-source, .tooltip',
 ].join(', ');
 const URL_ATTRS = ['href', 'src', 'xlink:href', 'action', 'formaction', 'background', 'poster'];
@@ -40,26 +32,17 @@ function luminance(value: string): number | null {
 const dark = (v: string) => { const l = luminance(v); return l !== null && l < 0.45; };
 const light = (v: string) => { const l = luminance(v); return l !== null && l > 0.75; };
 
-// ---------------------------------------------------------------------------
-// watex (WebAssign's HTML math) draws brackets, radicals and vector arrows as
-// black GIFs sized by inline em values and positioned by its CSS. They render
-// wrong without that CSS and poorly on dark backgrounds, so rebuild them as
-// real glyphs that inherit color and scale with the text.
-// ---------------------------------------------------------------------------
-
 const DELIMS: Record<string, [string, string]> = {
   angle: ['⟨', '⟩'], paren: ['(', ')'], bracket: ['[', ']'], brace: ['{', '}'],
   bar: ['|', '|'], vert: ['|', '|'], dblbar: ['‖', '‖'], floor: ['⌊', '⌋'], ceil: ['⌈', '⌉'],
 };
 
-/** Height in em from an inline style like "height: 2.279em". */
 const emHeight = (el: Element | null) => {
   const m = /height:\s*([\d.]+)em/.exec(el?.getAttribute('style') ?? '');
   return m ? Number(m[1]) : null;
 };
 
 function rewriteWatex(root: HTMLElement, doc: Document) {
-  // ⟨ ( [ { | delimiters: <table class="watexparenleft"><td><img src=".../leftangle0.gif">
   root.querySelectorAll('table.watexparenleft, table.watexparenright').forEach((t) => {
     const img = t.querySelector('img');
     const m = /(left|right)(angle|paren|bracket|brace|dblbar|bar|vert|floor|ceil)\d*\w*\.gif/i.exec(img?.getAttribute('src') ?? '');
@@ -68,12 +51,10 @@ function rewriteWatex(root: HTMLElement, doc: Document) {
     const span = doc.createElement('span');
     span.className = `wx-delim wx-${m[1].toLowerCase()}`;
     span.textContent = DELIMS[m[2].toLowerCase()][m[1].toLowerCase() === 'left' ? 0 : 1];
-    // A delimiter glyph is ~1.15em tall at font-size 1em.
     span.style.fontSize = `${Math.max(1, h / 1.15).toFixed(2)}em`;
     t.replaceWith(span);
   });
 
-  // √: <table class="watexsqrt"><td class="watexsqrtradical"><img sqrt1a.gif></td><td class="watexsqrtradicand">…</td>
   root.querySelectorAll('table.watexsqrt').forEach((t) => {
     const radicand = t.querySelector('.watexsqrtradicandcontent') ?? t.querySelector('.watexsqrtradicand');
     if (!radicand) return;
@@ -91,7 +72,6 @@ function rewriteWatex(root: HTMLElement, doc: Document) {
     t.replaceWith(wrap);
   });
 
-  // Vector arrow over letters: <span class="watexoverrightarrowcomplex"><span content>AB</span><img arrowhead>
   root.querySelectorAll('.watexoverrightarrowcomplex').forEach((c) => {
     c.querySelectorAll('img').forEach((i) => i.remove());
     c.classList.add('wx-overarrow');
@@ -99,10 +79,6 @@ function rewriteWatex(root: HTMLElement, doc: Document) {
   });
 }
 
-/**
- * Closed/answered MathType boxes stay in the markup as disabled editors whose
- * rendered answer sits in .mtAnswer. Show just the answer.
- */
 function staticMathAnswers(root: HTMLElement, doc: Document) {
   root.querySelectorAll('.mathtype-wrapper, .mathtype').forEach((w) => {
     if (!w.isConnected) return;
@@ -117,11 +93,6 @@ function staticMathAnswers(root: HTMLElement, doc: Document) {
   });
 }
 
-/**
- * Closed questions keep their answers as disabled radios/checkboxes, often
- * wrapped in the grading mark (<span class="waMark mCorrect">). Show them as
- * read-only markers, with the chosen label colored by that grade.
- */
 function staticChoices(root: HTMLElement, doc: Document) {
   root.querySelectorAll('.badgeWrap').forEach((e) => e.remove());
   root.querySelectorAll<HTMLInputElement>('input[type="radio"], input[type="checkbox"]').forEach((inp) => {
@@ -155,7 +126,6 @@ export function sanitizeQuestionHtml(html: string): string {
         el.removeAttribute(a.name);
       }
     }
-    // An image whose URL we can't load would only show its alt text.
     if (el.tagName === 'IMG' && !el.getAttribute('src')) {
       el.remove();
       return;
@@ -166,7 +136,6 @@ export function sanitizeQuestionHtml(html: string): string {
       el.replaceWith(span);
       return;
     }
-    // Dark-on-dark fixes: inline black text and white backgrounds.
     if (el.style) {
       if (el.style.color && dark(el.style.color)) el.style.removeProperty('color');
       if (el.style.backgroundColor && light(el.style.backgroundColor)) el.style.removeProperty('background-color');
@@ -178,8 +147,6 @@ export function sanitizeQuestionHtml(html: string): string {
     if (bg && light(bg)) el.removeAttribute('bgcolor');
   });
 
-  // Frame every content image (figures, graphs, image choices); lib/images.ts
-  // then decides per image whether it needs dark-mode inversion.
   root.querySelectorAll('img').forEach((img) => {
     if (/\/watex\/img\//.test(img.getAttribute('src') ?? '') || img.closest('.qfig')) return;
     const fig = doc.createElement('span');
@@ -188,7 +155,6 @@ export function sanitizeQuestionHtml(html: string): string {
     fig.appendChild(img);
   });
 
-  // MathML Core in WebView2 lacks <mfenced>; rewrite each formula.
   root.querySelectorAll('math').forEach((m) => {
     const html2 = renderable(new XMLSerializer().serializeToString(m));
     if (!html2) return;

@@ -36,33 +36,13 @@ import { markFresh } from '../../lib/chatThreads';
 import { focusPrompt, memoryPrompt, nowPrompt, personalPrompt, spacePrompt, setPersonal, usePersonal } from '../../lib/personal';
 import { studyApi, type AppAction, type AttachmentInfo, type ChatMessage, type ChatThread, type PythonRun } from '../../study/api';
 
-/**
- * The chat used by the standalone Chat tab and by every notebook: the thread
- * UI comes from assistant-ui (running on an external store, so SQLite stays
- * the source of truth), the answers from the Salem AI runtime (lib/salem).
- *
- * The view knows nothing about how an answer was produced. It renders the
- * execution states the runtime reports — searching, running Python, asking a
- * sub-agent — in the order they happened, which is why a long agentic turn
- * reads as a sequence of steps instead of a spinner.
- */
-
 type UiMessage = ChatMessage & { pending?: boolean };
 
-/** A chat with no app tools: the notebook chat, and the standalone chat with
- *  App control switched off. Source tools still work — they come from the
- *  notebook and the source list, not from this. */
 const emptyEnv: ToolEnv = { tree: () => [], refresh: async () => [], open: () => {} };
 
 const TEXT_LIMIT = 40_000;
-/** Images are only re-sent for the last few turns; older ones are named. */
 const IMAGE_TURNS = 3;
 
-/**
- * The saved thread as the runtime should see it: attachment text inlined,
- * recent images attached, and every assistant reply carrying what it did, so
- * the agent knows what it already computed.
- */
 async function salemMessages(history: UiMessage[]): Promise<{ role: 'user' | 'assistant'; content: unknown }[]> {
   const out: { role: 'user' | 'assistant'; content: unknown }[] = [];
   const userTurns = history.map((m, i) => (m.role === 'user' ? i : -1)).filter((i) => i >= 0);
@@ -82,9 +62,6 @@ async function userContent(m: UiMessage, withImages: boolean): Promise<unknown> 
   const attachments = m.meta?.attachments ?? [];
   const references = m.meta?.references ?? [];
   let text = m.content;
-  // Before the attachments, because it is what the message is about: the
-  // student pointed at this *here*, in this turn, and a later turn pointing
-  // at something else must not be read against it.
   const pointed = describeReferences(references);
   if (pointed) text = `${pointed}\n\n---\n\n${text}`;
   const images: string[] = [];
@@ -108,8 +85,6 @@ async function userContent(m: UiMessage, withImages: boolean): Promise<unknown> 
   return [{ type: 'text', text }, ...images.map((url) => ({ type: 'image_url', image_url: { url } }))];
 }
 
-/** A saved reply as the model wrote it: its text in order, with each Python
- *  run and app action summarised where it happened. */
 function assistantContent(m: UiMessage): string {
   const runs = m.meta?.runs ?? [];
   const actions = m.meta?.actions ?? [];
@@ -131,15 +106,11 @@ function assistantContent(m: UiMessage): string {
     .join('\n\n');
 }
 
-/** Where a click on a citation chip goes (the notebook opens the source there). */
 const CiteContext = createContext<((sourceId: number, unit: number) => void) | undefined>(undefined);
 
-/** What the runtime is doing right now, shown while the reply is still empty. */
 export type RunState = { state: ExecState; detail: string };
 const RunStateContext = createContext<RunState | null>(null);
 
-/** Plain English for each execution state. Deliberately about the work, not
- *  about the model: none of this exposes what it is reasoning. */
 const STATE_LABEL: Record<ExecState, string> = {
   planning: 'planning',
   executing: 'working',
@@ -157,7 +128,6 @@ type Part = Exclude<ThreadMessageLike['content'], string>[number];
 
 const PENDING_ID = -1;
 
-/** The answer as it stands, as a message the thread can render. */
 const liveMessage = (run: ChatRun): UiMessage => ({
   id: PENDING_ID,
   role: 'assistant',
@@ -167,7 +137,6 @@ const liveMessage = (run: ChatRun): UiMessage => ({
   pending: true,
 });
 
-/** What a stopped turn keeps: the text it had written, and the work it did. */
 function liveTextOf(conversationId: number): { text: string; meta: ChatMessage['meta'] } {
   const run = currentRun(conversationId);
   if (!run) return { text: '', meta: null };
@@ -216,9 +185,6 @@ function toThreadMessage(m: UiMessage): ThreadMessageLike {
     result: r.running ? undefined : r,
     isError: !r.running && !r.ok,
   });
-  // Replies render in the order they were written: text, then Python, then
-  // what the model said about the result. Older replies without steps show
-  // their runs first.
   const steps = m.meta?.steps;
   const actionPart = (a: AppAction): Part => ({
     type: 'tool-call' as const,
@@ -255,8 +221,6 @@ function toThreadMessage(m: UiMessage): ThreadMessageLike {
         : { type: 'complete', reason: 'stop' },
   };
 }
-
-// ------------------------------------------------------------------ parts
 
 function Figure({ id }: { id: number }) {
   const [src, setSrc] = useState<string | null>(null);
@@ -310,7 +274,6 @@ function Text({ text }: TextMessagePartProps) {
 const EMPTY: Citation[] = [];
 const NO_REFS: Reference[] = [];
 
-/** The sources a reply cited, under it. */
 function CitedSources() {
   const citations = useAuiState((s) => (s.message.metadata.custom?.citations as Citation[] | undefined) ?? EMPTY);
   const text = useAuiState((s) => s.message.content.map((p) => (p.type === 'text' ? p.text : '')).join(' '));
@@ -369,7 +332,6 @@ function UserMessage() {
   );
 }
 
-/** Editing an earlier question: the reply to it (and what followed) is replaced. */
 function EditComposer() {
   return (
     <MessagePrimitive.Root className="msg user editing">
@@ -387,7 +349,6 @@ function EditComposer() {
 
 const fmtThought = (ms: number) => (ms < 1500 ? 'a moment' : ms < 60_000 ? `${Math.round(ms / 1000)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`);
 
-/** Thinking mode: the model's reasoning, folded away once the answer starts. */
 function Reasoning({ text }: ReasoningMessagePartProps) {
   const running = useAuiState((s) => s.message.status?.type === 'running');
   const answering = useAuiState((s) => s.message.content.some((p) => p.type !== 'reasoning' && (p.type !== 'text' || !!p.text)));
@@ -409,7 +370,6 @@ function Reasoning({ text }: ReasoningMessagePartProps) {
   );
 }
 
-/** One thing the assistant did in the app, shown where it happened in the reply. */
 function ActionBlock(props: ToolCallMessagePartProps<{ name: string }, AppAction>) {
   const a = props.result;
   return (
@@ -421,11 +381,6 @@ function ActionBlock(props: ToolCallMessagePartProps<{ name: string }, AppAction
   );
 }
 
-/**
- * What this reply cost, under it: counting up while it is written, then
- * settled. Every chat shows it — the notebook's, the assistant's, the one
- * opened about a card or a question — because every one of them is this.
- */
 function ReplyCost() {
   const cost = useAuiState((s) => s.message.metadata.custom?.cost as number | undefined);
   const running = useAuiState((s) => s.message.status?.type === 'running');
@@ -478,45 +433,19 @@ function AssistantMessage() {
   );
 }
 
-// ------------------------------------------------------------------- view
-
 export function ChatView({ threadId, notebookId, system, retrieve, onCite, toolEnv, agent = 'chat', allowTools, sourceIds, tag, references, onReferencesSent, reloadToken = 0, emptyTitle, emptyHint, placeholder, onThreadCreated, onChanged, header, suggestions }: {
-  /** null until the first message creates the thread. */
   threadId: number | null;
   notebookId: number | null;
-  /** The system prompt for this kind of chat (lib/prompts), given whether Python is available. */
   system: (python: boolean) => string;
-  /** Notebook chats: find source excerpts for the question (appended to the system prompt). */
   retrieve?: (history: ChatMessage[], question: string) => Promise<{ context: string; citations: Citation[] }>;
   onCite?: (sourceId: number, unit: number) => void;
-  /** What the run's tools may reach: the study tree, navigation, the notebook. */
   toolEnv?: ToolEnv;
-  /** Which agent shape this chat is. The runtime may still escalate a turn. */
   agent?: AgentKind;
-  /** Restrict the run to these tool names (App control off, for instance). */
   allowTools?: string[];
-  /** Notebook chats: the sources this chat is allowed to read. */
   sourceIds?: number[];
-  /**
-   * What this chat was opened from — a quiz question, a flashcard, a note.
-   *
-   * It is written into the first message the student sends, so the thread
-   * still says what it is about when they find it in the chat list later,
-   * and so the model can see it too.
-   */
   tag?: string;
-  /**
-   * What the student pointed at, waiting to be sent.
-   *
-   * It behaves like a file on the composer: it sits there until the message
-   * goes, travels with that message, and is then cleared — because what they
-   * were pointing at when they asked is part of *that* question, not of
-   * everything they ask afterwards.
-   */
   references?: Reference[];
-  /** Called once the references have gone with a message. */
   onReferencesSent?: () => void;
-  /** Bump to reload the thread (after clearing it). */
   reloadToken?: number;
   emptyTitle: string;
   emptyHint: string;
@@ -524,14 +453,11 @@ export function ChatView({ threadId, notebookId, system, retrieve, onCite, toolE
   onThreadCreated?: (t: ChatThread) => void;
   onChanged?: () => void;
   header?: (messages: ChatMessage[]) => React.ReactNode;
-  /** Starter prompts shown on an empty chat; clicking one sends it. */
   suggestions?: string[];
 }) {
   const { think, memory: memoryOn } = usePersonal();
   const speech = useMemo(() => (typeof speechSynthesis !== 'undefined' ? new WebSpeechSynthesisAdapter() : undefined), []);
   const [messages, setMessages] = useState<UiMessage[]>([]);
-  // The answer being written, if one is. It lives outside this component so
-  // that leaving the chat does not throw it away.
   const waiting = (references ?? []).filter((r) => !r.briefed);
   const pinned = (references ?? []).filter((r) => r.briefed);
   const live = useChatRun(threadId);
@@ -543,9 +469,7 @@ export function ChatView({ threadId, notebookId, system, retrieve, onCite, toolE
   const [setup, setSetup] = useState<ChatSetup | null>(null);
   const [setupError, setSetupError] = useState<string | null>(null);
   const threadRef = useRef<number | null>(threadId);
-  /** A thread this view created during a send: its id arriving as a prop must not reload it. */
   const createdHere = useRef<number | null>(null);
-  /** Bumped on cancel and on thread switch; a turn only lands if it still matches. */
   const tokenRef = useRef(0);
   const messagesRef = useRef<UiMessage[]>([]);
   messagesRef.current = messages;
@@ -555,13 +479,6 @@ export function ChatView({ threadId, notebookId, system, retrieve, onCite, toolE
     chatSetup().then(setSetup).catch((e) => setSetupError(String(e)));
   }, []);
 
-  /**
-   * Pick up an answer that finished elsewhere.
-   *
-   * A turn outlives the view that started it, so the reply is often saved by
-   * a component that has since been unmounted. When the run this view is
-   * watching disappears, the answer is in the database: read it back.
-   */
   const wasRunning = useRef(false);
   useEffect(() => {
     const had = wasRunning.current;
@@ -574,18 +491,6 @@ export function ChatView({ threadId, notebookId, system, retrieve, onCite, toolE
     return () => { alive = false; };
   }, [running, threadId]);
 
-  /**
-   * Where the student had got to in this chat.
-   *
-   * Every chat keeps its own position, and it survives switching chats and
-   * restarting the app. It is restored after the messages have rendered — the
-   * thread view scrolls itself to the bottom first, and Markdown and maths
-   * both change the height after the first paint — and it is anchored to the
-   * message that was at the top, so a reply arriving below does not move it.
-   *
-   * A chat that was left at the bottom has nothing stored, which is what lets
-   * the usual "follow the newest message" behaviour stand.
-   */
   useEffect(() => {
     if (threadId === null || loading || !messages.length || running) return;
     const viewport = chatRef.current?.querySelector<HTMLElement>('.chat-viewport');
@@ -597,14 +502,11 @@ export function ChatView({ threadId, notebookId, system, retrieve, onCite, toolE
     return () => { stop(); unwatch(); };
   }, [threadId, loading, messages.length, running]);
 
-  // Load the thread, unless it is the one this view just created mid-send.
   const lastReload = useRef(reloadToken);
   useEffect(() => {
     const forced = lastReload.current !== reloadToken;
     lastReload.current = reloadToken;
     if (!forced && threadId !== null && threadId === createdHere.current) return;
-    // Switching chats leaves the answer running. It belongs to the student,
-    // not to this view, and it will be here when they come back.
     threadRef.current = threadId;
     tokenRef.current += 1;
     if (threadId === null) { setMessages([]); return; }
@@ -647,10 +549,9 @@ export function ChatView({ threadId, notebookId, system, retrieve, onCite, toolE
       if (text) await studyApi.attachmentSetText(info.id, text);
       return { ...a, id: String(info.id), status: { type: 'complete' }, content: [] };
     },
-    async remove() { /* nothing is stored until send */ },
+    async remove() { },
   }), [ensureThread, setup?.python]);
 
-  /** Answer the last user message of `history` (already saved) and save the reply. */
   const respond = useCallback(async (conversationId: number, history: UiMessage[]) => {
     if (!setup) return;
     const question = [...history].reverse().find((m) => m.role === 'user');
@@ -680,8 +581,6 @@ export function ChatView({ threadId, notebookId, system, retrieve, onCite, toolE
         if (found?.context) { prompt += `\n\n${found.context}`; citations = found.citations; }
       }
       updateRun(conversationId, { citations });
-      // The model as it is now, not as it was when this chat was opened: a
-      // provider switched since then must not get the old one's model.
       const live = await getAiConfig().catch(() => setup.config);
       const r = await runChatTurn({
         agent,
@@ -694,8 +593,6 @@ export function ChatView({ threadId, notebookId, system, retrieve, onCite, toolE
         thinking: think,
         model: live.flashModel,
         feature: notebookId === null ? 'chat' : 'notebook',
-        // One task id per chat, so a long conversation keeps its objective,
-        // its constraints and what has already been done.
         taskId: `chat-${conversationId}`,
         objective: text,
         env: { ...(toolEnv ?? emptyEnv), notebookId, sourceIds },
@@ -716,12 +613,10 @@ export function ChatView({ threadId, notebookId, system, retrieve, onCite, toolE
     } catch (e) {
       const message = String(e instanceof Error ? e.message : e);
       if (message === 'stopped') {
-        // Keep what was written before Stop; it is usually the useful half.
         const partial = liveTextOf(conversationId);
         content = partial.text;
         meta = { ...partial.meta, error: 'stopped' };
       } else {
-        // A failed turn still spent what it spent.
         const spent = currentRun(conversationId)?.cost ?? 0;
         meta = { error: message, ...(spent > 0 ? { cost: spent } : {}) };
       }
@@ -732,7 +627,6 @@ export function ChatView({ threadId, notebookId, system, retrieve, onCite, toolE
       setMessages((ms) => [...ms.filter((m) => !m.pending), saved]);
     }
     onChanged?.();
-    // Name the chat from its first exchange (the first line of the question stands in until then).
     if (firstExchange && content) {
       void generateTitle(text || question?.meta?.attachments?.[0]?.name || '', content)
         .then((title) => (title ? studyApi.chatRename(conversationId, title).then(() => onChanged?.()) : undefined))
@@ -747,10 +641,6 @@ export function ChatView({ threadId, notebookId, system, retrieve, onCite, toolE
     if (!text && !ids.length) return;
     const conversationId = await ensureThread();
     const infos: AttachmentInfo[] = ids.length ? await studyApi.attachmentsInfo(ids) : [];
-    // The tag goes on the first message only: after that the thread speaks
-    // for itself, and repeating it would just be noise. Plain brackets, not
-    // Markdown — a user message is shown as typed, so any markup would show
-    // up as the asterisks it is made of.
     const firstHere = messagesRef.current.filter((m) => m.role === 'user').length === 0;
     const tagged = tag && firstHere && text ? `[${tag}] ${text}` : text;
     const meta = {
@@ -765,7 +655,6 @@ export function ChatView({ threadId, notebookId, system, retrieve, onCite, toolE
     await respond(conversationId, [...messagesRef.current.filter((m) => !m.pending), user]);
   }, [setup, setupError, ensureThread, respond, onChanged, tag]);
 
-  // Regenerate: drop the reply (and anything after it) and answer again.
   const onReload = useCallback(async (parentId: string | null) => {
     const conversationId = threadRef.current;
     if (conversationId === null || !setup) return;
@@ -775,7 +664,6 @@ export function ChatView({ threadId, notebookId, system, retrieve, onCite, toolE
     await respond(conversationId, saved.slice(0, idx + 1));
   }, [setup, respond]);
 
-  // Edit an earlier question: it and everything after it is replaced, then answered.
   const onEdit = useCallback(async (msg: AppendMessage) => {
     const conversationId = threadRef.current;
     if (conversationId === null || !setup) return;
@@ -790,15 +678,11 @@ export function ChatView({ threadId, notebookId, system, retrieve, onCite, toolE
     await respond(conversationId, [...saved.slice(0, idx), user]);
   }, [setup, respond]);
 
-  // Stop: ask the turn to stop and let it save what it had. The turn owns
-  // the saving, so a Stop from here and a Stop from the tray do the same.
   const onCancel = useCallback(async () => {
     const conversationId = threadRef.current;
     if (conversationId !== null) stopRun(conversationId);
   }, []);
 
-  // The answer being written is appended here rather than held in state, so
-  // arriving mid-turn shows it from wherever it has got to.
   const shown = live ? [...messages.filter((m) => !m.pending), liveMessage(live)] : messages;
 
   const runtime = useExternalStoreRuntime<UiMessage>({

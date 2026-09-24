@@ -11,12 +11,6 @@ import type { Route } from './pages';
 import { SyllabusDialog } from './Syllabus';
 import { SubjectIcon, subjectColor } from '../components/subjectIcons';
 
-/**
- * The study calendar: months stacked in one scrolling column (opening on this
- * month), and the chosen day's events beside it.
- * WebAssign due dates are shown too (read-only) when the bridge is connected.
- */
-
 export const KINDS: { kind: EventKind; label: string }[] = [
   { kind: 'exam', label: 'Exam' },
   { kind: 'deadline', label: 'Deadline' },
@@ -26,7 +20,6 @@ export const KINDS: { kind: EventKind; label: string }[] = [
 ];
 
 const DAY = 864e5;
-/** Colour of events that belong to no course. */
 const NO_COURSE = '#7d858c';
 const startOfDay = (t: number | Date) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d; };
 const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
@@ -37,13 +30,10 @@ type Due = {
   id: number;
   title: string;
   at: number;
-  /** No longer listed in WebAssign — kept, and shown greyed. */
   stale?: boolean;
-  /** Its due date has moved since we last looked. */
   moved?: boolean;
 };
 
-/** A month's days in whole weeks (Monday first), with blank cells outside the month. */
 function monthCells(month: Date): (Date | null)[] {
   const offset = (new Date(month.getFullYear(), month.getMonth(), 1).getDay() + 6) % 7;
   const days = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
@@ -53,29 +43,23 @@ function monthCells(month: Date): (Date | null)[] {
 
 const monthOf = (base: Date, n: number) => new Date(base.getFullYear(), base.getMonth() + n, 1);
 const monthId = (d: Date) => `cal-${d.getFullYear()}-${d.getMonth()}`;
-/** Months added at a time when scrolling near either end. */
 const CHUNK = 6;
 
 export function SchedulePage({ tree, open, refreshTree, reload = 0 }: {
   tree: SubjectNode[];
   open: (r: Route) => void;
   refreshTree?: () => void;
-  /** Bumped when the study space changed under us — deleting a course takes
-   *  its exams and deadlines with it, and this page may be on screen. */
   reload?: number;
 }) {
   const [selected, setSelected] = useState(() => startOfDay(new Date()));
   const [events, setEvents] = useState<StudyEvent[]>([]);
   const [dues, setDues] = useState<Due[]>([]);
-  /** One line about what changed in WebAssign since last time. */
   const [dueNote, setDueNote] = useState<string | null>(null);
   const [editing, setEditing] = useState<StudyEvent | 'new' | null>(null);
   const [importing, setImporting] = useState(false);
-  // Months shown, relative to this month; the list grows as you scroll either way.
   const [range, setRange] = useState({ from: -2, to: 10 });
   const [visible, setVisible] = useState(() => monthOf(new Date(), 0));
   const scroller = useRef<HTMLDivElement>(null);
-  /** Height before months were added on top, to keep the view still. */
   const prepend = useRef<number | null>(null);
 
   const now = useMemo(() => monthOf(new Date(), 0), []);
@@ -84,19 +68,9 @@ export function SchedulePage({ tree, open, refreshTree, reload = 0 }: {
     const from = months[0].getTime();
     const to = monthOf(months[months.length - 1], 1).getTime();
     studyApi.events(from, to).then(setEvents).catch(() => setEvents([]));
-    // `reload` is not used in here, but deleting a course from the sidebar
-    // takes its entries out of the database while this page is on screen.
   }, [months, reload]);
   useEffect(load, [load]);
 
-  /**
-   * WebAssign assignments.
-   *
-   * The cache is shown first, so the calendar is populated even when the
-   * bridge is down or no tab is logged in. A fresh listing is then folded in
-   * rather than replacing it: a due date that moved is picked up, and one
-   * that has vanished from WebAssign is marked rather than silently dropped.
-   */
   useEffect(() => {
     let alive = true;
     const show = (list: CachedAssignment[]) => {
@@ -119,7 +93,6 @@ export function SchedulePage({ tree, open, refreshTree, reload = 0 }: {
         show(result.assignments);
         if (alive) setDueNote(describeChanges(result));
       })
-      // No bridge, no tab, no network: the cache is what the student sees.
       .catch(() => {});
     return () => { alive = false; };
   }, []);
@@ -134,10 +107,8 @@ export function SchedulePage({ tree, open, refreshTree, reload = 0 }: {
     });
   }, [now]);
 
-  // Open on this month.
   useLayoutEffect(() => { jumpTo(now, false); }, [jumpTo, now]);
 
-  // Months added above: shift the scroll so what you were looking at stays put.
   useLayoutEffect(() => {
     const el = scroller.current;
     if (el && prepend.current !== null) { el.scrollTop += el.scrollHeight - prepend.current; prepend.current = null; }
@@ -148,7 +119,6 @@ export function SchedulePage({ tree, open, refreshTree, reload = 0 }: {
     if (!el) return;
     if (el.scrollTop < 400 && prepend.current === null) { prepend.current = el.scrollHeight; setRange((r) => ({ ...r, from: r.from - CHUNK })); }
     if (el.scrollHeight - el.scrollTop - el.clientHeight < 600) setRange((r) => ({ ...r, to: r.to + CHUNK }));
-    // The header names the month at the top of the view.
     const probe = el.scrollTop + 70;
     let current: Date | null = null;
     for (const sec of el.querySelectorAll<HTMLElement>('.cal-month')) {
@@ -160,7 +130,6 @@ export function SchedulePage({ tree, open, refreshTree, reload = 0 }: {
   const byDay = useMemo(() => {
     const m = new Map<string, StudyEvent[]>();
     for (const e of events) {
-      // Multi-day events appear on each day they span.
       for (let d = startOfDay(e.startAt); d.getTime() <= (e.endAt ?? e.startAt); d = new Date(d.getTime() + DAY)) {
         m.set(dayKey(d), [...(m.get(dayKey(d)) ?? []), e]);
         if (!e.endAt) break;
@@ -179,7 +148,6 @@ export function SchedulePage({ tree, open, refreshTree, reload = 0 }: {
   const dayDues = duesByDay.get(dayKey(selected)) ?? [];
   const notebooks = tree.flatMap((s) => s.notebooks.map((n) => ({ id: n.id, subjectId: s.id, label: `${s.name} / ${n.name}` })));
   const courseOf = (e: StudyEvent) => tree.find((s) => s.id === e.subjectId) ?? null;
-  /** Events wear their course's colour; events with no course are grey. */
   const tint = (e: StudyEvent) => ({ '--k': courseOf(e) ? subjectColor(courseOf(e)!) : NO_COURSE } as React.CSSProperties);
   const upcoming = events.filter((e) => e.startAt >= today.getTime() && !e.done).slice(0, 6);
 

@@ -1,19 +1,8 @@
-/**
- * The reading-position logic, tested against a hand-built DOM.
- *
- * Run with: npm test
- *
- * Only the parts that decide *where* to scroll are exercised here — the
- * measuring, the anchoring and the storage. They are the parts that get a
- * restore wrong; the event plumbing around them is trivial by comparison.
- */
-
 import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
 
 type Stored = Map<string, string>;
 
-/** Just enough DOM for the module: a scroller with laid-out blocks. */
 function fakeDom(blocks: { anchor?: string; top: number; height: number; text?: string }[], scrollTop = 0) {
   const VIEWPORT_TOP = 100;
   const scroller = {
@@ -26,7 +15,6 @@ function fakeDom(blocks: { anchor?: string; top: number; height: number; text?: 
         .filter((b) => b.anchor)
         .map((b) => ({
           dataset: { anchor: b.anchor },
-          // Laid out relative to the document, then offset by the scroll.
           getBoundingClientRect: () => ({
             top: VIEWPORT_TOP + b.top - scroller.scrollTop,
             bottom: VIEWPORT_TOP + b.top + b.height - scroller.scrollTop,
@@ -94,7 +82,6 @@ describe('restoring a position', () => {
   });
 
   it('survives content being inserted above the anchor', () => {
-    // The same block, now 400px further down because a reply was added above.
     const scroller = fakeDom([
       { anchor: 'new', top: 0, height: 400 },
       { anchor: 'b', top: 600, height: 300 },

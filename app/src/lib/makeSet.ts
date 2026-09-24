@@ -1,23 +1,11 @@
 import { generateCards, generateQuiz, type CardOptions, type GenSource, type QuizOptions, type StudyContext } from './studyGen';
 import { studyApi } from '../study/api';
 
-/**
- * Write a deck or a quiz and save it — the one way either is made, whether
- * the student asked from the generate dialog or the assistant did it for
- * them in a chat.
- *
- * Saved straight away: there is no preview to click through. A set can be
- * read over, edited, rewritten or deleted from its own page like any other,
- * and holding a finished quiz hostage behind a "Save" button only meant a
- * student who looked away lost it.
- */
 export type MadeSet = {
   id: number;
   title: string;
   count: number;
-  /** What could not be written, if anything, in a sentence. */
   note: string;
-  /** One line for whoever asked: "Saved “X” with 40 cards." */
   message: string;
 };
 
@@ -35,12 +23,9 @@ export async function makeSet(
   let skipped: string[];
   if (kind === 'cards') {
     const deck = await generateCards(ctx, src, options, progress);
-    // A card that said where it came from keeps that; the rest fall back to
-    // the sources the deck as a whole was built from.
     const fallback = src.kind === 'sources'
       ? [...new Map(src.hits.map((h) => [h.sourceId, { sourceId: h.sourceId, title: h.sourceTitle }])).values()]
       : null;
-    // Stopped while it was being written: nothing is saved.
     options.stop?.throwIfStopped();
     progress('Saving the deck…');
     id = await studyApi.createDeck(notebookId, deck.title, deck.cards.map((c) => ({ ...c, sourceRefs: c.sourceRefs ?? fallback })));

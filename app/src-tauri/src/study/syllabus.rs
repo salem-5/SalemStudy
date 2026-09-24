@@ -1,13 +1,8 @@
-//! A subject's syllabus: the uploaded file (kept as an attachment outside any
-//! chat), its text, and the AI's summary of it that every notebook chat of the
-//! subject reads as course context.
-
 use rusqlite::{params, Connection, OptionalExtension};
 use tauri::{AppHandle, State};
 
 use super::{expect_one, now_ms, with_db, StudyDb};
 
-/// Set (or replace) the syllabus. A replaced file is deleted.
 pub fn set(conn: &Connection, subject_id: i64, file: Option<i64>, name: &str, text: &str, summary: &str) -> rusqlite::Result<usize> {
     let old: Option<Option<i64>> = conn
         .query_row("SELECT syllabus_file FROM subject WHERE id = ?1", [subject_id], |r| r.get(0))
@@ -27,7 +22,6 @@ pub fn clear(conn: &Connection, subject_id: i64) -> rusqlite::Result<usize> {
     set(conn, subject_id, None, "", "", "")
 }
 
-/// Remove the syllabus file when its subject goes (attachments do not cascade from subjects).
 pub fn delete_file_of(conn: &Connection, subject_id: i64) -> rusqlite::Result<()> {
     conn.execute(
         "DELETE FROM attachment WHERE id = (SELECT syllabus_file FROM subject WHERE id = ?1)",
@@ -56,7 +50,6 @@ pub fn syllabus_clear(app: AppHandle, db: State<'_, StudyDb>, subject_id: i64) -
     expect_one(changed, "Subject")
 }
 
-/// The syllabus's full text (the tree only carries its name and summary).
 #[tauri::command]
 pub fn syllabus_text(app: AppHandle, db: State<'_, StudyDb>, subject_id: i64) -> Result<String, String> {
     with_db(&app, &db, |c| {

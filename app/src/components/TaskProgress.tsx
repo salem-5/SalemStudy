@@ -3,17 +3,6 @@ import { Modal } from './Dialogs';
 import { dismissTask, stopTask, type BackgroundTask } from '../lib/salem/tasks';
 import { formatCost } from '../lib/meter';
 
-/**
- * What a background job is actually doing, opened from the card standing in
- * for the thing being made.
- *
- * A spinner and one line of text tells a student it has not died. It does not
- * tell them that pass three of five is being written, or that question two
- * failed its check and is being replaced — which is the difference between
- * waiting and knowing. So every step is kept, and this is where they are
- * read, newest at the bottom the way a transcript reads.
- */
-
 const clock = (ms: number) => {
   const s = Math.max(0, Math.round(ms / 1000));
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;

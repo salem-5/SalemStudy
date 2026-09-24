@@ -4,7 +4,6 @@ export function Skel({ w, h, className, style }: { w?: string | number; h?: numb
   return <div className={`skel${className ? ` ${className}` : ''}`} style={{ width: w, height: h, ...style }} />;
 }
 
-/** Placeholder rows shaped like the sidebar assignment list. */
 export function AssignmentListSkeleton() {
   return (
     <div className="skel-list" aria-hidden>
@@ -19,7 +18,6 @@ export function AssignmentListSkeleton() {
   );
 }
 
-/** Placeholder shaped like a question with a couple of answer boxes. */
 export function QuestionSkeleton() {
   return (
     <div className="question skel-q" aria-hidden>

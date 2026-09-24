@@ -1,13 +1,5 @@
 import { studyApi, type ChatMessage, type Source, type SourceHit } from '../study/api';
 
-/**
- * What the notebook chat reads before answering. The search is limited to the
- * sources the student ticked (the notebook boundary is the source-id list).
- * Every ticked source contributes its best excerpt, so one strong match cannot
- * crowd the others out; broad questions ("summarise", "what's on the exam")
- * get an even sample across everything instead of a keyword search.
- */
-
 export type Citation = { n: number; sourceId: number; title: string; label: string; unit: number };
 
 const BROAD = /\b(summar|overview|everything|all (the|of)|main (ideas|topics|points)|key (ideas|points|concepts)|what (do|should) i (need|know)|exam|midterm|final|review sheet|cover(ed|s)?)\b/i;
@@ -18,7 +10,6 @@ export async function retrieve(sources: Source[], history: ChatMessage[], questi
   const ready = sources.filter((s) => s.status === 'ready');
   if (!ready.length) return { context: '', citations: [] };
   const ids = ready.map((s) => s.id);
-  // Follow-ups ("why is that?") carry little on their own: add the previous question.
   const prevUser = [...history].reverse().find((m) => m.role === 'user' && m.content !== question)?.content ?? '';
   const query = `${question} ${question.length < 80 ? prevUser : ''}`;
 

@@ -1,12 +1,6 @@
 import { generateText } from './salem/generate';
 import { studyApi, type NotebookSummary, type Source } from '../study/api';
 
-/**
- * A notebook's overview: a short, AI-written map of the topics it covers,
- * built from its sources (and the titles of its notes and decks). Stored on
- * the notebook; regenerated when sources change.
- */
-
 const SYSTEM = `You write the overview page of a student's study notebook: what it covers, at a glance.
 
 Format (Markdown):
@@ -14,7 +8,6 @@ Format (Markdown):
 - Then 2–6 "###" headings for the main areas, each with 2–6 short bullets naming the specific topics (3–8 words each; key formulas may appear in $...$).
 - No explanations, no advice, no preamble. At most ~30 bullets in total.`;
 
-/** True when a source was added (or re-read) after the overview was written. */
 export function overviewStale(nb: NotebookSummary, sources: Source[]): boolean {
   const ready = sources.filter((s) => s.status === 'ready');
   if (!ready.length) return false;

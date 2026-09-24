@@ -1,16 +1,8 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 
-/**
- * Small SVG charts for analytics and the focus timer. Marks follow one spec:
- * bars ≤ 24px with a 4px rounded data end and a square base, 2px lines,
- * 2px surface gaps between stacked segments, a recessive grid, and a hover
- * tooltip on every mark. Series colours come from --series-N tokens.
- */
-
 export type Series = { key: string; name: string; color: string };
 export type Datum = { label: string; title?: string; values: Record<string, number> };
 
-/** Draw at the container's real width, so text and marks are never stretched. */
 function useWidth(ref: React.RefObject<HTMLDivElement | null>, fallback = 640): number {
   const [w, setW] = useState(fallback);
   useLayoutEffect(() => {
@@ -30,7 +22,6 @@ function niceMax(v: number): number {
   return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * p;
 }
 
-/** Path for a bar with a rounded top (data end) and a square base. */
 function barPath(x: number, y: number, w: number, h: number, r = 4): string {
   if (h <= 0) return '';
   const rr = Math.min(r, w / 2, h);
@@ -55,7 +46,6 @@ export function BarChart({ data, series, height = 180, format = (v: number) => S
   series: Series[];
   height?: number;
   format?: (v: number) => string;
-  /** Accessible name for the chart. */
   label: string;
 }) {
   const wrap = useRef<HTMLDivElement>(null);
@@ -63,7 +53,6 @@ export function BarChart({ data, series, height = 180, format = (v: number) => S
   const [hover, setHover] = useState<{ i: number; x: number; y: number } | null>(null);
   const pad = { l: 34, r: 8, t: 10, b: 22 };
   const plotH = height - pad.t - pad.b;
-  // Even maxima keep the middle gridline on a whole number.
   const raw = niceMax(Math.max(0, ...data.map((d) => series.reduce((a, s) => a + (d.values[s.key] ?? 0), 0))));
   const max = raw < 2 ? 2 : raw % 2 ? raw + 1 : raw;
   const band = (W - pad.l - pad.r) / Math.max(1, data.length);
@@ -94,7 +83,6 @@ export function BarChart({ data, series, height = 180, format = (v: number) => S
             <g key={i}>
               {segs.map((g, j) => {
                 const last = j === segs.length - 1;
-                // 2px surface gap between stacked segments.
                 const h = g.bottom - g.top - (j > 0 ? 2 : 0);
                 return last
                   ? <path key={g.s.key} d={barPath(cx - bw / 2, g.top, bw, h)} fill={g.s.color} />
@@ -131,7 +119,6 @@ export function BarChart({ data, series, height = 180, format = (v: number) => S
 }
 
 export function LineChart({ points, height = 170, label, format = (v: number) => `${Math.round(v * 100)}%` }: {
-  /** y in 0..1 */
   points: { label: string; title: string; y: number }[];
   height?: number;
   label: string;
@@ -193,7 +180,6 @@ export function StatTile({ label, value, sub }: { label: string; value: React.Re
   );
 }
 
-/** Horizontal accuracy bars with the value written at the end (magnitude, one series). */
 export function MeterList({ rows, empty }: { rows: { key: string; label: string; value: number; detail: string }[]; empty: string }) {
   if (!rows.length) return <p className="muted small">{empty}</p>;
   return (

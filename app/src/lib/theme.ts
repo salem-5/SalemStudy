@@ -1,28 +1,12 @@
 import { useSyncExternalStore } from 'react';
 
-/**
- * Appearance: a colour theme (or whatever the OS is using), a shape, and an
- * accent colour.
- *
- * A theme is a palette over one of two bases. The base — dark or light — is
- * what `data-theme` says, so every rule written for the light theme still
- * applies to Sepia and Latte; the palette (`data-palette`) only repaints the
- * surfaces, lines, text and accent on top. The shape is separate, so any
- * palette can be sharp or rounded.
- */
-
 export type Palette = {
   id: string;
   name: string;
   base: 'dark' | 'light';
-  /** For the picker's preview: background, panel, text, accent. */
   swatch: [string, string, string, string];
 };
 
-/**
- * 'dark' and 'light' keep their old ids (Graphite and Paper), so a theme
- * chosen before there were more of them still loads.
- */
 export const PALETTES: Palette[] = [
   { id: 'dark', name: 'Graphite', base: 'dark', swatch: ['#0e1012', '#1a1d21', '#d7dce0', '#8fb3d1'] },
   { id: 'midnight', name: 'Midnight', base: 'dark', swatch: ['#0b1020', '#18203a', '#d5dbf0', '#7aa2f7'] },
@@ -36,17 +20,14 @@ export const PALETTES: Palette[] = [
   { id: 'sepia', name: 'Sepia', base: 'light', swatch: ['#f4ecd8', '#fbf6ea', '#3b2f22', '#8a5a2b'] },
 ];
 
-/** A palette's id, or 'system' for Graphite or Paper following the OS. */
 export type ThemePref = string;
 
-/** Sharp is the app as it has always been; rounded softens every box a little. */
 export type ShapePref = 'sharp' | 'rounded';
 
 const KEY = 'wa.theme';
 const ACCENT_KEY = 'wa.accent';
 const SHAPE_KEY = 'wa.shape';
 
-/** Accent presets; '' is the palette's own accent. */
 export const ACCENTS: { name: string; color: string }[] = [
   { name: 'Theme', color: '' },
   { name: 'Blue', color: '#6aa6ff' },
@@ -61,14 +42,13 @@ const media = typeof matchMedia === 'function' ? matchMedia('(prefers-color-sche
 const listeners = new Set<() => void>();
 
 const read = (key: string) => { try { return localStorage.getItem(key); } catch { return null; } };
-const write = (key: string, value: string) => { try { localStorage.setItem(key, value); } catch { /* storage unavailable */ } };
+const write = (key: string, value: string) => { try { localStorage.setItem(key, value); } catch { } };
 
 export function themePref(): ThemePref {
   const v = read(KEY);
   return v === 'system' || PALETTES.some((p) => p.id === v) ? v! : 'dark';
 }
 
-/** The palette actually showing: the chosen one, or the OS's pick of Graphite or Paper. */
 export const paletteOf = (p: ThemePref): Palette =>
   PALETTES.find((x) => x.id === (p === 'system' ? (media?.matches ? 'light' : 'dark') : p)) ?? PALETTES[0];
 
@@ -88,7 +68,6 @@ function apply() {
   root.dataset.palette = palette.id;
   root.style.colorScheme = palette.base;
   root.dataset.shape = shapePref();
-  // A custom accent is one variable; styles.css derives the rest from it for each base.
   const accent = accentPref();
   if (accent) { root.dataset.accent = ''; root.style.setProperty('--accent-user', accent); }
   else { delete root.dataset.accent; root.style.removeProperty('--accent-user'); }
@@ -96,7 +75,6 @@ function apply() {
 
 function changed() {
   const root = document.documentElement;
-  // Fade colours across the switch instead of snapping.
   root.classList.add('theme-switching');
   apply();
   window.setTimeout(() => root.classList.remove('theme-switching'), 350);
@@ -108,7 +86,6 @@ export function setThemePref(p: ThemePref) { write(KEY, p); changed(); }
 export function setShapePref(s: ShapePref) { write(SHAPE_KEY, s); changed(); }
 
 
-/** Re-read `keys` when the window or a tab changes them (lib/prefSync). */
 const onShared = (keys: string[], fn: () => void) => {
   if (typeof window === 'undefined') return;
   window.addEventListener('wa:prefs', (e) => {
@@ -116,10 +93,8 @@ const onShared = (keys: string[], fn: () => void) => {
   });
 };
 
-/** Call once at boot, before the first render. */
 export function initTheme() {
   apply();
-  // The same theme, accent and shape in the window and every tab.
   onShared([KEY, ACCENT_KEY, SHAPE_KEY], changed);
   media?.addEventListener('change', () => { if (themePref() === 'system') changed(); });
 }

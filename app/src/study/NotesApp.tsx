@@ -20,14 +20,6 @@ import { Modal } from '../components/Dialogs';
 import { Select } from '../components/Select';
 import { ConfirmDialog, NameDialog } from './dialogs';
 
-/**
- * Notes, laid out like Apple Notes: folders on the left, the notes in the
- * chosen folder (grouped by date, pinned first) in the middle, and the note
- * itself on the right in a rich editor. Every change saves itself; the first
- * line is the title. The chats can write here too, and a note open on screen
- * updates when they do.
- */
-
 type View = { scope: PadScope; folder: number | null };
 const VIEW_KEY = 'wa.pad.view';
 
@@ -35,11 +27,10 @@ const loadView = (): View => {
   try {
     const v = JSON.parse(localStorage.getItem(VIEW_KEY) || 'null') as View | null;
     if (v && ['all', 'unfiled', 'folder', 'deleted'].includes(v.scope)) return v;
-  } catch { /* first visit */ }
+  } catch { }
   return { scope: 'all', folder: null };
 };
 
-/** Whether the folders column is showing; it can be put away. */
 const FOLDERS_KEY = 'wa.pad.folders';
 
 const loadFoldersShown = (): boolean => {
@@ -51,8 +42,6 @@ export function NotesApp({ initialNote, onNoteChange }: { initialNote?: number |
   const [view, setView] = useState<View>(loadView);
   const [list, setList] = useState<PadNoteMeta[]>([]);
   const [query, setQuery] = useState('');
-  // Which view the list on screen is for: until the new one arrives it is the
-  // old folder's, and its first note must not be opened for the new one.
   const [listFor, setListFor] = useState('');
   const viewKey = query.trim() ? `search:${query.trim()}` : `${view.scope}:${view.folder ?? ''}`;
   const [openId, setOpenId] = useState<number | null>(initialNote ?? null);
@@ -63,14 +52,11 @@ export function NotesApp({ initialNote, onNoteChange }: { initialNote?: number |
   const [emptying, setEmptying] = useState(false);
   const [foldersShown, setFoldersShown] = useState(loadFoldersShown);
 
-  useEffect(() => { try { localStorage.setItem(VIEW_KEY, JSON.stringify(view)); } catch { /* ignore */ } }, [view]);
-  useEffect(() => { try { localStorage.setItem(FOLDERS_KEY, foldersShown ? 'shown' : 'hidden'); } catch { /* ignore */ } }, [foldersShown]);
+  useEffect(() => { try { localStorage.setItem(VIEW_KEY, JSON.stringify(view)); } catch { } }, [view]);
+  useEffect(() => { try { localStorage.setItem(FOLDERS_KEY, foldersShown ? 'shown' : 'hidden'); } catch { } }, [foldersShown]);
   useEffect(() => { onNoteChange?.(openId); }, [openId, onNoteChange]);
-  // Asked to show a particular note (the assistant opened one): show it.
   useEffect(() => { if (initialNote) setOpenId(initialNote); }, [initialNote]);
 
-  // A list is shown only for the view it was asked for: switching folders
-  // quickly must not let the folder left behind fill the one arrived at.
   const current = useRef(viewKey);
   current.current = viewKey;
   const reload = useCallback(async () => {
@@ -88,19 +74,15 @@ export function NotesApp({ initialNote, onNoteChange }: { initialNote?: number |
   const latestReload = useRef(reload);
   latestReload.current = reload;
 
-  // Anything that changes a note or a folder — here, in a tab, or the
-  // assistant in a chat — refreshes the lists.
   useEffect(() => {
     const off = onPadChanged(() => { void reload(); });
     return () => { void off.then((f) => f()); };
   }, [reload]);
 
-  // Opening a view with nothing chosen opens its newest note.
   useEffect(() => {
     if (listFor !== viewKey) return;
     if (openId !== null && list.some((n) => n.id === openId)) return;
     if (openId !== null && !query.trim()) {
-      // The open note may belong to another view (opened from a chat): keep it.
       return;
     }
     if (openId === null && list.length) setOpenId(list[0].id);
@@ -119,7 +101,6 @@ export function NotesApp({ initialNote, onNoteChange }: { initialNote?: number |
     setOpenId(n.id);
   };
 
-  /** Leaving an empty note throws it away, as Apple Notes does. */
   const leave = useCallback(async (id: number | null) => {
     if (id === null) return;
     const n = await padApi.note(id).catch(() => null);
@@ -156,14 +137,12 @@ export function NotesApp({ initialNote, onNoteChange }: { initialNote?: number |
 
   const groups = useMemo(() => groupNotes(list), [list]);
   const choose = (v: View) => {
-    // The view is changing: refresh with the new one, not this render's.
     void leave(openId).then(() => latestReload.current());
     setQuery(''); setView(v); setOpenId(null);
   };
 
   return (
     <div className={`pad${foldersShown ? '' : ' no-folders'}`}>
-      {/* ------------------------------------------------ folders */}
       <aside className="pad-folders" inert={!foldersShown}>
         <div className="pad-col-head"><span>Folders</span></div>
         <div className="pad-folder-list">
@@ -183,7 +162,6 @@ export function NotesApp({ initialNote, onNoteChange }: { initialNote?: number |
         <button type="button" className="pad-new-folder" onClick={() => setNaming({ name: '' })}><FolderPlus />New Folder</button>
       </aside>
 
-      {/* ------------------------------------------------ notes */}
       <section className="pad-list">
         <div className="pad-col-head">
           <Tool on={foldersShown} title={foldersShown ? 'Hide folders' : 'Show folders'} onClick={() => setFoldersShown((v) => !v)}><PanelLeft /></Tool>
@@ -228,7 +206,6 @@ export function NotesApp({ initialNote, onNoteChange }: { initialNote?: number |
         </div>
       </section>
 
-      {/* ------------------------------------------------ the note */}
       <section className="pad-editor-col">
         {openId !== null
           ? <NoteEditor key={openId} id={openId} folders={overview?.folders ?? []} onChanged={reload}
@@ -310,8 +287,6 @@ function MoveDialog({ note, folders, onClose, onMove }: {
   );
 }
 
-// ---------------------------------------------------------------- editor
-
 const SAVE_AFTER = 500;
 
 function NoteEditor({ id, folders, onChanged, onDeleted, onNew }: {
@@ -327,9 +302,6 @@ function NoteEditor({ id, folders, onChanged, onDeleted, onNew }: {
   const [linking, setLinking] = useState(false);
   const timer = useRef<number | null>(null);
   const dirty = useRef(false);
-  // What the note held when loaded or last saved: an extension tidying the
-  // loaded document still reports an update, and opening a note must not
-  // count as editing it.
   const baseline = useRef<string | null>(null);
   const deleted = !!note?.deletedAt;
 
@@ -364,7 +336,6 @@ function NoteEditor({ id, folders, onChanged, onDeleted, onNew }: {
     if (t) { setSavedAt(t); onChanged(); }
   }, [editor, id, onChanged]);
 
-  // Load the note; save whatever is pending on the way out.
   useEffect(() => {
     let alive = true;
     padApi.note(id).then((n) => {
@@ -381,9 +352,8 @@ function NoteEditor({ id, folders, onChanged, onDeleted, onNew }: {
       if (timer.current) window.clearTimeout(timer.current);
       void save();
     };
-  }, [id, editor]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [id, editor]);
 
-  // The assistant (or another window) changed this note: show its version.
   useEffect(() => {
     const off = onPadChanged((c) => {
       if (c.what !== 'note' || c.id !== id || c.by === PAD_SOURCE) return;

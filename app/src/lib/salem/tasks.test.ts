@@ -1,18 +1,8 @@
-/**
- * Background work, and keeping two jobs off the same rows.
- *
- * The locking is the part that matters: a student who starts a second quiz
- * generation on a notebook while the first is still writing should be told,
- * not quietly given a race.
- */
-
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 
 let tasksModule: typeof import('./tasks');
 
-// The store is imported once and reset between tests; it pulls in `runtime`
-// only for cancelling, which is stubbed here.
 const setup = async () => {
   if (!tasksModule) {
     (globalThis as Record<string, unknown>).window = {};
@@ -60,7 +50,6 @@ describe('running work in the background', () => {
       runInBackground({ label: 'Writing a quiz', scope: 'nb:1:quiz' }, async () => { throw new Error('no readable text'); }),
       /no readable text/,
     );
-    // It is no longer holding the scope, so the student can try again.
     assert.equal(holderOf('nb:1:quiz'), undefined);
   });
 });
@@ -104,7 +93,6 @@ describe('keeping conflicting work apart', () => {
   it('frees the scope once the work is over', async () => {
     const { runInBackground } = await setup();
     await runInBackground({ label: 'Quiz', scope: 'nb:1:quiz' }, async () => {});
-    // The second one starts without complaint.
     await runInBackground({ label: 'Quiz', scope: 'nb:1:quiz' }, async () => {});
   });
 });

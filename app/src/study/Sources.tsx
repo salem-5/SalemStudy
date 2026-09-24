@@ -16,13 +16,6 @@ export const KindIcon = ({ kind }: { kind: SourceKind }) => {
 
 const unitWord = (s: Source) => (s.kind === 'pdf' ? 'page' : s.kind === 'slides' ? 'slide' : s.kind === 'youtube' ? 'part' : 'section');
 
-/**
- * What went wrong while reading a source, in a few words.
- *
- * A page that came back empty looks exactly like a blank page, so nothing in
- * the app would otherwise say that four slides of a lecture are missing. This
- * is the one line that does, on the row itself.
- */
 function readingTrouble(s: Source): string | null {
   const r = s.report;
   if (!r) return null;
@@ -39,7 +32,6 @@ function readingTrouble(s: Source): string | null {
 export function SourcesPane({ notebookId, sources, selected, onToggle, onToggleAll, collapsed, onCollapse, onOpen, onChanged }: {
   notebookId: number;
   sources: Source[];
-  /** Ids of sources the chat and generation use. */
   selected: Set<number>;
   onToggle: (id: number) => void;
   onToggleAll: (on: boolean) => void;
@@ -134,7 +126,6 @@ export function SourcesPane({ notebookId, sources, selected, onToggle, onToggleA
       <ul className="source-list stagger">
         {sources.map((s, i) => {
           const stage = jobs.get(s.id);
-          // "processing" with no live job: the app was closed mid-read.
           const stuck = !stage && s.status === 'processing';
           return (
             <li key={s.id} style={{ '--i': i } as React.CSSProperties} className={`source-row ${s.status}`}
@@ -188,7 +179,6 @@ export function SourcesPane({ notebookId, sources, selected, onToggle, onToggleA
   );
 }
 
-/** A source's extracted text, one unit per section, scrolled to `unit`. */
 export function SourceViewer({ source, unit, onClose }: { source: Source; unit?: number; onClose: () => void }) {
   const [units, setUnits] = useState<SourceUnit[] | null>(null);
   const [image, setImage] = useState<string | null>(null);
@@ -255,7 +245,6 @@ export function SourceViewer({ source, unit, onClose }: { source: Source; unit?:
   );
 }
 
-/** A picture from a slide or page; click to see it large. */
 function Picture({ image, onZoom }: { image: SourceImage; onZoom: (src: string) => void }) {
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => { studyApi.sourceImageData(image.id).then(setSrc).catch(() => {}); }, [image.id]);
@@ -266,4 +255,3 @@ function Picture({ image, onZoom }: { image: SourceImage; onZoom: (src: string) 
     </figure>
   );
 }
-

@@ -1,16 +1,3 @@
-/**
- * The plain tool-calling loop: stream a reply, run the tools it asks for,
- * feed the results back, repeat.
- *
- * This is how the app talked to the model before the agent, and how it talks
- * to it again for everything that is not a genuinely demanding request. It
- * has no working memory, no planner and no sub-agents; it streams from the
- * first token, and one turn is one round trip plus one per tool call.
- *
- * When a turn turns out to need more than `rounds` passes of tool calls, the
- * loop stops and says so rather than grinding on — the caller decides whether
- * that is the moment to hand the work to the agent.
- */
 import { aiStream, extractJsonObject, type ApiMessage, type AiFeature } from './ai';
 import type { Meter } from './meter';
 import type { SalemEvent } from './salem/types';
@@ -18,9 +5,7 @@ import type { SalemEvent } from './salem/types';
 export type LoopTool = {
   name: string;
   description: string;
-  /** JSON schema for the arguments. */
   parameters: unknown;
-  /** What the UI says while it runs. */
   label?: string;
   run: (args: Record<string, unknown>) => Promise<{ result: unknown; label?: string; detail?: string }>;
 };
@@ -31,10 +16,7 @@ export type LoopResult = {
   reasoning: string;
   thoughtMs: number;
   toolCalls: number;
-  /** 'answered' when the model stopped by itself, 'cap' when it ran out of
-   *  rounds and was still reaching for tools, 'cancelled' when stopped. */
   why: 'answered' | 'cap' | 'cancelled';
-  /** The thread as it ended, so a caller escalating can carry the work over. */
   messages: ApiMessage[];
 };
 
@@ -45,13 +27,10 @@ export type LoopOptions = {
   tools: LoopTool[];
   thinking?: boolean;
   effort?: string;
-  /** How many times the model may come back wanting more tools. */
   rounds?: number;
   onEvent?: (event: SalemEvent) => void;
-  /** Each request's stream id, so Stop can cancel it. */
   onStream?: (id: string | null) => void;
   cancelled?: () => boolean;
-  /** Adds what each round cost to the piece of work it belongs to. */
   meter?: Meter;
 };
 
@@ -103,11 +82,6 @@ export async function toolLoop(options: LoopOptions): Promise<LoopResult> {
       },
     );
     options.onStream?.(null);
-    // The words arrive as stream events, and the reply is built from those.
-    // A browser tab gets them by polling, a beat behind: the finished reply
-    // can come back before the last of them, and they are dropped when the
-    // stream is closed. Whatever the stream did not bring — all of it, or the
-    // tail — is taken from the finished reply, so no answer is cut short.
     const full = reply.content ?? '';
     if (full.length > streamed.length && full.startsWith(streamed)) {
       say({ kind: 'text', text: full.slice(streamed.length) });
@@ -124,8 +98,6 @@ export async function toolLoop(options: LoopOptions): Promise<LoopResult> {
     if (!calls.length) {
       return { text, model, reasoning, thoughtMs, toolCalls, why: 'answered', messages: thread };
     }
-    // Out of rounds and still reaching for tools: this is the shape of a
-    // request that wants the agent, so hand back rather than grinding on.
     if (round === rounds) {
       return { text, model, reasoning, thoughtMs, toolCalls, why: 'cap', messages: thread };
     }
@@ -164,7 +136,6 @@ export async function toolLoop(options: LoopOptions): Promise<LoopResult> {
       } catch (e) {
         const detail = String(e instanceof Error ? e.message : e);
         say({ kind: 'tool', id: callId, name, status: 'error', label, detail });
-        // The failure goes back to the model, never a fabricated success.
         answer(`Error: ${detail}`);
       }
     }

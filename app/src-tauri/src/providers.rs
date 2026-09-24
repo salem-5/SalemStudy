@@ -1,16 +1,3 @@
-//! Which model answers, and how to talk to it.
-//!
-//! Every call the app makes is an OpenAI-style chat completion, so a provider
-//! is three things: where its endpoint is, the key for it, and what its models
-//! will accept. The catalogue of providers and models comes from models.dev
-//! (the same one opencode uses), cached on disk; the student picks a provider,
-//! gives its key, and picks a model from its list.
-//!
-//! Local models go through Ollama's own OpenAI-compatible endpoint. Ollama is
-//! started when it is needed, and when Salem quits the models it loaded are
-//! unloaded and Ollama is stopped, so a closed Salem is not still holding
-//! gigabytes of a model in memory.
-
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
@@ -28,24 +15,18 @@ const CATALOG_URL: &str = "https://models.dev/api.json";
 const CATALOG_FILE: &str = "models-catalog.json";
 const CATALOG_MAX_AGE: Duration = Duration::from_secs(24 * 3600);
 
-/// What the app keeps about a chosen model: its price and what it accepts.
 #[derive(Serialize, Deserialize, Clone, Default, Debug)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ModelInfo {
-    /// USD per million tokens.
     pub input: f64,
     pub output: f64,
     pub cache_read: f64,
-    /// Takes `reasoning_effort`.
     pub effort: bool,
-    /// The most it will write in one reply; 0 when unknown.
     pub max_output: u64,
     pub vision: bool,
     pub tools: bool,
 }
 
-/// OpenAI-compatible endpoints for providers the catalogue lists without one
-/// (they ship their own SDK, but also answer the OpenAI shape here).
 pub fn known_base(provider: &str) -> Option<&'static str> {
     Some(match provider {
         "deepseek" => "https://api.deepseek.com",
@@ -69,7 +50,6 @@ pub fn known_base(provider: &str) -> Option<&'static str> {
     })
 }
 
-/// Where a request goes and with what key.
 pub struct Endpoint {
     pub provider: String,
     pub base: String,
@@ -81,7 +61,6 @@ impl Endpoint {
         format!("{}/{}", self.base.trim_end_matches('/'), path.trim_start_matches('/'))
     }
 
-    /// The key as a bearer token, where there is one (Ollama has none).
     pub fn authorise(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         if self.key.is_empty() { req } else { req.header("Authorization", format!("Bearer {}", self.key)) }
     }
@@ -94,8 +73,6 @@ pub fn provider_of(cfg: &Config) -> String {
     if p.is_empty() { DEEPSEEK.to_string() } else { p.to_string() }
 }
 
-/// The saved key for a provider. DeepSeek's lived in `api_key` before there
-/// were others, and still counts.
 pub fn key_for(cfg: &Config, provider: &str) -> String {
     cfg.keys.get(provider).cloned().filter(|k| !k.is_empty())
         .or_else(|| (provider == DEEPSEEK && !cfg.api_key.is_empty()).then(|| cfg.api_key.clone()))
@@ -118,13 +95,6 @@ pub fn endpoint(cfg: &Config) -> Result<Endpoint, String> {
     Ok(Endpoint { provider, base, key })
 }
 
-/// The model a request actually goes to.
-///
-/// The window names a model with every call, but a view that has been open
-/// since before the student switched provider still names the old one — a
-/// chat asking Ollama for `deepseek-flash`. So this side decides: a request
-/// may name the chosen model or the solver's retry model, and anything else
-/// is taken to mean the chosen one.
 pub fn resolve_model(cfg: &Config, requested: &str) -> Result<String, String> {
     let requested = requested.trim();
     let chosen = if !requested.is_empty() && (requested == cfg.flash_model || requested == cfg.pro_model) {
@@ -138,8 +108,6 @@ pub fn resolve_model(cfg: &Config, requested: &str) -> Result<String, String> {
     Ok(chosen)
 }
 
-/// For Ollama, check the model is installed before asking for it, so the
-/// student is told which ones are rather than getting Ollama's "not found".
 pub async fn check_ollama_model(model: &str) -> Result<(), String> {
     let Ok(resp) = http().get(format!("{OLLAMA_HOST}/api/tags")).send().await else { return Ok(()) };
     let Ok(tags) = resp.json::<Value>().await else { return Ok(()) };
@@ -156,12 +124,6 @@ pub async fn check_ollama_model(model: &str) -> Result<(), String> {
     })
 }
 
-/// Fit a request to what this provider and model accept.
-///
-/// `thinking` is DeepSeek's own switch; sent anywhere else it is an unknown
-/// field, and some endpoints refuse the whole request over one. The same goes
-/// for `reasoning_effort` on a model without reasoning, and for a
-/// `max_tokens` larger than the model can write.
 pub fn shape(ep: &Endpoint, cfg: &Config, body: &mut Value) {
     let model = body.get("model").and_then(Value::as_str).unwrap_or("").to_string();
     let info = cfg.models_info.get(&model);
@@ -179,13 +141,6 @@ pub fn shape(ep: &Endpoint, cfg: &Config, body: &mut Value) {
     }
 }
 
-/// Send a request, waiting out a rate limit rather than failing on it.
-///
-/// Free tiers answer 429 after a handful of requests a minute, and a deck
-/// sends several passes at once. Each 429 (or 503, "overloaded") is retried
-/// after as long as the provider asks — its `Retry-After` header, or the
-/// "retry in 8.8s" in Google's message — up to a limit, so a busy minute
-/// slows a deck down instead of losing it.
 pub async fn send(build: impl Fn() -> reqwest::RequestBuilder) -> Result<reqwest::Response, String> {
     const TRIES: u32 = 5;
     const MOST_WAIT: f64 = 65.0;
@@ -208,15 +163,12 @@ pub async fn send(build: impl Fn() -> reqwest::RequestBuilder) -> Result<reqwest
     unreachable!()
 }
 
-/// "Please retry in 8.797463943s." → 8.8
 fn retry_hint(text: &str) -> Option<f64> {
     let at = text.find("retry in ")? + "retry in ".len();
     let num: String = text[at..].chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
     num.parse::<f64>().ok().map(|n| n + 0.5)
 }
 
-/// The message out of an error body, whatever shape the provider uses:
-/// `{"error": {"message"}}`, Google's `[{"error": …}]`, or plain text.
 pub fn error_text(text: &str) -> String {
     let v: Option<Value> = serde_json::from_str(text).ok();
     let v = v.map(|v| if let Some(first) = v.as_array().and_then(|a| a.first()) { first.clone() } else { v });
@@ -227,8 +179,6 @@ pub fn error_text(text: &str) -> String {
         .unwrap_or_else(|| text.chars().take(400).collect())
 }
 
-/// USD per million tokens (cache hit, cache miss, output) for a model, when
-/// the app knows it. Local models are free.
 pub fn price(cfg: &Config, model: &str) -> Option<(f64, f64, f64)> {
     if provider_of(cfg) == OLLAMA {
         return Some((0.0, 0.0, 0.0));
@@ -236,14 +186,10 @@ pub fn price(cfg: &Config, model: &str) -> Option<(f64, f64, f64)> {
     cfg.models_info.get(model).map(|i| (if i.cache_read > 0.0 { i.cache_read } else { i.input }, i.input, i.output))
 }
 
-// ---------------------------------------------------------------- catalogue
-
 fn catalog_path(app: &AppHandle) -> Option<PathBuf> {
     app.path().app_data_dir().ok().map(|d| d.join(CATALOG_FILE))
 }
 
-/// Only what the settings page shows: models.dev's file is ~5 MB, most of it
-/// descriptions and dates the app never reads.
 fn trim(full: &Value) -> Value {
     let mut out = Map::new();
     let Some(providers) = full.as_object() else { return Value::Object(out) };
@@ -285,8 +231,6 @@ fn trim(full: &Value) -> Value {
     Value::Object(out)
 }
 
-/// The provider catalogue, from disk if it is less than a day old, otherwise
-/// fetched afresh from models.dev (and the old copy used if that fails).
 #[tauri::command]
 pub async fn providers_catalog(app: AppHandle, refresh: Option<bool>) -> Result<Value, String> {
     let path = catalog_path(&app);
@@ -324,9 +268,6 @@ pub async fn providers_catalog(app: AppHandle, refresh: Option<bool>) -> Result<
     }
 }
 
-// ------------------------------------------------------------------- ollama
-
-/// The `ollama serve` Salem started itself, if it did.
 #[derive(Default)]
 pub struct OllamaProc(pub Mutex<Option<std::process::Child>>);
 
@@ -340,7 +281,6 @@ async fn ollama_up() -> Option<Value> {
     resp.json::<Value>().await.ok()
 }
 
-/// Where the `ollama` program is: on the PATH, or where its installers put it.
 fn ollama_binary() -> Option<PathBuf> {
     let name = if cfg!(windows) { "ollama.exe" } else { "ollama" };
     if let Some(paths) = std::env::var_os("PATH") {
@@ -361,7 +301,6 @@ fn ollama_binary() -> Option<PathBuf> {
     known.into_iter().find(|p| p.is_file())
 }
 
-/// Start Ollama if it is not already answering, and wait for it.
 pub async fn ensure_ollama(app: &AppHandle) -> Result<(), String> {
     if ollama_up().await.is_some() {
         return Ok(());
@@ -383,12 +322,6 @@ pub async fn ensure_ollama(app: &AppHandle) -> Result<(), String> {
     Err("Ollama was started but is not answering yet. Try again in a moment.".into())
 }
 
-/// Unload every model Ollama has in memory, then stop Ollama.
-///
-/// Unloading first matters: it is the model, not the server, that holds the
-/// gigabytes. Then the server goes too — the one Salem started, and the
-/// Ollama app if that is what was running — so nothing is left behind. It
-/// comes back on its own the next time a local model is asked for.
 pub async fn stop_ollama(app: &AppHandle) -> Value {
     let client = http();
     let mut unloaded = Vec::new();
@@ -417,7 +350,6 @@ pub async fn stop_ollama(app: &AppHandle) -> Value {
     json!({ "unloaded": unloaded })
 }
 
-/// Stop an Ollama Salem did not start (the desktop app, a service).
 fn kill_ollama() {
     let run = |program: &str, args: &[&str]| {
         let mut cmd = std::process::Command::new(program);
@@ -439,13 +371,8 @@ fn kill_ollama() {
     run("pkill", &["-x", "ollama"]);
 }
 
-// ------------------------------------------------------- ollama, natively
-
-/// Context Ollama gives a model when nothing says otherwise.
 pub const OLLAMA_CTX: u32 = 16_384;
 
-/// OpenAI-shaped messages as Ollama's own `/api/chat` wants them: text as a
-/// string, images as bare base64, a tool call's arguments as an object.
 fn to_ollama_messages(messages: &Value) -> Value {
     let list = messages.as_array().cloned().unwrap_or_default();
     Value::Array(list.iter().map(|m| {
@@ -487,7 +414,6 @@ fn to_ollama_messages(messages: &Value) -> Value {
     }).collect())
 }
 
-/// Ollama's tool calls in the OpenAI shape the rest of the app reads.
 fn from_ollama_calls(calls: &[Value], start: usize) -> Vec<Value> {
     calls.iter().enumerate().map(|(i, c)| {
         let args = c.pointer("/function/arguments").cloned().unwrap_or(json!({}));
@@ -502,17 +428,6 @@ fn from_ollama_calls(calls: &[Value], start: usize) -> Vec<Value> {
     }).collect()
 }
 
-/// A chat completion through Ollama's native API.
-///
-/// Its OpenAI-compatible endpoint cannot be told how much context to use, so
-/// every request gets the model's small default and a long prompt — the
-/// material a deck is written from, a chat with its sources — is quietly cut
-/// off at the front. The native API takes `num_ctx`. It also says plainly
-/// when a model cannot use tools, and the request is then made again without
-/// them rather than failing.
-///
-/// Returns the same shape the other paths do: content, reasoning, model,
-/// usage (OpenAI's field names), tool_calls, cancelled.
 pub async fn ollama_chat(
     client: &reqwest::Client,
     cfg: &Config,
@@ -537,7 +452,6 @@ pub async fn ollama_chat(
     if resp.status().as_u16() == 400 {
         let text = resp.text().await.unwrap_or_default();
         let msg = error_text(&text);
-        // A model without tool support is still a model that can answer.
         if msg.contains("does not support tools") && native.get("tools").is_some() {
             native.as_object_mut().map(|o| o.remove("tools"));
             resp = client.post(&url).json(&native).send().await.map_err(|e| format!("Ollama did not answer: {e}"))?;

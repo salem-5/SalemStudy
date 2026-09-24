@@ -1,16 +1,3 @@
-//! Sandboxed Python for the AI solver.
-//!
-//! The model gets a `run_python` tool; this module is what actually runs the
-//! code. It never touches the machine's Python packages: `python_setup`
-//! builds a private virtualenv under the app data dir and installs the math
-//! stack (sympy, numpy, mpmath, scipy) into it, and every run happens in a
-//! throwaway folder with a scrubbed environment, an audit hook (see
-//! `sandbox_runner.py`) and a hard timeout.
-//!
-//! Windows and macOS both work out of the box: the interpreter search knows
-//! the usual install locations on each, and the runner only uses the standard
-//! library plus the venv.
-
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -24,19 +11,10 @@ use tauri::{AppHandle, Manager};
 
 const RUNNER: &str = include_str!("sandbox_runner.py");
 
-/// Imported by the runner before the sandbox closes; the first three are what
-/// the tool description promises, so a missing one means "not ready".
 pub const CORE_PACKAGES: [&str; 3] = ["sympy", "numpy", "mpmath"];
-/// Optional: each is installed on its own, so one without a wheel for this
-/// Python does not block the others.
 pub const EXTRA_PACKAGES: [&str; 6] = ["scipy", "matplotlib", "pint", "pymupdf", "python-pptx", "yt-dlp"];
-/// What the Salem AI runtime needs. Pinned, because the agent classes and the
-/// executor protocol we build on are API surface (see `salem_ai/__init__.py`).
 pub const AI_PACKAGES: [&str; 1] = ["smolagents>=1.26,<2"];
-/// The import name of each of the above, for the probe.
 pub const AI_MODULES: [&str; 1] = ["smolagents"];
-/// smolagents needs 3.10. macOS still ships 3.9, so an environment built
-/// before Salem's AI layer existed has to be rebuilt on a newer interpreter.
 pub const MIN_AI_PYTHON: (u32, u32) = (3, 10);
 
 const PROBE: &str = r#"
@@ -50,11 +28,6 @@ for m in ("sympy", "numpy", "mpmath", "scipy", "matplotlib", "pint", "pymupdf", 
 print(json.dumps({"version": sys.version.split()[0], "exe": sys.executable, "packages": mods}))
 "#;
 
-// ---------------------------------------------------------------------------
-// Running child processes
-// ---------------------------------------------------------------------------
-
-/// Keep a spawned console program from flashing a terminal window.
 pub(crate) fn hide_window(cmd: &mut Command) {
     #[cfg(windows)]
     {
@@ -75,8 +48,6 @@ fn drain(pipe: Option<impl Read + Send + 'static>) -> Arc<Mutex<Vec<u8>>> {
     let buf = Arc::new(Mutex::new(Vec::new()));
     if let Some(mut pipe) = pipe {
         let sink = buf.clone();
-        // A dedicated reader per pipe: waiting on the child first would
-        // deadlock as soon as a pipe's buffer fills up.
         std::thread::spawn(move || {
             let mut chunk = [0u8; 8192];
             loop {
@@ -99,8 +70,6 @@ fn take(buf: &Arc<Mutex<Vec<u8>>>) -> String {
     String::from_utf8_lossy(&buf.lock().unwrap()).to_string()
 }
 
-/// Kill a child and everything it started. Nothing in the sandbox is allowed
-/// to spawn children, but a broken pip run can leave some behind.
 fn kill_tree(child: &mut std::process::Child) {
     #[cfg(windows)]
     {
@@ -125,7 +94,6 @@ fn run(mut cmd: Command, timeout: Duration) -> Result<Output, String> {
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                // Give the readers a moment to flush the tail of the pipes.
                 std::thread::sleep(Duration::from_millis(30));
                 return Ok(Output { code: status.code(), stdout: take(&out), stderr: take(&err), timed_out: false });
             }
@@ -141,7 +109,6 @@ fn run(mut cmd: Command, timeout: Duration) -> Result<Output, String> {
     }
 }
 
-/// Same, but the caller sees each line as it appears (used by the installer).
 fn run_streaming(
     mut cmd: Command,
     timeout: Duration,
@@ -152,8 +119,6 @@ fn run_streaming(
     let mut child = cmd.spawn().map_err(|e| e.to_string())?;
     let err = drain(child.stderr.take());
     let mut tail: Vec<String> = Vec::new();
-    // The reader lives in its own thread so a download that stalls without
-    // printing anything still hits the deadline below.
     let (tx, rx) = std::sync::mpsc::channel::<String>();
     if let Some(stdout) = child.stdout.take() {
         std::thread::spawn(move || {
@@ -198,10 +163,6 @@ fn run_streaming(
     Ok(Output { code: status.code(), stdout: tail.join("\n"), stderr: take(&err), timed_out: false })
 }
 
-// ---------------------------------------------------------------------------
-// Finding an interpreter
-// ---------------------------------------------------------------------------
-
 fn exe(dir: &Path, stem: &str) -> Option<PathBuf> {
     for name in [format!("{stem}.exe"), stem.to_string()] {
         let cand = dir.join(name);
@@ -212,7 +173,6 @@ fn exe(dir: &Path, stem: &str) -> Option<PathBuf> {
     None
 }
 
-/// The private virtualenv: `<app data>/python/venv`.
 fn venv_root(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     Ok(dir.join("python").join("venv"))
@@ -224,8 +184,6 @@ pub fn venv_python(app: &AppHandle) -> Option<PathBuf> {
     exe(&bin, "python3").or_else(|| exe(&bin, "python"))
 }
 
-/// Store-installed Python on Windows is a stub that opens the Microsoft Store
-/// instead of running, so never pick one up.
 fn usable(path: &Path) -> bool {
     if !path.is_file() {
         return false;
@@ -241,7 +199,6 @@ fn on_path(stem: &str) -> Option<PathBuf> {
     std::env::split_paths(&path).find_map(|dir| exe(&dir, stem).filter(|p| usable(p)))
 }
 
-/// Where a system Python lives when a GUI app's PATH does not have it.
 fn extra_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     #[cfg(windows)]
@@ -294,11 +251,9 @@ fn extra_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-/// Interpreter names to try, newest first.
 const NEWEST_FIRST: [&str; 8] =
     ["python3.14", "python3.13", "python3.12", "python3.11", "python3.10", "python3", "python", "python3.9"];
 
-/// A Python that can create the virtualenv. Never the venv's own interpreter.
 fn find_system_python(configured: &str) -> Vec<PathBuf> {
     let mut found: Vec<PathBuf> = Vec::new();
     let mut push = |p: PathBuf| {
@@ -312,8 +267,6 @@ fn find_system_python(configured: &str) -> Vec<PathBuf> {
     if !configured.trim().is_empty() {
         push(PathBuf::from(configured.trim()));
     }
-    // Newest first: the environment is built with the first one that works,
-    // and smolagents rules out the 3.9 that macOS still ships as `python3`.
     for stem in NEWEST_FIRST {
         if let Some(p) = on_path(stem) {
             push(p);
@@ -326,7 +279,6 @@ fn find_system_python(configured: &str) -> Vec<PathBuf> {
             }
         }
     }
-    // The Windows launcher knows about installs that are on no PATH at all.
     #[cfg(windows)]
     if let Some(py) = on_path("py") {
         let mut cmd = Command::new(py);
@@ -372,8 +324,6 @@ fn probe(python: &Path) -> Result<Probe, String> {
     Ok(Probe { version, packages })
 }
 
-/// "3.12.4" -> (3, 12). Anything unparseable counts as too old, which is the
-/// safe way round: it makes the app offer to rebuild rather than fail later.
 pub fn version_pair(version: &str) -> (u32, u32) {
     let mut parts = version.trim().split(['.', '-', '+']);
     let major = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
@@ -402,12 +352,6 @@ fn install_help() -> &'static str {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Status
-// ---------------------------------------------------------------------------
-
-/// The interpreter the app runs Python with: an explicit override if there is
-/// one, otherwise the managed virtualenv that `python_setup` builds.
 pub(crate) fn interpreter(app: &AppHandle, configured: &str) -> Option<PathBuf> {
     interpreter_with_source(app, configured).0
 }
@@ -450,7 +394,6 @@ fn status_value(app: &AppHandle, configured: &str) -> Value {
         Ok(p) => {
             let has = |name: &str| p.packages.iter().any(|(n, v)| n == name && v.is_some());
             let missing: Vec<&str> = CORE_PACKAGES.iter().filter(|n| !has(n)).copied().collect();
-            // The AI runtime needs both a new enough interpreter and smolagents.
             let old_python = !new_enough_for_ai(&p.version);
             let ai_missing: Vec<&str> = AI_MODULES.iter().filter(|n| !has(n)).copied().collect();
             let ai_error = if old_python {
@@ -507,10 +450,6 @@ pub async fn python_status(app: AppHandle) -> Result<Value, String> {
         .map_err(|e| e.to_string())
 }
 
-// ---------------------------------------------------------------------------
-// Setup: build the virtualenv and install the math stack
-// ---------------------------------------------------------------------------
-
 fn setup_blocking(app: &AppHandle, configured: &str, repair: bool) -> Result<Value, String> {
     let emit = |stage: &str, line: &str| {
         crate::tabmode::notify(&app, "python://progress", json!({ "stage": stage, "line": line }));
@@ -523,10 +462,6 @@ fn setup_blocking(app: &AppHandle, configured: &str, repair: bool) -> Result<Val
     }
 
     let mut python = venv_python(app).filter(|p| usable(p));
-    // An environment built before the AI layer existed can be on a Python that
-    // smolagents will not install into. Rebuild it rather than leaving the
-    // student with an app whose AI silently cannot start — but only when there
-    // is actually a newer interpreter to rebuild it with.
     if let Some(existing) = python.clone() {
         if let Ok(p) = probe(&existing) {
             if !new_enough_for_ai(&p.version) {
@@ -592,8 +527,6 @@ fn setup_blocking(app: &AppHandle, configured: &str, repair: bool) -> Result<Val
     }
     let python = python.unwrap();
 
-    // pip first: a fresh venv on an old Python can have a pip too old for the
-    // current wheels.
     emit("stage", "Updating pip…");
     let mut cmd = Command::new(&python);
     cmd.args(["-m", "pip", "install", "--upgrade", "--disable-pip-version-check", "pip"]);
@@ -618,17 +551,12 @@ fn setup_blocking(app: &AppHandle, configured: &str, repair: bool) -> Result<Val
     };
 
     install(&CORE_PACKAGES, "sympy, numpy and mpmath")?;
-    // The extras have no wheel for every Python version; they are a bonus, not
-    // a requirement, so a failure here is only a note.
     for pkg in EXTRA_PACKAGES {
         if let Err(e) = install(&[pkg], pkg) {
             emit("log", &format!("{pkg} was skipped — {e}"));
         }
     }
 
-    // smolagents last: it is what the AI runtime imports, and on an
-    // interpreter that is too old it cannot be installed at all. Failing here
-    // is reported plainly rather than left to surface as a broken chat.
     let version = probe(&python).map(|p| p.version).unwrap_or_default();
     if new_enough_for_ai(&version) {
         if let Err(e) = install(&AI_PACKAGES, "smolagents (Salem's AI runtime)") {
@@ -640,9 +568,6 @@ fn setup_blocking(app: &AppHandle, configured: &str, repair: bool) -> Result<Val
 
     emit("stage", "Checking the environment…");
     let status = status_value(app, configured);
-    // The AI runtime is a long-lived process holding the *old* interpreter.
-    // Whatever was just installed only reaches it after a restart, so it is
-    // stopped here and starts again on the next request.
     if let Some(salem) = app.try_state::<crate::salem::Salem>() {
         salem.shut_down("the Python environment changed");
     }
@@ -659,13 +584,7 @@ pub async fn python_setup(app: AppHandle, repair: Option<bool>) -> Result<Value,
         .map_err(|e| e.to_string())?
 }
 
-// ---------------------------------------------------------------------------
-// Running the model's code
-// ---------------------------------------------------------------------------
-
 static RUN_SEQ: AtomicU64 = AtomicU64::new(0);
-/// Interpreter that already probed as ready, so a solve does not re-probe
-/// before every single tool call. Cleared by `python_setup`.
 static VERIFIED: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 fn remember_ready(path: &Path) {
@@ -708,9 +627,6 @@ fn sandbox_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// PATH for the child: the interpreter's own folder plus the system essentials
-/// and nothing else, so the sandbox cannot pick up tooling from the user's
-/// shell profile.
 fn child_path(python: &Path) -> std::ffi::OsString {
     let mut dirs: Vec<PathBuf> = Vec::new();
     if let Some(d) = python.parent() {
@@ -729,14 +645,11 @@ fn child_path(python: &Path) -> std::ffi::OsString {
     std::env::join_paths(dirs).unwrap_or_default()
 }
 
-/// A file handed to the code: written into the run folder under `name`.
 pub struct InputFile {
     pub name: String,
     pub data: Vec<u8>,
 }
 
-/// A name that is safe to create inside the run folder: no directories, no
-/// clash with the runner's own `_`-prefixed files.
 fn safe_file_name(name: &str) -> String {
     let base = name.rsplit(['/', '\\']).next().unwrap_or("");
     let cleaned: String = base
@@ -755,8 +668,6 @@ fn image_mime(name: &str) -> Option<&'static str> {
         .map(|(_, m)| *m)
 }
 
-/// Output and figure caps for one run; the defaults suit model-written code,
-/// source extraction asks for more.
 pub struct Limits {
     pub max_output: usize,
     pub max_figures: usize,
@@ -800,7 +711,6 @@ fn run_blocking(app: &AppHandle, configured: &str, code: String, timeout: u64, m
     }
 
     let mut cmd = Command::new(&python);
-    // -I: ignore PYTHON* variables and the user site dir. -B: no .pyc files.
     cmd.arg("-I").arg("-B").arg(&runner).arg(&job).arg(&result);
     cmd.current_dir(&dir);
     cmd.env_clear();
@@ -814,14 +724,12 @@ fn run_blocking(app: &AppHandle, configured: &str, code: String, timeout: u64, m
     cmd.env("PYTHONDONTWRITEBYTECODE", "1");
     cmd.env("PYTHONNOUSERSITE", "1");
     cmd.env("MPLBACKEND", "Agg");
-    // matplotlib builds its font cache once, here, instead of on every run.
     if let Ok(cache) = app.path().app_cache_dir() {
         let mpl = cache.join("mpl-config");
         if std::fs::create_dir_all(&mpl).is_ok() {
             cmd.env("MPLCONFIGDIR", mpl);
         }
     }
-    // Keep a linear-algebra call from taking every core on the machine.
     for var in ["OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"] {
         cmd.env(var, "2");
     }
@@ -838,8 +746,6 @@ fn run_blocking(app: &AppHandle, configured: &str, code: String, timeout: u64, m
         }
     }
 
-    // The runner stops itself at `timeout`; this is the backstop for code that
-    // is stuck inside a C loop where Python cannot interrupt it.
     let out = match run(cmd, Duration::from_secs(timeout + 10)) {
         Ok(o) => o,
         Err(e) => {
@@ -851,7 +757,6 @@ fn run_blocking(app: &AppHandle, configured: &str, code: String, timeout: u64, m
     let mut parsed = std::fs::read_to_string(&result)
         .ok()
         .and_then(|s| serde_json::from_str::<Value>(&s).ok());
-    // Figures come back as data URLs; the folder is gone after this.
     if let Some(Value::Object(map)) = parsed.as_mut() {
         let names: Vec<String> = map
             .get("figures")
@@ -932,10 +837,6 @@ pub async fn run_python(
         .map_err(|e| e.to_string())?
 }
 
-/// Captions of a YouTube video, fetched with yt-dlp from the app's virtualenv.
-/// This is the one Python run that needs the network, so it does not go
-/// through the sandbox; it runs a fixed script, never model-written code, and
-/// only downloads subtitles (never the video).
 const YT_SCRIPT: &str = r#"
 import json, sys
 import yt_dlp
@@ -943,8 +844,6 @@ import yt_dlp
 ENGLISH = ["en", "en-US", "en-GB", "en-CA", "en-AU", "en-IN", "en-IE", "en-NZ"]
 
 def pick(tracks, prefer):
-    # Exactly one track, by explicit code: YouTube also lists machine
-    # translations (e.g. "en-bn"), and fetching those gets rate-limited.
     for code in prefer:
         if code in tracks:
             return tracks[code]
@@ -954,7 +853,6 @@ url = sys.argv[1]
 with yt_dlp.YoutubeDL({"skip_download": True, "quiet": True, "no_warnings": True}) as ydl:
     info = ydl.extract_info(url, download=False)
     auto = info.get("automatic_captions") or {}
-    # Hand-made English captions, else auto-captions in the spoken language.
     track = (pick(info.get("subtitles") or {}, ENGLISH)
              or pick(auto, ["en-orig", "en"])
              or pick(auto, [c for c in auto if c.endswith("-orig")]))
@@ -1009,7 +907,6 @@ pub async fn youtube_transcript(app: AppHandle, url: String) -> Result<Value, St
     .map_err(|e| e.to_string())?
 }
 
-/// Delete any sandbox folder left behind by a crash. Called once at startup.
 pub fn sweep_sandboxes(app: &AppHandle) {
     let Ok(base) = app.path().app_cache_dir().map(|d| d.join("python-sandbox")) else { return };
     let Ok(entries) = std::fs::read_dir(&base) else { return };
@@ -1029,8 +926,6 @@ mod tests {
         assert_eq!(version_pair("3.12.4"), (3, 12));
         assert_eq!(version_pair("3.9.6"), (3, 9));
         assert_eq!(version_pair("3.10.0rc1"), (3, 10));
-        // Unreadable versions count as too old, so the app offers a rebuild
-        // rather than failing later inside the runtime.
         assert_eq!(version_pair("weird"), (0, 0));
     }
 
@@ -1058,24 +953,12 @@ mod tests {
 
     use super::*;
 
-    /// Drives the real runner the way `run_blocking` does, against the
-    /// interpreter in WA_TEST_PYTHON — a virtualenv with the math stack in it:
-    ///
-    /// ```text
-    /// python3 -m venv /tmp/wa-py && /tmp/wa-py/bin/pip install sympy numpy mpmath
-    /// WA_TEST_PYTHON=/tmp/wa-py/bin/python cargo test
-    /// ```
-    ///
-    /// Without that variable there is nothing to run against, so the tests
-    /// report themselves as skipped instead of failing.
     fn exec(code: &str, timeout: u64) -> Option<Value> {
         let Ok(var) = std::env::var("WA_TEST_PYTHON") else {
             eprintln!("skipped: set WA_TEST_PYTHON to a virtualenv interpreter to run the sandbox tests");
             return None;
         };
         let python = PathBuf::from(var);
-        // A counter as well as the clock: macOS timestamps are only microsecond
-        // precise, and parallel tests sharing a folder delete it under each other.
         let n = RUN_SEQ.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!("wa-test-{}-{n}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
         std::fs::create_dir_all(&dir).unwrap();

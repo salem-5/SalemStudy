@@ -1,8 +1,3 @@
-/* Baseline for WebAssign question markup, so questions lay out correctly even
-   before (or without) WebAssign's own stylesheet from GET .../styles. Rules
-   mirror the layout of student_screen_min.css / csstyle/style.css; colors come
-   from the app theme. Everything is scoped under .qhtml. */
-
 .qhtml .qContent .wa1par { margin: 0 0 1em; line-height: 1.4em; }
 .qhtml .qContent .wa1given { margin: 0 0 1em 6em; }
 .qhtml .qContent .wa1ans { margin: -0.5em 0 1em; }
@@ -28,7 +23,6 @@
 .qhtml .figure, .qhtml figure { margin: 1em 0 1em 2em; }
 .qhtml figcaption, .qhtml .alt-cap, .qhtml .cap-btm-rit { color: var(--text-2); font-size: 0.9em; }
 
-/* watex layout */
 .qhtml .watexinlineblock { display: inline-block; position: relative; }
 .qhtml .watexmiddle { vertical-align: middle; }
 .qhtml span.watex { display: block; margin: 0; }
@@ -44,7 +38,6 @@
 .qhtml table.watexarray { border-collapse: collapse; }
 .qhtml table.watexarray td { padding: 0.15em 0.6em; }
 
-/* rebuilt watex glyphs (see rewriteWatex in lib/sanitize.ts) */
 .qhtml .wx-delim {
   display: inline-block;
   vertical-align: middle;
@@ -76,7 +69,6 @@
   border-right-width: 0;
 }
 
-/* Read-only answers on closed questions */
 .qhtml .static, .qhtml .wa-static {
   display: inline-block;
   min-width: 2em;
@@ -90,7 +82,6 @@
 }
 .qhtml .wa-static math { font-family: var(--math); }
 
-/* Read-only choices on closed questions (see staticChoices in lib/sanitize.ts) */
 .qhtml .static-opt {
   display: inline-block;
   width: 12px;

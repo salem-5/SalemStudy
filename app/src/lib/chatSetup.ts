@@ -1,14 +1,6 @@
 import { getAiConfig, type AiConfig } from './ai';
 import { pythonStatus, runPython, sandboxName } from './python';
 
-/**
- * What a chat view needs to know before it can take a message: the AI
- * settings, and whether the Python sandbox is up.
- *
- * Answering a message is the Salem runtime's job (see `lib/salem`); this is
- * only the setup and the file reading around it.
- */
-
 export type ChatSetup = { config: AiConfig; python: boolean };
 
 export async function chatSetup(): Promise<ChatSetup> {
@@ -20,7 +12,6 @@ export async function chatSetup(): Promise<ChatSetup> {
   return { config, python };
 }
 
-/** Readable text out of an uploaded file, where there is one. */
 export async function extractText(file: File, attachmentId: number, python: boolean): Promise<string | null> {
   const name = file.name.toLowerCase();
   const textual = file.type.startsWith('text/') || /\.(md|markdown|txt|tex|csv|tsv|json|py|js|ts|rs|c|cpp|h|java|m|r|sql|yaml|yml|xml|html|css)$/.test(name);

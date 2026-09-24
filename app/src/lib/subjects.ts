@@ -1,20 +1,3 @@
-/**
- * What kind of subject this is, and what that changes.
- *
- * A quiz on cell biology and a quiz on linear algebra are not the same job.
- * The maths one lives or dies on whether the arithmetic is right, so every
- * numeric answer gets re-derived in Python before the student ever sees it.
- * The biology one has nothing to compute — running Python at it is wasted
- * time and, worse, invites the model to invent a calculation to justify an
- * answer that should have come from the material. Business sits between the
- * two: real arithmetic in the finance questions, definitions and judgement
- * everywhere else.
- *
- * So the subject is classified once, from the course name and whatever the
- * student wrote in their syllabus, and that decides how questions are asked,
- * what a good distractor looks like, and whether Python is worth reaching for.
- */
-
 export type Flavour = 'stem' | 'life' | 'business' | 'general';
 
 const PATTERNS: [Flavour, RegExp][] = [
@@ -23,10 +6,6 @@ const PATTERNS: [Flavour, RegExp][] = [
   ['stem', /\b(math|calculus|algebra|geometry|trigonometr|statistic|probability|physic|mechanic|thermodynam|electromag|circuit|engineer|computer science|programming|algorithm|data structure|chemistry|chem\b|dynamics|fluid|signal|control system|discrete|differential|linear algebra|numerical)/i],
 ];
 
-/**
- * Classify a course. Order matters: "biochemistry" is life science, not
- * chemistry, and "financial mathematics" is business before it is maths.
- */
 export function flavourOf(text: string): Flavour {
   const haystack = text.toLowerCase();
   for (const [flavour, pattern] of PATTERNS) {
@@ -35,23 +14,11 @@ export function flavourOf(text: string): Flavour {
   return 'general';
 }
 
-/** The whole context a course gives us, as one string to classify on. */
 export const courseFlavour = (ctx: { subject: string; notebook: string; courseContext: string }): Flavour =>
-  // The syllabus is the best evidence when there is one, but a course named
-  // "Biology 201" should not be reclassified by one stray mention of algebra,
-  // so the name is weighted by being read first.
   flavourOf(`${ctx.subject} ${ctx.subject} ${ctx.notebook} ${ctx.courseContext.slice(0, 2000)}`);
 
-/**
- * Is Python worth offering for this subject?
- *
- * Not a ban — a numerical genetics question should still be checked. It
- * decides whether the *generator* is told to attach a check to every question
- * or only to the ones that actually compute something.
- */
 export const computational = (flavour: Flavour): boolean => flavour === 'stem' || flavour === 'business';
 
-/** How the generator should think about this subject. */
 export function guidance(flavour: Flavour): string {
   switch (flavour) {
     case 'stem':
@@ -83,7 +50,6 @@ export function guidance(flavour: Flavour): string {
   }
 }
 
-/** How a deck of flashcards should be written for this subject. */
 export function cardGuidance(flavour: Flavour): string {
   switch (flavour) {
     case 'stem':

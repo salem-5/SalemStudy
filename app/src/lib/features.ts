@@ -1,12 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
-/**
- * Optional parts of the app. The Assignment Solver (WebAssign) is off for new
- * installs; someone who has already used it keeps it on.
- */
-
 const KEY = 'wa.feature.solver';
-/** Keys only the solver writes: their presence means it has been used here. */
 const SOLVER_TRACES = ['wa.selected', 'wa.usage.v1', 'wa.drafts.v1', 'wa.section'];
 const listeners = new Set<() => void>();
 
@@ -21,11 +15,10 @@ export function solverEnabled(): boolean {
 }
 
 export function setSolverEnabled(on: boolean) {
-  try { localStorage.setItem(KEY, on ? '1' : '0'); } catch { /* storage unavailable */ }
+  try { localStorage.setItem(KEY, on ? '1' : '0'); } catch { }
   listeners.forEach((l) => l());
 }
 
-/** Re-read `keys` when the window or a tab changes them (lib/prefSync). */
 const onShared = (keys: string[], fn: () => void) => {
   if (typeof window === 'undefined') return;
   window.addEventListener('wa:prefs', (e) => {

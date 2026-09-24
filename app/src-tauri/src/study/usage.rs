@@ -1,6 +1,3 @@
-//! Every DeepSeek call's token counts and cost, whatever made it (solver,
-//! chat, notes, decks, quizzes, reading sources), for the Settings totals.
-
 use rusqlite::{params, Connection};
 use serde::Serialize;
 use serde_json::Value;
@@ -8,24 +5,19 @@ use tauri::{AppHandle, State};
 
 use super::{now_ms, with_db, StudyDb};
 
-/// USD per million tokens (off-peak): cache hit, cache miss, output.
 fn rates(model: &str) -> (f64, f64, f64) {
     if model.to_lowercase().contains("pro") { (0.022, 0.66, 1.98) } else { (0.003, 0.15, 0.6) }
 }
 
-/// DeepSeek charges double on weekday peak hours (UTC 01–04 and 06–10).
 fn is_peak(at_ms: i64) -> bool {
     let secs = at_ms / 1000;
     let days = secs.div_euclid(86_400);
     let hour = secs.rem_euclid(86_400) / 3600;
-    // 1970-01-01 was a Thursday: 0 = Thursday … 3 = Sunday, 4 = Monday.
-    let weekday = (days + 4).rem_euclid(7); // 0 = Sunday … 6 = Saturday
+    let weekday = (days + 4).rem_euclid(7);
     (1..=5).contains(&weekday) && ((1..4).contains(&hour) || (6..10).contains(&hour))
 }
 
 pub fn cost(model: &str, hit: i64, miss: i64, completion: i64, at_ms: i64, price: Option<(f64, f64, f64)>) -> f64 {
-    // The chosen model's own price from the catalogue; without one, the
-    // DeepSeek rates the app has always used (with DeepSeek's peak hours).
     let ((h, m, o), mult) = match price {
         Some(p) => (p, 1.0),
         None => (rates(model), if is_peak(at_ms) { 2.0 } else { 1.0 }),
@@ -33,9 +25,6 @@ pub fn cost(model: &str, hit: i64, miss: i64, completion: i64, at_ms: i64, price
     (hit as f64 * h + miss as f64 * m + completion as f64 * o) / 1e6 * mult
 }
 
-/// Token counts from a `usage` object: cache hits, misses, output. DeepSeek
-/// reports cache hits in its own field; OpenAI-style providers under
-/// `prompt_tokens_details.cached_tokens`.
 fn counts(usage: &Value) -> (i64, i64, i64) {
     let n = |k: &str| usage.get(k).and_then(Value::as_i64).unwrap_or(0);
     let prompt = n("prompt_tokens");
@@ -46,13 +35,11 @@ fn counts(usage: &Value) -> (i64, i64, i64) {
     (hit, miss, n("completion_tokens"))
 }
 
-/// What one completion cost, from its `usage` object, in USD.
 pub fn cost_of(model: &str, usage: &Value, at_ms: i64, price: Option<(f64, f64, f64)>) -> f64 {
     let (hit, miss, out) = counts(usage);
     cost(model, hit, miss, out, at_ms, price)
 }
 
-/// Log one completion from its `usage` object. Missing fields count as zero.
 pub fn record(conn: &Connection, model: &str, feature: &str, usage: &Value, price: Option<(f64, f64, f64)>) -> rusqlite::Result<()> {
     let (hit, miss, completion) = counts(usage);
     if hit + miss == 0 && completion == 0 {
@@ -82,7 +69,6 @@ pub struct Summary {
     pub last30: Bucket,
     pub by_feature: Vec<Bucket>,
     pub by_model: Vec<Bucket>,
-    /// Last 30 days, one bucket per UTC day ("YYYY-MM-DD").
     pub by_day: Vec<Bucket>,
     pub since: Option<i64>,
 }
@@ -135,8 +121,7 @@ mod tests {
 
     #[test]
     fn peak_hours_and_costs() {
-        // 2026-09-21 is a Monday. 02:00 UTC is peak, 12:00 UTC is not; Saturday never is.
-        let monday = 1_789_948_800_000_i64; // 2026-09-21T00:00:00Z
+        let monday = 1_789_948_800_000_i64;
         assert!(is_peak(monday + 2 * 3_600_000));
         assert!(!is_peak(monday + 12 * 3_600_000));
         assert!(!is_peak(monday - 2 * 86_400_000 + 2 * 3_600_000));
@@ -163,7 +148,6 @@ mod tests {
 
     #[test]
     fn a_catalogue_price_and_openai_style_cache_counts() {
-        // 1M cached at 0.1, 1M fresh at 1, 1M out at 2 → 3.1 USD, no peak doubling.
         let u = serde_json::json!({ "prompt_tokens": 2_000_000, "completion_tokens": 1_000_000, "prompt_tokens_details": { "cached_tokens": 1_000_000 } });
         assert!((cost_of("gpt-x", &u, 0, Some((0.1, 1.0, 2.0))) - 3.1).abs() < 1e-9);
     }

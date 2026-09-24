@@ -1,14 +1,3 @@
-//! In-process WebAssign bridge.
-//!
-//! The userscript in a logged-in WebAssign tab long-polls `/_bridge/poll`; this
-//! server hands it one job at a time and collects the result from
-//! `/_bridge/result`. The desktop app's `api` command calls [`Bridge::handle_api`]
-//! directly, and the same routes are also served over HTTP on 127.0.0.1:8787 so
-//! a CLI can still talk to the bridge. Requests carrying an http(s) `Origin`
-//! are refused, so websites can't reach it through the user's browser.
-//!
-//! This replaces the old `bridge.js` Node process; there is no child process.
-
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -114,7 +103,6 @@ impl Bridge {
         })
     }
 
-    /// Give a job to a parked poller, or queue it for the next poll.
     fn hand_out(inner: &mut Inner, job: Value) {
         while let Some(p) = inner.pollers.pop() {
             if p.tx.send(job.clone()).is_ok() {
@@ -124,7 +112,6 @@ impl Bridge {
         inner.queue.push_back(job);
     }
 
-    /// Send `action` to the browser and wait for its result.
     pub async fn run_job(&self, action: &str, params: Value) -> Result<Value, (u16, String)> {
         if !self.connected() {
             return Err((
@@ -162,7 +149,6 @@ impl Bridge {
         }
     }
 
-    /// The `/api/*` surface, shared by the HTTP server and the app's `api` command.
     pub async fn handle_api(
         &self,
         method: &str,
@@ -215,7 +201,6 @@ impl Bridge {
     }
 }
 
-/// The HTTP surface the userscript talks to.
 pub fn router(bridge: Bridge) -> Router {
     Router::new()
         .route("/_bridge/poll", get(poll))
@@ -367,7 +352,6 @@ fn urldecode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Log connect/disconnect transitions, like the old Node bridge did.
 pub fn spawn_logger(bridge: Bridge) {
     std::thread::spawn(move || {
         let mut was = false;

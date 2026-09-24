@@ -3,11 +3,6 @@ import { charge, type Meter } from './meter';
 import { listen } from '@tauri-apps/api/event';
 import type { Box, Draft, Question } from '../types';
 
-// ---------------------------------------------------------------------------
-// Tauri bridge: settings live in a JSON file next to the app (see lib.rs), so
-// the API key is never stored in the webview. `deepseek_chat` injects the key.
-// ---------------------------------------------------------------------------
-
 export type Effort = 'low' | 'high' | 'max';
 
 export type AiConfig = {
@@ -18,35 +13,24 @@ export type AiConfig = {
   baseUrl: string;
   maxAttempts: number;
   pauseAfter: number;
-  /** How hard the model reasons before it answers: 'low', 'high' or 'max'. */
   effort: Effort;
-  /** Offer the sandboxed run_python tool to the model. */
   pythonEnabled: boolean;
-  /** Insist on Python for anything that needs calculating. */
   pythonAuto: boolean;
-  /** Interpreter override; empty means the app's managed virtualenv. */
   pythonPath: string;
   pythonTimeout: number;
   pythonMemoryMb: number;
-  /** Snippets the model may run per attempt. */
   pythonMaxCalls: number;
-  /** Closing the window hides it to the tray (keeps tab mode running). */
   closeToTray: boolean;
-  /** Which provider answers: a models.dev id, or 'ollama'. */
   provider: string;
-  /** Providers with a key saved. */
   keyed: string[];
-  /** Tokens of context Ollama gives a local model. */
   ollamaCtx: number;
 };
 
 export type ConfigPatch = {
   apiKey?: string;
-  /** Which provider `apiKey` is for; the current one when left out. */
   keyProvider?: string;
   provider?: string;
   ollamaCtx?: number;
-  /** Price and limits of chosen models, from the catalogue. */
   modelsInfo?: Record<string, { input: number; output: number; cacheRead: number; effort: boolean; maxOutput: number; vision: boolean; tools: boolean }>;
   flashModel?: string;
   proModel?: string;
@@ -78,8 +62,6 @@ export type TextPart = { type: 'text'; text: string };
 export type ImagePart = { type: 'image_url'; image_url: { url: string } };
 export type ApiContent = string | (TextPart | ImagePart)[];
 export type ToolCall = { id: string; type: string; function: { name: string; arguments: string } };
-/** An assistant turn that asked for tools, plus the results that answer it —
- *  both have to stay in the thread, in order, or the API rejects the next call. */
 export type ToolCallMessage = { role: 'assistant'; content: string; tool_calls: ToolCall[]; reasoning_content?: string };
 export type ToolResultMessage = { role: 'tool'; content: string; tool_call_id: string; name?: string };
 export type ApiMessage =
@@ -87,9 +69,8 @@ export type ApiMessage =
   | ToolCallMessage
   | ToolResultMessage;
 
-export type AiReply = { content: string; reasoning: string; model: string; usage: unknown; tool_calls?: ToolCall[] | null; /** USD, worked out where the call was logged. */ cost?: number };
+export type AiReply = { content: string; reasoning: string; model: string; usage: unknown; tool_calls?: ToolCall[] | null; cost?: number };
 
-/** What an AI call is for, so Settings can show where the tokens went. */
 export type AiFeature = 'solver' | 'chat' | 'notebook' | 'notes' | 'flashcards' | 'quiz' | 'sources' | 'overview' | 'other';
 
 export const aiChat = async (args: {
@@ -101,9 +82,7 @@ export const aiChat = async (args: {
   json?: boolean;
   tools?: unknown[];
   toolChoice?: unknown;
-  /** Adds this call's price to the piece of work it belongs to. */
   meter?: Meter;
-  /** Lets `aiCancel(id)` stop the request while it is waiting. */
   id?: string;
 }) => {
   const reply = await invoke<AiReply>('deepseek_chat', {
@@ -121,11 +100,6 @@ export const aiChat = async (args: {
   return reply;
 };
 
-/**
- * Streamed chat: `onDelta` gets every piece of text as DeepSeek produces it;
- * the promise resolves with the whole reply (tool calls reassembled). Stop it
- * with `aiCancel(id)`; the reply then comes back with `cancelled: true`.
- */
 export async function aiStream(
   args: Parameters<typeof aiChat>[0] & { id?: string },
   onDelta: (content: string, reasoning: string) => void,
@@ -154,7 +128,6 @@ export async function aiStream(
 
 export const aiCancel = (id: string) => invoke<void>('ai_cancel', { id });
 
-/** Forced tool call — the most reliable way to get structured answers out. */
 export const SUBMIT_TOOL = {
   type: 'function',
   function: {
@@ -166,8 +139,6 @@ export const SUBMIT_TOOL = {
         message: { type: 'string', description: 'Short reasoning the student can read.' },
         answers: {
           type: 'object',
-          // The schema is the last thing the model reads before it writes the
-          // answer, so the rule it breaks most often is repeated here.
           description: 'Map from box index (as a string, e.g. "1") to the answer typed into that box. Type only what goes inside the box: never repeat brackets, "=" signs, units or symbols that the question already prints around it.',
           additionalProperties: true,
         },
@@ -178,11 +149,6 @@ export const SUBMIT_TOOL = {
 };
 export const FORCE_SUBMIT = { type: 'function', function: { name: 'submit_answers' } };
 
-/**
- * Sandboxed Python. The description is what the model reads before deciding
- * whether to compute or guess, so it lists the libraries and spells out the
- * sandbox's limits.
- */
 export const PYTHON_TOOL = {
   type: 'function',
   function: {
@@ -203,24 +169,13 @@ export const PYTHON_TOOL = {
 };
 export const FORCE_PYTHON = { type: 'function', function: { name: 'run_python' } };
 
-// ---------------------------------------------------------------------------
-// Images
-// ---------------------------------------------------------------------------
-
 const WA_BASE = 'https://www.webassign.net';
-// MathType's accessibility overlay can leak into the extracted text; never feed
-// it to the model or treat its icon as a figure.
 const CHROME_TEXT = /Press Space or Enter to edit this math answer\.?/gi;
 const CHROME_IMG = /mathtype|overlay|mcorrect|mincorrect|mpartial/i;
 
 export const stripChrome = (text: string): string =>
   text.replace(CHROME_TEXT, '').replace(/\[image: ([^\]]+)\]/gi, (m, url: string) => (CHROME_IMG.test(url) ? '' : m));
 
-/**
- * Content images for a question. watex glyph GIFs are skipped: they are math
- * symbols that the text already carries via MathML/toText, and feeding dozens
- * of tiny brackets to the model is noise.
- */
 export function questionImages(q: Question, max = 8): string[] {
   const out = new Set<string>();
   const add = (raw: string | null | undefined) => {
@@ -237,12 +192,10 @@ export function questionImages(q: Question, max = 8): string[] {
   return [...out].slice(0, max);
 }
 
-/** Fetch each image as a data URL. Failed images are dropped, not fatal. */
 export async function loadImages(urls: string[]): Promise<string[]> {
   const results = await Promise.all(urls.map((u) => fetchImageData(u).catch(() => null)));
   const out: string[] = [];
   let total = 0;
-  // DeepSeek caps the request body at 48 MiB; keep well under it.
   const LIMIT = 24 * 1024 * 1024;
   for (const r of results) {
     if (!r) continue;
@@ -286,23 +239,14 @@ async function drawToPng(dataUrl: string, maxSide: number): Promise<string | nul
   }
 }
 
-/**
- * DeepSeek only accepts png/jpeg/gif/webp. WebAssign also uses SVG, so convert
- * anything else to PNG through a canvas (and drop it if it can't be decoded).
- */
 export async function toSupportedImage(dataUrl: string): Promise<string | null> {
   if (RASTER.test(dataUrl)) return dataUrl;
   return drawToPng(dataUrl, 1600);
 }
 
-/** Always a real PNG (pdflatex only reads PNG/JPEG/PDF). */
 export async function toPngImage(dataUrl: string): Promise<string | null> {
   return drawToPng(dataUrl, 2000);
 }
-
-// ---------------------------------------------------------------------------
-// Prompt building
-// ---------------------------------------------------------------------------
 
 const BASE_PROMPT = `You are an expert STEM tutor that solves WebAssign questions correctly and completely.
 
@@ -349,11 +293,6 @@ Math syntax:
 
 If the user gives extra instructions or corrections, follow them. If feedback says an answer was wrong, rethink from scratch and give a corrected answer. Always reply with the JSON object.`;
 
-/**
- * Appended when the sandbox is ready. The model only reaches for a tool it
- * believes in, so this spells out what is installed, what the tool is good at,
- * and that it is expected to compute rather than recall.
- */
 const PYTHON_PROMPT = `
 
 ## You can run Python — use it for the maths
@@ -380,20 +319,13 @@ LIMITS OF THE SANDBOX — no internet, no other programs, no files outside its o
 
 Read the maths out of the question yourself, compute it in Python, then write the final answer back in the app's math syntax (not Python syntax, and not the repr sympy prints — convert \`**\` to \`^\`, \`Rational(1,2)\` to \`1/2\`, and so on).`;
 
-/** The system prompt, with the Python section only when the sandbox is ready. */
 export const systemPrompt = (python: boolean): string => (python ? BASE_PROMPT + PYTHON_PROMPT : BASE_PROMPT);
 
-/** Kept for the free-form chat, which has no tools. */
 export const SYSTEM_PROMPT = BASE_PROMPT;
 
 const MATH_OPS = /[+*/^=<>≤≥∫√∑∏πθ°]|(?<![a-z])-\s*\d|\b(sqrt|sin|cos|tan|sec|csc|cot|log|ln|exp|pi)\b/i;
 const MATH_WORDS = /\b(solve|evaluate|compute|calculate|determine|find|integral|integrate|derivative|differentiate|limit|matrix|determinant|eigen|vector|dot product|cross product|projection|probability|mean|median|deviation|variance|angle|area|volume|perimeter|slope|tangent|root|zero|sum|series|converge|diverge|equation|inequality|interval|velocity|acceleration|force|mass|concentration|moles|percent|rate)\b/i;
 
-/**
- * Whether a question is worth spending a Python call on. A math box always
- * counts; otherwise it takes numbers together with an operator or a "work this
- * out" verb, so a pure concept multiple-choice is answered straight away.
- */
 export function needsPython(q: Question): boolean {
   if (q.boxes.some((b) => b.kind === 'math')) return true;
   const text = stripChrome(q.text);
@@ -404,11 +336,6 @@ export function needsPython(q: Question): boolean {
 const BRACKETS: [string, string][] = [['(', ')'], ['[', ']'], ['{', '}'], ['<', '>'], ['⟨', '⟩'], ['|', '|'], ['‖', '‖']];
 const PRINTED_UNITS = ['°', '%', '$', '£', '€'];
 
-/**
- * Spell out, for this box, exactly what the page already prints around it.
- * The general rule is in the system prompt; models follow it far better when
- * the instruction sits next to the box it applies to.
- */
 function printedAlready(ctx: { before: string; after: string }): string[] {
   const out: string[] = [];
   const before = ctx.before.trimEnd();
@@ -439,7 +366,6 @@ export function describeBox(b: Box, ctx?: { before: string; after: string }, spe
   return lines.join('\n');
 }
 
-/** "…enter PARALLEL or PERPENDICULAR…" → ["PARALLEL or PERPENDICULAR"]. */
 function specialInstructions(text: string): string[] {
   const out: string[] = [];
   const re = /\benter\s+([A-Z]{2,}(?:\s+or\s+[A-Z]{2,})?)/g;
@@ -451,7 +377,6 @@ function specialInstructions(text: string): string[] {
   return out;
 }
 
-/** Text immediately around each `[n]` marker, so the model sees printed delimiters. */
 export function boxContexts(q: Question): Map<number, { before: string; after: string }> {
   const out = new Map<number, { before: string; after: string }>();
   const text = stripChrome(q.text);
@@ -482,10 +407,6 @@ export function questionPrompt(q: Question, opts: { images: boolean; transcript:
 
 export const TRANSCRIBE_PROMPT = `Transcribe and describe every attached image in exhaustive, literal detail. If an image contains mathematics, write it in the app's math syntax. If it is a graph, diagram or figure, describe the axes, labels, curves, shaded regions, marked points and all numeric values needed to solve the problem. Output plain text only, one section per image.`;
 
-// ---------------------------------------------------------------------------
-// Parsing the model's reply
-// ---------------------------------------------------------------------------
-
 export type ModelReply = { message: string; answers: Record<string, unknown> | null; raw: string };
 
 function tryParse(text: string): Record<string, unknown> | null {
@@ -497,7 +418,6 @@ function tryParse(text: string): Record<string, unknown> | null {
   }
 }
 
-/** Pull the first JSON object out of a reply, tolerating fences and prose. */
 export function extractJsonObject(text: string): Record<string, unknown> | null {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(text);
   if (fenced) {
@@ -547,7 +467,6 @@ export function parseModelReply(content: string): ModelReply {
   return { message, answers, raw };
 }
 
-/** Prefer the forced tool call's arguments; fall back to parsing the content. */
 export function answersFromReply(reply: AiReply): ModelReply {
   const call = (reply.tool_calls ?? []).find((t) => t.function?.name === 'submit_answers');
   if (call) {
@@ -561,11 +480,6 @@ export function answersFromReply(reply: AiReply): ModelReply {
   return parseModelReply(reply.content ?? '');
 }
 
-// ---------------------------------------------------------------------------
-// Answer coercion + validation
-// ---------------------------------------------------------------------------
-
-/** Map keys (box number, letter or id) onto box indexes. */
 export function normalizeAnswers(q: Question, answers: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(answers)) {
@@ -593,7 +507,6 @@ export function coerceDraft(box: Box, value: unknown): Draft | null {
   }
   if (box.kind === 'multiselect') {
     const arr = Array.isArray(value) ? value.map((x) => String(x)) : String(value).split(',');
-    // One entry per dropdown, in order; blanks must keep their position.
     return arr.map((x) => (x.trim() === '' ? '' : resolve(x)));
   }
   if (typeof value === 'object') return JSON.stringify(value);
@@ -606,7 +519,6 @@ function resolveChoice(box: Box, v: string): string | null {
   return hit ? hit.value : null;
 }
 
-/** Problems the user should see before we waste a submission. */
 export function validateAnswers(q: Question, answers: Record<string, unknown>): string[] {
   const errors: string[] = [];
   for (const [k, v] of Object.entries(answers)) {
@@ -639,14 +551,8 @@ export function gradeFeedback(results: { index: number; status: string; message:
   return 'WebAssign graded the submission:\n' + lines.join('\n') + '\nRe-examine the problem and give corrected answers as JSON.';
 }
 
-// ---------------------------------------------------------------------------
-// Deduction: remember which parts are already correct and which choices have
-// been ruled out, so a box with a single remaining option is picked directly.
-// ---------------------------------------------------------------------------
-
 const show = (v: unknown) => (Array.isArray(v) ? v.join(', ') : String(v));
 
-/** Update the correct/eliminated maps from a graded submission. */
 export function learnFromResults(
   q: Question,
   submitted: Record<string, unknown>,
@@ -670,11 +576,6 @@ export function learnFromResults(
   }
 }
 
-/**
- * Override the model's answers with deductions: reuse parts already graded
- * correct, and for a single-choice box with one option left, pick it (it can
- * only be that one). Returns the final answers plus human-readable notes.
- */
 export function applyDeduction(
   q: Question,
   answers: Record<string, unknown>,

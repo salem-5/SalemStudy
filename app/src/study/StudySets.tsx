@@ -7,17 +7,6 @@ import { ConfirmDialog, NameDialog } from './dialogs';
 import { formatCost, recalledCost, rememberCost, type Meter } from '../lib/meter';
 import type { Stop } from '../lib/cancel.ts';
 
-/**
- * What decks and quizzes have in common, written once.
- *
- * A deck and a quiz are the same kind of thing to a student: a named set made
- * from their material, listed in the notebook, opened to read over and edit,
- * played for a score. So everything up to the moment of playing — making
- * one, watching it being written, the row in the list and its menu, renaming
- * and deleting, the page with its scores and its items — is this one code,
- * and the two only part ways in the players themselves.
- */
-
 export type SetKind = 'cards' | 'quiz';
 
 const WORDS = {
@@ -27,23 +16,11 @@ const WORDS = {
 
 export const setWords = (kind: SetKind) => WORDS[kind];
 
-/** Where a notebook's decks or quizzes are written. One job at a time each. */
 export const setScope = (kind: SetKind, notebookId: number) => `notebook:${notebookId}:${kind === 'cards' ? 'decks' : 'quizzes'}`;
 
 const pct = (v: number | null) => (v === null ? '–' : `${Math.round(v * 100)}%`);
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-// -------------------------------------------------------------- making one
-
-/**
- * Write a deck or a quiz in the background and save it.
- *
- * Refuses straight away (so the dialog can say why) if one is already being
- * written for this notebook. Otherwise it returns at once: the list shows the
- * set being written, and it becomes an ordinary row the moment it is saved.
- * Nothing is held back for a "save" click — a set can be read over, edited
- * or deleted from its own page like any other.
- */
 export function startSet(
   kind: SetKind,
   notebook: { id: number; name: string },
@@ -61,19 +38,15 @@ export function startSet(
     (progress, meter, stop) => { spent = meter; return make(progress, meter, stop); },
   ).then(({ id, note }) => {
     const cost = spent?.total ?? 0;
-    // Kept, so the set's page can still say what it cost after a restart.
     rememberCost(kind === 'cards' ? 'deck' : 'quiz', id, cost);
     done(id, note, cost);
   }).catch(() => {});
 }
 
-/** Whether a deck or quiz is being written for this notebook, for the tab. */
 export function useSetBusy(kind: SetKind, notebookId: number): boolean {
   const scope = setScope(kind, notebookId);
   return useTasks().some((t) => t.scope === scope && !['completed', 'failed', 'cancelled'].includes(t.state));
 }
-
-// ------------------------------------------------------------------- list
 
 export type SetRow = {
   id: number;
@@ -82,27 +55,17 @@ export type SetRow = {
   runs: number;
   best: number | null;
   last: number | null;
-  /** Anything else worth a word on the row: "3 answered so far". */
   extra?: string;
 };
 
-/**
- * A notebook's decks or quizzes, in the right-hand pane.
- *
- * One being written sits at the top from the moment it is asked for; click it
- * to watch it, × to stop it. A finished one is marked new until it is opened,
- * with a note if part of the material could not be written.
- */
 export function SetsPane({ kind, rows, notebookId, fresh, onOpen, onPlay, onGenerate, onNew, onRename, onDelete, deleteText }: {
   kind: SetKind;
   rows: SetRow[];
   notebookId: number;
-  /** Sets written since the notebook was opened and not looked at yet. */
   fresh: Record<number, string>;
   onOpen: (id: number) => void;
   onPlay: (id: number) => void;
   onGenerate: () => void;
-  /** An empty set to fill by hand, where that makes sense. */
   onNew?: () => void;
   onRename: (id: number, title: string) => Promise<void>;
   onDelete: (id: number) => Promise<void>;
@@ -158,8 +121,6 @@ export function SetsPane({ kind, rows, notebookId, fresh, onOpen, onPlay, onGene
               {over ? (
                 <button type="button" className="icon-btn ghost-icon" onClick={() => dismissTask(task.id)} title="Dismiss" aria-label="Dismiss"><X /></button>
               ) : (
-                // Stops the passes still running, cancels the requests in
-                // flight, and saves nothing.
                 <button type="button" className="btn ghost small set-stop" onClick={() => stopTask(task.id)}
                   title={`Stop writing this ${w.set} — nothing is saved`}><Square />Stop</button>
               )}
@@ -207,14 +168,6 @@ export function SetsPane({ kind, rows, notebookId, fresh, onOpen, onPlay, onGene
   );
 }
 
-// ------------------------------------------------------------------- page
-
-/**
- * One deck or quiz: its scores, how to play it, and everything in it.
- *
- * The caller brings the parts that differ — what the play buttons do, and
- * the items themselves — and this puts them in the same place every time.
- */
 export function SetPage({ kind, id, title, count, best, last, runs, chat, actions, listAside, onBack, onRename, onDelete, deleteText, children, empty, dialogs }: {
   kind: SetKind;
   id: number;
@@ -223,20 +176,15 @@ export function SetPage({ kind, id, title, count, best, last, runs, chat, action
   best: number | null;
   last: number | null;
   runs: number;
-  /** The "ask about this" button. */
   chat: ReactNode;
-  /** Beside the main play button: shuffle, practise the missed ones. */
   actions: ReactNode;
-  /** At the end of the list's heading: "Add card", a hint. */
   listAside?: ReactNode;
   onBack: () => void;
   onRename: (title: string) => Promise<void>;
   onDelete: () => Promise<void>;
   deleteText: ReactNode;
   children: ReactNode;
-  /** Shown instead of the list when there is nothing in it. */
   empty?: ReactNode;
-  /** The page's own dialogs: editing an item. */
   dialogs?: ReactNode;
 }) {
   const w = WORDS[kind];
@@ -284,13 +232,8 @@ export function SetPage({ kind, id, title, count, best, last, runs, chat, action
   );
 }
 
-/**
- * One card or question on its set's page: its number, what it says (click to
- * edit), how the student did on it last time, and anything else to do.
- */
 export function SetItem({ n, result, onOpen, side, children, index }: {
   n: number;
-  /** How it went last time: right, wrong, or not yet. */
   result: boolean | null | undefined;
   onOpen: () => void;
   side?: ReactNode;

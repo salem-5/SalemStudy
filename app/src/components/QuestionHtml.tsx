@@ -16,11 +16,6 @@ type Props = {
   setDraft: (b: Box, d: Draft) => void;
 };
 
-/**
- * Renders WebAssign's own question markup and mounts live widgets where the
- * answer boxes were: inline dropdowns, text fields, radio/checkbox markers,
- * and a clickable preview for math boxes (edited in the card below).
- */
 export function QuestionHtml({ html, boxes, draftOf, setDraft }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const clean = useMemo(() => sanitizeQuestionHtml(html), [html]);
@@ -54,7 +49,6 @@ export function QuestionHtml({ html, boxes, draftOf, setDraft }: Props) {
     }
   };
 
-  // Reflect selection and grading on the option labels WebAssign rendered.
   useEffect(() => {
     ref.current?.querySelectorAll<HTMLElement>('.wa-opt-label').forEach((l) => {
       const b = boxes[Number(l.dataset.box) - 1];
@@ -64,8 +58,6 @@ export function QuestionHtml({ html, boxes, draftOf, setDraft }: Props) {
     });
   });
 
-  // Clicks on WebAssign's own label markup (plain DOM) arrive here; clicks on
-  // the portaled markers are handled by their own onClick.
   const onClick = (e: React.MouseEvent) => {
     const t = (e.target as HTMLElement).closest<HTMLElement>('.wa-opt-label[data-box]');
     if (!t) return;
@@ -75,7 +67,6 @@ export function QuestionHtml({ html, boxes, draftOf, setDraft }: Props) {
 
   return (
     <>
-      {/* .qContent matches the wrapper WebAssign's selectors expect. */}
       <div className="qhtml" onClick={onClick}>
         <div ref={ref} className="standard qContent container" />
       </div>
@@ -138,7 +129,6 @@ function SlotWidget({ slot, box, draft, setDraft, on, onPick }: {
   if (box.kind === 'essay') {
     return <button type="button" className={`slot-math status-${box.status}`} onClick={() => focusBox(box.index)}>{tag} essay ↓</button>;
   }
-  // math: show the current draft, edit in the card below
   const draftStr = String(draft).trim();
   const serverMath = !!box.value && !/^<math[^>]*\/>$/.test(box.value.trim());
   return (

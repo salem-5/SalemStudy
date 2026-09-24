@@ -1,17 +1,3 @@
-"""The Salem agents. One runtime, several shapes of the same machinery.
-
-Every agent here is built from the same pieces — `HostModel`, the tool
-registry, the sandbox, `RunContext` — and differs only in which tools it may
-touch, how many steps it gets, and what it is told to do. Adding a feature
-means adding a spec, not another AI implementation.
-
-  chat        conversation, tools when they help, web search allowed
-  notebook    answers grounded in the sources the student ticked
-  task        multi-step work: tools, Python, sub-agents, validation, mutations
-  generation  quizzes, flashcards and other structured study material
-  sub-agents  specialised, bounded, and answer to their parent
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -25,8 +11,6 @@ from .state import (
     EXECUTING, PLANNING, RETRIEVING, RunContext, VALIDATING, WAITING_SUBAGENT,
 )
 from .toolkit import Registry
-
-# --------------------------------------------------------------------- prompts
 
 SHARED = """You are Salem, the study assistant inside the student's own app.
 
@@ -203,15 +187,12 @@ AGENTS: dict[str, AgentSpec] = {
 }
 
 
-# ----------------------------------------------------------------- building
-
 
 def build(kind: str, ctx: RunContext, registry: Registry, model_id: str, *,
           thinking: bool = False, extra_instructions: str = "",
           files: list[int] | None = None, sources: list[int] | None = None,
           allow: list[str] | None = None, python_timeout: float = 60.0,
           subagents: list[str] | None = None) -> Any:
-    """An agent of `kind`, wired to this run."""
     spec = AGENTS.get(kind)
     if spec is None:
         raise ValueError(f"unknown agent {kind!r}")
@@ -223,10 +204,6 @@ def build(kind: str, ctx: RunContext, registry: Registry, model_id: str, *,
         scopes=spec.scopes,
         read_only=spec.read_only,
     )
-    # A caller may narrow the delegation it is willing to pay for. Each
-    # sub-agent is a nested agent loop with its own steps and its own context,
-    # so one that is offered and taken is seconds, not milliseconds; a quiz of
-    # definitions has nothing for the checker to recompute.
     offered = spec.subagents if subagents is None else [n for n in spec.subagents if n in subagents]
     managed = [
         _subagent(name, ctx, registry, model_id, files=files, sources=sources,
@@ -253,11 +230,6 @@ def build(kind: str, ctx: RunContext, registry: Registry, model_id: str, *,
 def _subagent(name: str, ctx: RunContext, registry: Registry, model_id: str, *,
               files: list[int] | None, sources: list[int] | None,
               python_timeout: float) -> Any:
-    """A specialised agent the parent can delegate to.
-
-    It shares the parent's budgets and stop switch, one level deeper, so a
-    delegation cannot outlive or outspend the task that started it.
-    """
     conf = SUBAGENTS[name]
     child = ctx.child()
     model = HostModel(child, model_id, effort="low")
@@ -291,9 +263,6 @@ def _subagent(name: str, ctx: RunContext, registry: Registry, model_id: str, *,
 
 
 def _meter(agent: Any, parent: RunContext, child: RunContext, name: str) -> None:
-    """Count and announce a delegation, and refuse one that would breach the
-    sub-agent limits. smolagents calls a managed agent like a tool, so this is
-    the one place both the budget and the UI state can be applied."""
     base = type(agent)
     inner = base.__call__
     pretty = name.replace("_", " ")
@@ -315,15 +284,10 @@ def _meter(agent: Any, parent: RunContext, child: RunContext, name: str) -> None
         parent.state(EXECUTING)
         return result
 
-    # Python resolves dunder methods on the type, so metering has to go on a
-    # throwaway subclass rather than on the instance.
     agent.__class__ = type(f"Metered{base.__name__}", (base,), {"__call__": call})
 
 
 def _progress(ctx: RunContext, subagent: str = "") -> Callable:
-    """Turn each finished step into an execution state for the UI, and stop the
-    run the moment a budget or the student says so."""
-
     def callback(step: Any, agent: Any = None) -> None:
         if isinstance(step, PlanningStep):
             ctx.state(PLANNING, f"{subagent} is planning" if subagent else "Planning")
@@ -348,5 +312,3 @@ def _progress(ctx: RunContext, subagent: str = "") -> Callable:
             agent.interrupt()
 
     return callback
-
-

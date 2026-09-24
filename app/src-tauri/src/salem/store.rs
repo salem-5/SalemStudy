@@ -1,15 +1,9 @@
-//! What the runtime keeps between runs: task state, applied mutations and
-//! execution metrics. All of it is the app's, not the agent's — the runtime
-//! asks for it over the protocol and never touches SQLite itself.
-
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
 use tauri::AppHandle;
 
 use crate::study::{now_ms, with_db, StudyDb};
 
-/// The working memory of one task. Missing is not an error: a first run has
-/// nothing to carry.
 pub fn load_task(app: &AppHandle, db: &StudyDb, task_id: &str) -> Result<Value, String> {
     with_db(app, db, |c| {
         let row: Option<String> = c
@@ -20,8 +14,6 @@ pub fn load_task(app: &AppHandle, db: &StudyDb, task_id: &str) -> Result<Value, 
     .map(|row| row.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_else(|| json!({})))
 }
 
-/// Save the working memory, bumping its version. The version is what lets a
-/// stale background run be spotted rather than silently overwriting newer work.
 pub fn save_task(app: &AppHandle, db: &StudyDb, task_id: &str, state: &Value) -> Result<Value, String> {
     let body = serde_json::to_string(state).map_err(|e| e.to_string())?;
     let now = now_ms();
@@ -44,9 +36,6 @@ pub fn clear_task(app: &AppHandle, db: &StudyDb, task_id: &str) -> Result<(), St
     })
 }
 
-/// A mutating tool call that already ran, looked up by its idempotency key.
-/// A retry of the same call gets the first result back instead of applying the
-/// change a second time.
 pub fn already_applied(app: &AppHandle, db: &StudyDb, idem: &str) -> Option<Value> {
     with_db(app, db, |c| {
         let row: Option<String> = c
@@ -66,14 +55,11 @@ pub fn remember_applied(app: &AppHandle, db: &StudyDb, idem: &str, tool: &str, r
             "INSERT OR REPLACE INTO salem_applied (idem, tool, result_json, created_at) VALUES (?1, ?2, ?3, ?4)",
             params![idem, tool, body, now_ms()],
         )?;
-        // Keep the table small: the keys are only useful for the life of a run.
         c.execute("DELETE FROM salem_applied WHERE created_at < ?1", params![now_ms() - 7 * 86_400_000])?;
         Ok(())
     });
 }
 
-/// One finished run's metrics. Counts and durations only — never what the
-/// student asked or what the agent said.
 pub fn record_run(app: &AppHandle, db: &StudyDb, t: &Value) -> Result<(), String> {
     let n = |key: &str| t.get(key).and_then(Value::as_i64).unwrap_or(0);
     let s = |key: &str| t.get(key).and_then(Value::as_str).unwrap_or("").to_string();
@@ -94,8 +80,6 @@ pub fn record_run(app: &AppHandle, db: &StudyDb, t: &Value) -> Result<(), String
     })
 }
 
-/// Telemetry is for spotting trouble, not for keeping history: two thousand
-/// runs is plenty and keeps the file small.
 fn prune(c: &Connection) -> rusqlite::Result<()> {
     c.execute(
         "DELETE FROM salem_run WHERE id NOT IN (SELECT id FROM salem_run ORDER BY id DESC LIMIT 2000)",
@@ -104,7 +88,6 @@ fn prune(c: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// What Settings shows about how the AI has been behaving.
 pub fn summary(app: &AppHandle, db: &StudyDb, since: i64) -> Result<Value, String> {
     with_db(app, db, |c| {
         let total: Value = c.query_row(

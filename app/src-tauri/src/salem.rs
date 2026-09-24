@@ -1,21 +1,3 @@
-//! The Salem AI runtime, from the app's side.
-//!
-//! The runtime itself is a Python process (`src-tauri/python/salem_ai`, built
-//! on smolagents) that holds no key, opens no socket and touches no file of
-//! the student's. This module is the other half: it starts that process, keeps
-//! it alive, and answers everything it asks for — completions, tools, the
-//! sandbox, task state, telemetry.
-//!
-//! ```text
-//!   webview  ──salem_run──▶  this module  ──stdin──▶  salem_ai (smolagents)
-//!      ▲                          ▲                        │
-//!      └── salem://event ─────────┴──── stdout ────────────┘
-//! ```
-//!
-//! Tools are declared by the app and executed by the app. Most of them run in
-//! the webview, where the study space already lives; a few (the sandbox, the
-//! web) are served here so they keep working while the UI is busy.
-
 pub mod store;
 
 use std::collections::HashMap;
@@ -31,9 +13,6 @@ use tauri::{AppHandle, Manager, State};
 use crate::study::StudyDb;
 use crate::{python, read_config, web, StreamAcc};
 
-/// The runtime's own source, shipped with the binary and written out next to
-/// the virtualenv on startup. Keeping it in the binary means the two halves of
-/// the protocol can never drift apart across an update.
 const SOURCES: &[(&str, &str)] = &[
     ("__init__.py", include_str!("../python/salem_ai/__init__.py")),
     ("__main__.py", include_str!("../python/salem_ai/__main__.py")),
@@ -47,12 +26,7 @@ const SOURCES: &[(&str, &str)] = &[
     ("runtime.py", include_str!("../python/salem_ai/runtime.py")),
 ];
 
-/// Tools this side runs itself. Everything else is handed to the webview.
 const NATIVE_TOOLS: &[&str] = &["web_search", "web_fetch", "run_python"];
-
-// ---------------------------------------------------------------------------
-// State
-// ---------------------------------------------------------------------------
 
 type Reply = tokio::sync::oneshot::Sender<Result<Value, String>>;
 
@@ -60,21 +34,12 @@ type Reply = tokio::sync::oneshot::Sender<Result<Value, String>>;
 pub struct Salem {
     child: Mutex<Option<Child>>,
     stdin: Mutex<Option<ChildStdin>>,
-    /// The handshake of the running process: version, interpreter, or why it
-    /// refused to start.
     hello: Mutex<Option<Value>>,
-    /// Runs in flight, waiting for their `done`.
     runs: Mutex<HashMap<String, Reply>>,
-    /// Tool calls forwarded to the webview, waiting for `salem_tool_result`.
     forwarded: Mutex<HashMap<u64, Reply>>,
-    /// Host calls the runtime is waiting on, so `abandon` can stop the work.
     inflight: Mutex<HashMap<u64, Arc<AtomicBool>>>,
     next_id: AtomicU64,
-    /// The last thing the runtime said on stderr before it gave up. Without
-    /// this, "the AI runtime could not start" is all anyone ever sees.
     last_error: Mutex<Vec<String>>,
-    /// Which interpreter the running process was started with, so Settings can
-    /// say whether it is the one that was just installed.
     interpreter: Mutex<Option<String>>,
 }
 
@@ -105,7 +70,6 @@ impl Salem {
         if let Ok(mut guard) = self.stdin.lock() {
             *guard = None;
         }
-        // Nothing may be left waiting on a process that is gone.
         for (_, reply) in self.runs.lock().map(|mut m| m.drain().collect::<Vec<_>>()).unwrap_or_default() {
             let _ = reply.send(Err(why.to_string()));
         }
@@ -115,20 +79,12 @@ impl Salem {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Starting the runtime
-// ---------------------------------------------------------------------------
-
-/// Where the runtime's source lives: beside the virtualenv, so one folder
-/// holds everything Python in this app.
 fn package_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("python").join("runtime");
     std::fs::create_dir_all(dir.join("salem_ai")).map_err(|e| format!("cannot create the runtime folder: {e}"))?;
     Ok(dir)
 }
 
-/// Write the runtime out, but only what changed: an unchanged file keeps its
-/// timestamp so Python's bytecode cache stays warm.
 fn materialise(app: &AppHandle) -> Result<PathBuf, String> {
     let root = package_dir(app)?;
     let pkg = root.join("salem_ai");
@@ -176,9 +132,6 @@ fn spawn(app: &AppHandle, salem: &Salem) -> Result<(), String> {
     *salem.child.lock().map_err(|_| "runtime lock poisoned".to_string())? = Some(child);
     *salem.hello.lock().map_err(|_| "runtime lock poisoned".to_string())? = None;
 
-    // Whatever the runtime writes to stderr is a Python traceback or a library
-    // warning: useful in the log, never part of the protocol. The tail is kept
-    // so Settings can show what actually went wrong.
     if let Some(stderr) = stderr {
         let handle = app.clone();
         std::thread::spawn(move || {
@@ -190,8 +143,6 @@ fn spawn(app: &AppHandle, salem: &Salem) -> Result<(), String> {
                 if let Some(state) = handle.try_state::<Salem>() {
                     if let Ok(mut tail) = state.last_error.lock() {
                         tail.push(line);
-                        // Only the last few lines matter; a traceback's last
-                        // line is the one that names the problem.
                         let extra = tail.len().saturating_sub(12);
                         tail.drain(..extra);
                     }
@@ -205,13 +156,6 @@ fn spawn(app: &AppHandle, salem: &Salem) -> Result<(), String> {
     Ok(())
 }
 
-/// Start the runtime if it is not already up, and wait for its handshake.
-///
-/// A process that came up and said it could not work — no smolagents, a
-/// Python that is too old — is *not* kept. It is shut down and started again,
-/// so that installing what was missing fixes the app without restarting it.
-/// The old behaviour cached that failure for the life of the window, which
-/// meant a successful "Install" changed nothing until the student quit.
 async fn ensure(app: &AppHandle) -> Result<Value, String> {
     {
         let salem = app.state::<Salem>();
@@ -223,8 +167,6 @@ async fn ensure(app: &AppHandle) -> Result<Value, String> {
         salem.shut_down("the AI runtime is being restarted");
         spawn(app, &salem)?;
     }
-    // The handshake is the first thing the process writes; give it long enough
-    // to import smolagents on a cold start.
     for _ in 0..300 {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         let salem = app.state::<Salem>();
@@ -244,10 +186,6 @@ fn check(hello: Value) -> Result<Value, String> {
     }
     Err(hello.get("error").and_then(Value::as_str).unwrap_or("the AI runtime could not start").to_string())
 }
-
-// ---------------------------------------------------------------------------
-// Reading the runtime
-// ---------------------------------------------------------------------------
 
 fn read_loop(app: AppHandle, stdout: std::process::ChildStdout) {
     for line in BufReader::new(stdout).lines().map_while(Result::ok) {
@@ -284,7 +222,6 @@ fn read_loop(app: AppHandle, stdout: std::process::ChildStdout) {
             _ => {}
         }
     }
-    // The pipe closed: the process is gone, so nothing should still be waiting.
     app.state::<Salem>().shut_down("the AI runtime stopped unexpectedly");
 }
 
@@ -299,10 +236,6 @@ fn finish(app: &AppHandle, message: &Value) {
         let _ = reply.send(if ok { Ok(result) } else { Err(if error.is_empty() { "the task failed".into() } else { error }) });
     }
 }
-
-// ---------------------------------------------------------------------------
-// Serving the runtime's calls
-// ---------------------------------------------------------------------------
 
 async fn serve(app: AppHandle, message: Value) {
     let id = message.get("id").and_then(Value::as_u64).unwrap_or(0);
@@ -342,11 +275,6 @@ async fn dispatch(app: &AppHandle, method: &str, args: Value, cancel: Arc<Atomic
     }
 }
 
-// ------------------------------------------------------------------ the model
-
-/// A completion, with the key, the retry policy and the usage accounting all
-/// staying on this side. When `stream` is set the text is emitted as it
-/// arrives, so a plain chat answer still appears word by word.
 async fn complete(app: &AppHandle, args: Value, cancel: Arc<AtomicBool>) -> Result<Value, String> {
     let cfg = read_config(app);
     let ep = crate::providers::endpoint(&cfg)?;
@@ -378,10 +306,6 @@ async fn complete(app: &AppHandle, args: Value, cancel: Arc<AtomicBool>) -> Resu
     if args.get("thinking").and_then(Value::as_bool) == Some(true) {
         body["thinking"] = json!({ "type": "enabled" });
     }
-    // How hard to reason. The runtime asks for "low" on work that is
-    // mechanical (a sub-agent checking arithmetic); everything else takes the
-    // student's setting, which defaults to "low" because the API's own
-    // default reasons at length on every short tool-choosing step.
     let effort = args
         .get("effort")
         .and_then(Value::as_str)
@@ -431,21 +355,12 @@ async fn complete(app: &AppHandle, args: Value, cancel: Arc<AtomicBool>) -> Resu
 
     let used = value.get("model").and_then(Value::as_str).filter(|m| !m.is_empty()).unwrap_or(&model).to_string();
     let cost = crate::record_usage(app, &app.state::<StudyDb>(), &used, Some(&feature), value.get("usage"));
-    // What the run is costing, as it goes, for whoever is showing it.
     if cost > 0.0 && !run.is_empty() {
         crate::tabmode::notify(app, "salem://event", json!({ "run": run, "event": { "kind": "usage", "cost": cost } }));
     }
     Ok(shape(value, cancel.load(Ordering::SeqCst)))
 }
 
-/// Put the runtime's messages into the shape DeepSeek actually accepts.
-///
-/// smolagents hands every message a *list* of content parts, whatever its
-/// role. DeepSeek only takes that form for a user message carrying images;
-/// a system, assistant or tool message with an array `content` is rejected
-/// outright, which is every request failing rather than a degraded answer.
-/// So anything that is only text is flattened back to a plain string, and the
-/// array form is kept exactly where it is needed.
 fn for_deepseek(messages: Value) -> Value {
     let Some(list) = messages.as_array() else { return messages };
     let out: Vec<Value> = list
@@ -496,8 +411,6 @@ async fn stream_reply(app: &AppHandle, resp: &mut reqwest::Response, run: &str, 
             }
             let Ok(v) = serde_json::from_str::<Value>(data) else { continue };
             let (content, _reasoning) = acc.absorb(&v);
-            // Only the answer is streamed out. Reasoning stays in the reply so
-            // the API can be given it back, and never reaches the window.
             if !content.is_empty() {
                 crate::tabmode::notify(app, "salem://event", json!({
                     "run": run, "event": { "kind": "text", "text": content },
@@ -508,7 +421,6 @@ async fn stream_reply(app: &AppHandle, resp: &mut reqwest::Response, run: &str, 
     Ok(acc.finish())
 }
 
-/// DeepSeek's names for things, in the runtime's vocabulary.
 fn shape(value: Value, cancelled: bool) -> Value {
     let usage = value.get("usage").cloned().unwrap_or(Value::Null);
     let n = |key: &str| usage.get(key).and_then(Value::as_i64).unwrap_or(0);
@@ -525,8 +437,6 @@ fn shape(value: Value, cancelled: bool) -> Value {
         },
     })
 }
-
-// ----------------------------------------------------------------- the sandbox
 
 async fn run_python(app: &AppHandle, args: Value) -> Result<Value, String> {
     let ids = |key: &str| -> Vec<i64> {
@@ -550,16 +460,12 @@ async fn run_python(app: &AppHandle, args: Value) -> Result<Value, String> {
     .await
 }
 
-// ------------------------------------------------------------------- the tools
-
 async fn invoke_tool(app: &AppHandle, args: Value, cancel: Arc<AtomicBool>) -> Result<Value, String> {
     let name = args.get("name").and_then(Value::as_str).unwrap_or("").to_string();
     let payload = args.get("args").cloned().unwrap_or_else(|| json!({}));
     let idem = args.get("idem").and_then(Value::as_str).unwrap_or("").to_string();
     let db = app.state::<StudyDb>();
 
-    // A mutating call that already went through comes back with its first
-    // result. Retrying a step must not book the same event twice.
     if !idem.is_empty() {
         if let Some(previous) = store::already_applied(app, &db, &idem) {
             return Ok(json!({ "result": previous, "detail": "already done earlier in this task", "repeated": true }));
@@ -579,8 +485,6 @@ async fn invoke_tool(app: &AppHandle, args: Value, cancel: Arc<AtomicBool>) -> R
     Ok(result)
 }
 
-/// The tools the app serves itself, so they keep working while the window is
-/// busy rendering a long answer.
 async fn native(app: &AppHandle, run: &str, name: &str, args: Value) -> Result<Value, String> {
     let state = app.state::<crate::AppState>();
     match name {
@@ -598,9 +502,6 @@ async fn native(app: &AppHandle, run: &str, name: &str, args: Value) -> Result<V
         }
         "run_python" => {
             let mut value = run_python(app, args).await?;
-            // Figures go straight to the window as image data. Sending them
-            // through the runtime would put a megabyte of base64 in front of
-            // the model for no benefit; it only needs to know they exist.
             let figures = value.get_mut("figures").map(Value::take).unwrap_or(Value::Null);
             let names: Vec<String> = figures
                 .as_array()
@@ -616,8 +517,6 @@ async fn native(app: &AppHandle, run: &str, name: &str, args: Value) -> Result<V
     }
 }
 
-/// Anything else: the webview owns the study space, so it runs the tool and
-/// answers with `salem_tool_result`.
 async fn forward(app: &AppHandle, run: &str, name: &str, args: Value, cancel: Arc<AtomicBool>) -> Result<Value, String> {
     let salem = app.state::<Salem>();
     let id = salem.next_id.fetch_add(1, Ordering::SeqCst);
@@ -625,7 +524,6 @@ async fn forward(app: &AppHandle, run: &str, name: &str, args: Value, cancel: Ar
     salem.forwarded.lock().map_err(|_| "runtime lock poisoned".to_string())?.insert(id, tx);
     crate::tabmode::notify(app, "salem://tool", json!({ "call": id, "run": run, "name": name, "args": args }));
 
-    // The window can be closed or wedged; a tool must not hang the run.
     let waited = tokio::select! {
         answer = rx => answer.map_err(|_| "the app did not answer".to_string())?,
         _ = wait_for_cancel(cancel) => Err("stopped".to_string()),
@@ -641,12 +539,6 @@ async fn wait_for_cancel(cancel: Arc<AtomicBool>) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Commands
-// ---------------------------------------------------------------------------
-
-/// Run one AI request. Resolves with the runtime's result; progress arrives
-/// meanwhile on `salem://event`, and `salem_cancel` stops it.
 #[tauri::command]
 pub async fn salem_run(app: AppHandle, run: String, input: Value) -> Result<Value, String> {
     ensure(&app).await?;
@@ -664,7 +556,6 @@ pub fn salem_cancel(app: AppHandle, run: String) -> Result<(), String> {
     app.state::<Salem>().send(&json!({ "t": "cancel", "run": run }))
 }
 
-/// The webview's answer to a forwarded tool call.
 #[tauri::command]
 pub fn salem_tool_result(app: AppHandle, call: u64, ok: bool, data: Option<Value>, error: Option<String>) {
     let waiting = app.state::<Salem>().forwarded.lock().ok().and_then(|mut m| m.remove(&call));
@@ -677,8 +568,6 @@ pub fn salem_tool_result(app: AppHandle, call: u64, ok: bool, data: Option<Value
     }
 }
 
-/// Whether the runtime can start, and what is missing if it cannot. Safe to
-/// call at any time; it is what onboarding and Settings show.
 #[tauri::command]
 pub async fn salem_status(app: AppHandle) -> Result<Value, String> {
     let ready = ensure(&app).await;
@@ -689,7 +578,6 @@ pub async fn salem_status(app: AppHandle) -> Result<Value, String> {
     Ok(json!({
         "ready": ready.is_ok(),
         "error": ready.err(),
-        // What Python actually printed on its way out — the line that says why.
         "details": if details.trim().is_empty() { Value::Null } else { json!(details) },
         "interpreter": interpreter,
         "hello": hello,
@@ -697,8 +585,6 @@ pub async fn salem_status(app: AppHandle) -> Result<Value, String> {
     }))
 }
 
-/// Stop the runtime. The next request starts a fresh one — which is how a
-/// changed interpreter or a reinstalled smolagents is picked up.
 #[tauri::command]
 pub fn salem_restart(app: AppHandle) {
     app.state::<Salem>().shut_down("the AI runtime was restarted");
@@ -720,8 +606,6 @@ mod tests {
 
     #[test]
     fn text_only_messages_are_flattened_to_strings() {
-        // smolagents gives every role an array; DeepSeek refuses that for
-        // anything but a user message with an image in it.
         let sent = for_deepseek(json!([
             { "role": "system", "content": [{ "type": "text", "text": "You are Salem." }] },
             { "role": "user", "content": [{ "type": "text", "text": "What is 2+2?" }] },

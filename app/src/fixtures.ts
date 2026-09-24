@@ -1,6 +1,3 @@
-// Dev-only fixtures: real (sanitized) question markup from a 12.3 assignment,
-// as produced by the userscript's questionHtml(), plus the CSS subset it uses.
-
 const DOT = `<span style="font-family: 'Trebuchet MS', 'Lucida Grande', sans-serif; font-size: 1.10em">·</span>`;
 const IMG = 'https://www.webassign.net/wastatic/wacache8e632469e60886dadce868f9b3eab2dd/watex/img';
 const paren = (side: 'left' | 'right') =>

@@ -11,18 +11,10 @@ export type ExportEntry = { id: number; name: string; assignment: Assignment };
 type Result = { tex: string | null; pdf: string | null };
 type Status = 'ready' | 'running' | 'done' | 'error';
 
-/**
- * How many documents are compiled at the same time. A TeX run is a single
- * process on a single core, so a batch finishes in roughly the time of the
- * slowest few rather than the sum of them all; the cap leaves the machine
- * usable and keeps memory in hand.
- */
 const lanes = (count: number) => Math.max(1, Math.min(count, navigator.hardwareConcurrency || 4, 6));
 
 type Item = {
-  /** What the sheet is called on its first page; the assignment name by default. */
   title: string;
-  /** What the .tex/.pdf is called on disk. */
   file: string;
   status: Status;
   result?: Result;
@@ -40,7 +32,6 @@ export function ExportDialog({ entries, meta, onClose }: { entries: ExportEntry[
   const [running, setRunning] = useState(false);
   const [folder, setFolder] = useState<string | null>(null);
   const [done, setDone] = useState(0);
-  /** How many documents are compiling at once right now. */
   const [width, setWidth] = useState(1);
   const [log, setLog] = useState<string[]>([]);
   const cancelRef = useRef(false);
@@ -51,9 +42,8 @@ export function ExportDialog({ entries, meta, onClose }: { entries: ExportEntry[
     listen<{ job?: string; stage?: string; line?: string }>('export://progress', (e) => {
       const { job, stage, line } = e.payload;
       const text = line ?? `— ${stage ?? ''} —`;
-      // Several documents write to this log at once, so each line says whose it is.
       setLog((l) => [...l.slice(-400), entries.length > 1 && job ? `${job} │ ${text}` : text]);
-    }).then((un) => { stop = un; }).catch(() => { /* not in Tauri */ });
+    }).then((un) => { stop = un; }).catch(() => { });
     return () => stop?.();
   }, []);
 
@@ -62,8 +52,6 @@ export function ExportDialog({ entries, meta, onClose }: { entries: ExportEntry[
     if (el) el.scrollTop = el.scrollHeight;
   }, [log]);
 
-  // Where the files land, so the folder can be opened before exporting too.
-  // Outside Tauri the command is not there at all, hence the try.
   useEffect(() => {
     void (async () => {
       try { setFolder(await api.exportDir()); } catch { setFolder(null); }
@@ -71,8 +59,6 @@ export function ExportDialog({ entries, meta, onClose }: { entries: ExportEntry[
   }, []);
 
   const titles = items.map((it) => it.title);
-  // The sheet is rebuilt whenever an option changes, so the preview and the
-  // compiled PDF always match what the switches say.
   const docs = useMemo(
     () => entries.map((e, i) => assignmentToWorksheet(e.assignment, {
       ...meta, workings, nameFields, transcript, title: titles[i],
@@ -94,8 +80,6 @@ export function ExportDialog({ entries, meta, onClose }: { entries: ExportEntry[
     }));
     const ok = figures.filter((x): x is { file: string; data: string } => !!x);
     let html = d.html;
-    // A figure that would not load is named rather than left as a broken
-    // image: the sheet should say something is missing, not hide it.
     for (const im of d.images) {
       if (ok.some((o) => o.file === im.file)) continue;
       html = html.replace(new RegExp(`<img [^>]*src="${im.file}"[^>]*/?>`, 'g'), '<i>[figure]</i>');
@@ -122,9 +106,6 @@ export function ExportDialog({ entries, meta, onClose }: { entries: ExportEntry[
     setDone(0);
     setLog([]);
     const todo = entries.map((_, i) => i);
-    // Each sheet is a short Python run, so a few at a time is the right
-    // trade: enough to keep the machine busy, not so many that a batch of
-    // thirty starts thirty interpreters.
     const width = lanes(todo.length);
     setWidth(width);
     await Promise.all(
@@ -140,7 +121,7 @@ export function ExportDialog({ entries, meta, onClose }: { entries: ExportEntry[
 
   const cancel = async () => {
     cancelRef.current = true;
-    try { await api.exportCancel(); } catch { /* */ }
+    try { await api.exportCancel(); } catch { }
   };
 
   const open = async (path: string) => {
@@ -151,14 +132,14 @@ export function ExportDialog({ entries, meta, onClose }: { entries: ExportEntry[
     try {
       const done = items.find((x) => x.result)?.result;
       await api.revealPath(done?.pdf ?? done?.tex ?? folder ?? '');
-    } catch { /* */ }
+    } catch { }
   };
 
   const total = entries.length;
   const finished = !running && items.every((x) => x.status === 'done' || x.status === 'error');
 
   return (
-    <Modal title={total > 1 ? `EXPORT ${total} ASSIGNMENTS` : 'EXPORT'} onClose={running ? () => { /* keep open */ } : onClose} wide>
+    <Modal title={total > 1 ? `EXPORT ${total} ASSIGNMENTS` : 'EXPORT'} onClose={running ? () => { } : onClose} wide>
       <div className="export-dialog">
         <div className="export-bar">
           <span className="muted">

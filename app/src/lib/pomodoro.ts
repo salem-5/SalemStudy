@@ -2,12 +2,6 @@ import { useSyncExternalStore } from 'react';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import { studyApi } from '../study/api';
 
-/**
- * Pomodoro timer: focus → short break → … → long break every N focuses.
- * The end time is stored, not a countdown, so the timer survives reloads and
- * a throttled background window. State lives in localStorage.
- */
-
 export type Phase = 'focus' | 'short' | 'long';
 export type Task = { id: string; text: string; done: boolean; doneAt: number | null; createdAt: number };
 export type Session = { phase: Phase; start: number; end: number; completed: boolean; tasksDone: string[] };
@@ -16,17 +10,13 @@ export type Settings = { focus: number; short: number; long: number; every: numb
 export type PomodoroState = {
   phase: Phase;
   status: 'idle' | 'running' | 'paused';
-  /** Epoch ms when the running phase ends. */
   endsAt: number | null;
-  /** Remaining ms while paused or idle. */
   remaining: number;
   startedAt: number | null;
-  /** Focus sessions finished since the last long break. */
   streak: number;
   settings: Settings;
   tasks: Task[];
   history: Session[];
-  /** Set when a phase has just ended; the alarm dialog reads and clears it. */
   alarm: { ended: Phase; next: Phase } | null;
 };
 
@@ -45,7 +35,7 @@ function initial(): PomodoroState {
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) || 'null') as Partial<PomodoroState> | null;
     if (saved) return { ...base, ...saved, settings: { ...DEFAULTS, ...saved.settings }, alarm: null };
-  } catch { /* fresh */ }
+  } catch { }
   return base;
 }
 
@@ -53,18 +43,16 @@ let state: PomodoroState = initial();
 const listeners = new Set<() => void>();
 let ticker: number | null = null;
 
-/** Re-read `keys` when the window or a tab changes them (lib/prefSync). */
 const onShared = (keys: string[], fn: () => void) => {
   if (typeof window === 'undefined') return;
   window.addEventListener('wa:prefs', (e) => {
     if (keys.includes((e as CustomEvent<{ key: string }>).detail?.key)) fn();
   });
 };
-// The timer, its settings and its tasks as the other side left them.
 onShared([KEY], () => { state = initial(); listeners.forEach((l) => l()); syncTicker(); });
 
 function persist() {
-  try { localStorage.setItem(KEY, JSON.stringify({ ...state, alarm: null, history: state.history.slice(-500) })); } catch { /* ignore */ }
+  try { localStorage.setItem(KEY, JSON.stringify({ ...state, alarm: null, history: state.history.slice(-500) })); } catch { }
 }
 
 function set(patch: Partial<PomodoroState>) {
@@ -83,21 +71,17 @@ function syncTicker() {
   }
 }
 
-/** Time left in ms, for display. */
 export const remainingOf = (s: PomodoroState, now = Date.now()) =>
   s.status === 'running' && s.endsAt ? Math.max(0, s.endsAt - now) : s.remaining;
 
 let lastSecond = -1;
 function tick() {
-  // While tab mode has the window locked, the tab runs the timer. Both
-  // ticking would finish the same session twice.
   if (document.documentElement.hasAttribute('data-tab-locked')) return;
   const left = remainingOf(state);
   if (left <= 0) { finish(true); return; }
   const sec = Math.ceil(left / 1000);
   if (sec !== lastSecond) {
     lastSecond = sec;
-    // A new object, so useSyncExternalStore sees a change and the clock redraws.
     state = { ...state };
     listeners.forEach((l) => l());
   }
@@ -129,18 +113,13 @@ function finish(completed: boolean) {
     alarm: completed ? { ended, next } : null,
   });
   if (completed) ring();
-  // A focus session the student saw through is study time, and the activity
-  // map should show it. Breaks and abandoned timers are not recorded.
   if (completed && ended === 'focus' && state.startedAt) {
     void studyApi
       .addFocusSession(ended, state.startedAt, now, doneIds.length)
-      .catch(() => { /* the timer must not fail because the log did */ });
+      .catch(() => { });
   }
 }
 
-// --------------------------------------------------------------- actions
-
-/** The timer as it is right now (for the chat's context). */
 export const pomodoroState = () => state;
 
 export const pomodoro = {
@@ -157,7 +136,6 @@ export const pomodoro = {
   },
   toggle() { if (state.status === 'running') pomodoro.pause(); else pomodoro.start(); },
   reset() { set({ status: 'idle', endsAt: null, startedAt: null, remaining: minutes(state.settings, state.phase) }); },
-  /** End the current phase now and move on (logged as not completed). */
   skip() { finish(false); },
   setPhase(phase: Phase) {
     set({ phase, status: 'idle', endsAt: null, startedAt: null, remaining: minutes(state.settings, phase) });
@@ -188,7 +166,6 @@ export function usePomodoro(): PomodoroState {
   );
 }
 
-// Resume a timer that was running when the app closed (it may have ended since).
 syncTicker();
 
 export const fmtClock = (ms: number) => {
@@ -198,19 +175,13 @@ export const fmtClock = (ms: number) => {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 };
 
-// ------------------------------------------------------------------ alarm
-
 let audio: AudioContext | null = null;
 
-/**
- * WebKit only lets audio start from a user gesture, so the context is created
- * (and resumed) when the user presses Start, and reused when the phase ends.
- */
 function unlockAudio() {
   try {
     audio ??= new AudioContext();
     void audio.resume();
-  } catch { /* no audio device */ }
+  } catch { }
 }
 
 let notifyAllowed: boolean | null = null;
@@ -232,11 +203,10 @@ function ring() {
         title: ended === 'focus' ? 'Focus session done' : 'Break over',
         body: ended === 'focus' ? `Time for a ${state.phase === 'long' ? 'long' : 'short'} break.` : 'Back to focus.',
       });
-    } catch { /* not in Tauri */ }
+    } catch { }
   }
 }
 
-/** A soft three-note bell, twice, synthesised so there is no audio asset. */
 function chime() {
   if (!state.settings.sound) return;
   try {
@@ -259,7 +229,7 @@ function chime() {
         osc.stop(t + 1.25);
       });
     }
-  } catch { /* no audio device */ }
+  } catch { }
 }
 
 let flashing: number | null = null;

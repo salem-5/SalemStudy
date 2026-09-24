@@ -1,10 +1,3 @@
-"""The Salem AI runtime, tested against a fake host but a real process.
-
-Run with the environment that has smolagents in it:
-
-    <venv>/bin/python -m unittest discover -s app/src-tauri/python/tests
-"""
-
 from __future__ import annotations
 
 import json
@@ -17,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from fake_host import FakeHost, calls, real_sandbox, says, writes_code  # noqa: E402
+from fake_host import FakeHost, calls, real_sandbox, says, writes_code
 
 CALENDAR_TOOLS = [
     {"name": "list_events", "description": "List calendar events between two dates.",
@@ -67,11 +60,7 @@ class RuntimeTest(unittest.TestCase):
                         f"runtime did not start: {self.host.hello}")
         return self.host
 
-    # ------------------------------------------------------------ the paths
-
     def test_conversation_goes_through_the_agent(self):
-        """Chat is agentic by default: the assistant should be able to look
-        things up before answering, not only recall."""
         host = self.make([calls("final_answer", {"answer": "Paris is the capital of France."}, "a1")])
         result = host.run({"agent": "chat", "model": "m", "system": "You are Salem.",
                            "tools": CALENDAR_TOOLS,
@@ -82,8 +71,6 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(host.states()[-1], "completed")
 
     def test_the_direct_path_is_still_there_when_it_is_asked_for(self):
-        """Reading an image or naming a chat has nothing to look up, and must
-        not pay for an agent loop."""
         host = self.make([says("A diagram of the Krebs cycle.")])
         result = host.run({"agent": "chat", "model": "m", "system": "S", "tools": [], "mode": "direct",
                            "messages": [{"role": "user", "content": "Describe this image."}]})
@@ -108,12 +95,7 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(seen, [{"frm": "2026-10-01", "to": "2026-10-31"}])
         self.assertIn("waiting_tool", host.states())
 
-    # -------------------------------------------------- the one-pass path
-
     def test_generated_data_can_come_back_in_one_pass(self):
-        """Generation is handed its material in the prompt, so there is
-        usually nothing to look up. A full agent loop re-sends that material
-        on every step; one pass sends it once."""
         host = self.make([says(json.dumps({"title": "Planes", "questions": [
             {"prompt": "What is n·(r-r0)=0?", "choices": ["a", "b"], "answer": 0, "hint": "Think dot product."},
             {"prompt": "What is a normal vector?", "choices": ["a", "b"], "answer": 1, "hint": "Perpendicular."},
@@ -127,7 +109,6 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(host.model_calls(), 1)
 
     def test_a_one_pass_answer_that_does_not_fit_escalates_rather_than_returning(self):
-        """The cheap path may be wrong. It may not hand back something wrong."""
         host = self.make([
             says("Here are some questions, roughly."),
             calls("final_answer", {"answer": {"title": "Planes", "questions": [
@@ -142,14 +123,7 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(result["result"]["path"], "agentic")
         self.assertEqual(len(result["result"]["structured"]["questions"]), 2)
 
-    # ------------------------------------------------------- awkward tools
-
     def test_a_tool_argument_named_like_a_python_keyword_still_works(self):
-        """The app declares its tools in JSON, where `from` is an ordinary
-        key. Here each one becomes a real function, and a parameter cannot be
-        called `from`. That used to raise out of `select()` before the first
-        step, so one awkward name in one tool was every agentic feature in the
-        app failing at once."""
         seen: list[dict] = []
         host = self.make(
             [calls("read_source", {"from_": 3, "sourceId": 7}, "a1"),
@@ -167,13 +141,9 @@ class RuntimeTest(unittest.TestCase):
             "messages": [{"role": "user", "content": "What is on page 3?"}],
         })
         self.assertTrue(result["ok"], result.get("error"))
-        # The app is handed back the name it declared, not the one Python needed.
         self.assertEqual(seen, [{"from": 3, "sourceId": 7}])
 
     def test_an_optional_argument_declared_first_does_not_break_the_tool(self):
-        """A Python function cannot take a required argument after one with a
-        default, so a tool whose optional input happens to come first used to
-        end the run with "non-default argument follows default argument"."""
         seen: list[dict] = []
         host = self.make(
             [calls("read_source", {"sourceId": 7}, "a1"),
@@ -208,12 +178,7 @@ class RuntimeTest(unittest.TestCase):
         })
         self.assertTrue(result["ok"], result.get("error"))
 
-    # --------------------------------------------------------- what it costs
-
     def test_delegation_can_be_narrowed_by_the_caller(self):
-        """Each sub-agent taken is a nested agent loop, so a caller that knows
-        there is nothing to recompute can decline to pay for one."""
-        # The task agent plans before it acts, so the plan comes first.
         host = self.make([says("I will answer directly."),
                           calls("final_answer", {"answer": "done"}, "a1")])
         result = host.run({
@@ -232,16 +197,9 @@ class RuntimeTest(unittest.TestCase):
         host.run({"agent": "chat", "model": "m", "system": "S", "tools": [],
                   "messages": [{"role": "user", "content": "Hello."}]})
         sent = [a for method, a in host.calls if method == "model.complete"]
-        # The main agent leaves it to the student's setting; the host fills in.
         self.assertEqual([a.get("effort") for a in sent], [""] * len(sent))
 
-    # ----------------------------------------------------- the request shape
-
     def test_the_tool_choice_is_one_the_api_accepts(self):
-        """DeepSeek reasons before it answers, and rejects a forced tool
-        choice on a thinking model: `tool_choice: "required"` comes back as
-        HTTP 400 on the very first step, which is every agentic feature in
-        the app failing at once."""
         host = self.make(
             [calls("search_notebook", {"query": "golgi"}, "a1"),
              calls("final_answer", {"answer": "It packages proteins [1]."}, "a2")],
@@ -259,11 +217,6 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(args.get("tool_choice"), "auto")
 
     def test_an_answer_written_as_prose_is_asked_for_again_then_accepted(self):
-        """Without a forced tool choice the model sometimes writes instead of
-        calling. Mid-task prose ("let me check the next page") must not end
-        the run, so the first one is refused; a model that does it twice
-        running is not going to produce the shape being asked for, and its
-        answer is taken rather than burning the remaining steps."""
         host = self.make([
             says("Let me look at the next page before I answer."),
             says("The Golgi packages proteins."),
@@ -286,8 +239,6 @@ class RuntimeTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["result"]["text"], "It packages proteins [1].")
         self.assertEqual([e["name"] for e in host.of_kind("tool")][:1], ["search_notebook"])
-
-    # ------------------------------------------------------------ the tools
 
     def test_a_tool_call_really_runs_and_its_result_reaches_the_agent(self):
         host = self.make(
@@ -333,10 +284,8 @@ class RuntimeTest(unittest.TestCase):
                    for _, args in host.calls if _ == "model.complete"
                    for t in (args.get("tools") or [])}
         self.assertIn("search_notebook", offered)
-        self.assertNotIn("add_event", offered)   # mutating
-        self.assertNotIn("list_events", offered)  # out of scope for a notebook
-
-    # -------------------------------------------------------------- Python
+        self.assertNotIn("add_event", offered)
+        self.assertNotIn("list_events", offered)
 
     def test_python_really_executes_and_state_carries_between_blocks(self):
         scripts = []
@@ -359,9 +308,7 @@ class RuntimeTest(unittest.TestCase):
                            "messages": [{"role": "user", "content": "go through every week of the term"}]})
         self.assertTrue(result["ok"])
         self.assertIn("15 whole weeks", result["result"]["text"])
-        # The first block really ran: its printed output came back.
         self.assertIn("weeks 15", host.of_kind("python")[0]["output"])
-        # The second block used a name from the first, so the replay works.
         self.assertIn("redirect_stdout", scripts[1])
         self.assertEqual(result["result"]["telemetry"]["python_calls"], 2)
 
@@ -381,8 +328,6 @@ class RuntimeTest(unittest.TestCase):
         self.assertTrue(failed, "the failing block should be reported as failed")
         self.assertIn("ZeroDivisionError", failed[0]["output"])
         self.assertEqual(result["result"]["telemetry"]["python_failures"], 1)
-
-    # ---------------------------------------------------------- sub-agents
 
     def test_delegation_is_counted_announced_and_bounded(self):
         host = self.make(
@@ -414,8 +359,6 @@ class RuntimeTest(unittest.TestCase):
         self.assertLessEqual(len(used), 3, "delegation should stop at the budget")
         self.assertIsNotNone(result)
 
-    # ---------------------------------------------------------- generation
-
     def test_generated_data_is_validated_and_the_bad_attempt_is_retried(self):
         good = {"title": "Derivatives", "questions": [
             {"prompt": "d/dx of x^3?", "choices": ["3x^2", "x^2", "3x"], "answer": 0,
@@ -442,8 +385,6 @@ class RuntimeTest(unittest.TestCase):
                            "messages": [{"role": "user", "content": "two questions"}]})
         self.assertFalse(result["ok"])
         self.assertIn("schema", result["error"])
-
-    # ------------------------------------------------- stopping and budgets
 
     def test_cancelling_stops_a_run_waiting_on_a_slow_tool(self):
         entered = threading.Event()
@@ -483,8 +424,6 @@ class RuntimeTest(unittest.TestCase):
         self.assertIn("limit", result["error"])
         self.assertEqual(host.states()[-1], "failed")
 
-    # ------------------------------------------------------ working memory
-
     def test_task_state_is_saved_and_picked_up_by_the_next_run(self):
         host = self.make([calls("final_answer", {"answer": "I have noted the deadline."}, "a1"),
                           calls("final_answer", {"answer": "It is due on 12 December."}, "a2")])
@@ -495,9 +434,6 @@ class RuntimeTest(unittest.TestCase):
 
         host.run({"agent": "chat", "model": "m", "system": "S", "tools": [], "taskId": "t-1",
                   "messages": [{"role": "user", "content": "When is it due again?"}]}, run="r2")
-        # The second run was given the state, not asked to rediscover it.
-        # The agent puts it in the task it is handed, not the system prompt,
-        # because that is where smolagents keeps what the run is about.
         last = [args for method, args in host.calls if method == "model.complete"][-1]
         sent = json.dumps(last["messages"])
         self.assertIn("Objective:", sent)
@@ -511,7 +447,6 @@ class RuntimeTest(unittest.TestCase):
             history.append({"role": "assistant", "content": f"Noted, {i}."})
         history.append({"role": "user", "content": "So what was my deadline?"})
         host = self.make([
-            # Compaction is a direct call of its own, whatever the run's path.
             says('{"summary": "The student set up a revision plan.",'
                  ' "dates": {"essay deadline": "12 December"},'
                  ' "constraints": ["no study after 9pm"]}'),
@@ -528,8 +463,6 @@ class RuntimeTest(unittest.TestCase):
         self.assertLess(len(sent), len(history), "older turns should have been folded away")
         self.assertIn("So what was my deadline?",
                       str(sent[-1]["content"]), "the newest turn must survive compaction")
-
-    # ------------------------------------------------------------ fallback
 
     def test_the_runtime_degrades_rather_than_hanging_when_tools_keep_failing(self):
         host = self.make(
@@ -549,9 +482,6 @@ class RuntimeTest(unittest.TestCase):
 
 
 class ContractTest(unittest.TestCase):
-    """The tool declarations the app sends are exactly what `lib/salem/tools.ts`
-    produces. If these drift, tools silently stop being offered to the model."""
-
     host: FakeHost | None = None
 
     def tearDown(self) -> None:
@@ -560,8 +490,6 @@ class ContractTest(unittest.TestCase):
             self.host = None
 
     def test_a_typescript_tool_declaration_becomes_a_usable_tool(self):
-        # Copied from the shape `toSpec()` emits: camelCase outputType,
-        # nullable optionals, enums, and array items.
         declared = [{
             "name": "add_event",
             "description": "Add an event to the study calendar.",
@@ -591,7 +519,6 @@ class ContractTest(unittest.TestCase):
         self.assertTrue(result["ok"], result.get("error"))
         self.assertEqual(got, [{"title": "Calc midterm", "date": "2026-10-02"}])
 
-        # The schema that reached the model keeps the optionals optional.
         offered = [t for _, args in self.host.calls if _ == "model.complete"
                    for t in (args.get("tools") or []) if t["function"]["name"] == "add_event"][0]
         self.assertEqual(sorted(offered["function"]["parameters"]["required"]), ["date", "title"])

@@ -6,16 +6,11 @@ type Props = {
   choices: Choice[];
   value: string;
   onChange: (v: string) => void;
-  /** Smaller, text-flow friendly variant used inside question text. */
   inline?: boolean;
   status?: string;
   label?: string;
 };
 
-/**
- * Dropdown you can type into: typing filters (prefix matches first), ↑/↓ move,
- * Enter/Tab picks, Esc cancels. With nothing typed, 1–9 pick the nth option.
- */
 export function Combo({ choices, value, onChange, inline, status, label }: Props) {
   const input = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
@@ -50,7 +45,6 @@ export function Combo({ choices, value, onChange, inline, status, label }: Props
       setActive((a) => (a + (e.key === 'ArrowDown' ? 1 : -1) + n) % n);
       return;
     }
-    // Enter always picks; Tab picks only while filtering, otherwise it just moves on.
     if (open && (e.key === 'Enter' || (e.key === 'Tab' && query))) {
       if (e.key === 'Enter') e.preventDefault();
       pick(filtered[active]);

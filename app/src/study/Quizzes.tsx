@@ -19,7 +19,6 @@ function FigureImg({ id }: { id: number }) {
   return src ? <img className="quiz-figure" src={src} alt="Figure for this question" /> : <div className="quiz-figure loading" />;
 }
 
-/** The right answer, written out for the student. */
 function answerText(q: QuizQuestion): string {
   if (q.type === 'mcq') return asMath(q.choices?.[Number(q.answer)] ?? '');
   if (q.type === 'multi') return (q.answers ?? []).map((i) => asMath(q.choices?.[i] ?? '')).filter(Boolean).join(' · ');
@@ -27,7 +26,6 @@ function answerText(q: QuizQuestion): string {
   return `${asMath(String(q.answer))}${q.unit ? ` ${q.unit}` : ''}`;
 }
 
-/** What the student answered, written out the same way. */
 function givenText(q: QuizQuestion, given: string): string {
   if (!given) return 'nothing';
   if (q.type === 'mcq') return q.choices?.[Number(given)] ?? given;
@@ -38,20 +36,9 @@ function givenText(q: QuizQuestion, given: string): string {
 
 type Graded = AttemptAnswer & { feedback?: string };
 
-/**
- * Take a quiz.
- *
- * The student moves freely: every question is reachable from the navigator at
- * any time, answers can be changed until the quiz is finished, and the whole
- * thing can be left and resumed later. Finishing switches to review, where
- * every question can be looked at again with the answer, the explanation and
- * the hint — and an "Ask AI" button that opens a normal chat about it.
- */
 export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, notebookId }: {
   quizId: number;
-  /** Retry just these questions. */
   onlyIndexes?: number[];
-  /** Open on this question (its index in the quiz), from the overview. */
   startAt?: number;
   notebookId: number;
   onClose: () => void;
@@ -73,16 +60,12 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
   const shownAt = useRef(Date.now());
   const savedAttempt = useRef(false);
 
-  // ---------------------------------------------------------------- loading
-
   useEffect(() => {
     let alive = true;
     studyApi.quiz(quizId)
       .then((q) => {
         if (!alive) return;
         setQuiz(q);
-        // Pick up where the student left off, unless they asked for a retry of
-        // specific questions — that is a fresh run by definition.
         const saved = onlyIndexes ? null : loadQuizSession(quizId);
         if (quizSessionFits(saved, q.questions.length)) {
           setAnswers(saved.answers);
@@ -91,7 +74,6 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
           setReviewing(!!saved.reviewing);
           started.current = saved.startedAt;
           setResumed(Object.keys(saved.answers).length > 0);
-          // "Go to" from the overview wins over where they left off.
           const order = saved.only ?? q.questions.map((_, i) => i);
           const asked = startAt === undefined ? -1 : order.indexOf(startAt);
           setPos(asked >= 0 ? asked : Math.min(saved.pos, order.length - 1));
@@ -112,7 +94,6 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
   const right = order.filter((i) => answers[i]?.correct).length;
   const given = index === undefined ? '' : drafts[index] ?? current?.given ?? '';
 
-  // Keep the session on disk in step, so closing the app loses nothing.
   useEffect(() => {
     if (!quiz) return;
     saveQuizSession({ quizId, startedAt: started.current, pos, only, answers, drafts, reviewing });
@@ -122,8 +103,6 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
     if (index === undefined) return;
     setDrafts((d) => ({ ...d, [index]: value }));
   }, [index]);
-
-  // ---------------------------------------------------------------- marking
 
   const check = useCallback(async () => {
     if (!q || index === undefined || checking) return;
@@ -156,15 +135,12 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
     shownAt.current = Date.now();
   }, [order.length]);
 
-  /** Change an answer that has already been marked. */
   const reopen = () => {
     if (index === undefined) return;
     setAnswers(({ [index]: _gone, ...rest }) => rest);
     setDrafts((d) => ({ ...d, [index]: '' }));
     shownAt.current = Date.now();
   };
-
-  // ------------------------------------------------------------- finishing
 
   const finish = useCallback(() => {
     if (!quiz || savedAttempt.current) { setReviewing(true); return; }
@@ -201,8 +177,6 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
     clearQuizSession(quizId);
   };
 
-  // ------------------------------------------------------------- shortcuts
-
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (asking !== null) return;
@@ -231,8 +205,6 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   });
-
-  // ----------------------------------------------------------------- render
 
   if (error) return <div className="stage"><div className="pane-empty center"><p className="form-err">{error}</p><button type="button" className="btn" onClick={onClose}>Back</button></div></div>;
   if (!quiz) return <div className="stage"><div className="pane-empty center"><span className="dots"><i /><i /><i /></span></div></div>;
@@ -372,9 +344,6 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
   );
 }
 
-// ------------------------------------------------------------------ inputs
-
-/** A written question that wants a proof, not a sentence. */
 const PROOF = /\b(prove|proof|disprove|justify|counter-?example|show that)\b/i;
 
 function AnswerInput({ q, given, locked, reviewing, onChange }: {
@@ -437,22 +406,13 @@ function AnswerInput({ q, given, locked, reviewing, onChange }: {
       </div>
     );
   }
-  // The box is in the sentence itself (`GapInput`, placed by `GapPrompt`).
   if (q.type === 'blank') return null;
-  // A proof needs room, and saying so tells the student a verdict alone will not do.
   const proof = PROOF.test(q.prompt);
   return <textarea className="textarea" rows={proof ? 10 : 4} value={given} onChange={(e) => onChange(e.target.value)} disabled={locked}
     placeholder={proof ? 'Your answer, then the proof or counterexample (Ctrl+Enter to check)' : 'Explain in a sentence or two (Ctrl+Enter to check)'} autoFocus={!reviewing} />;
 }
 
 
-/**
- * The box a fill-the-gap answer is typed into, sitting where the gap is.
- *
- * It grows with what is typed, so a long term does not scroll inside a
- * box the width of a short one, and once checked it shows whether it was
- * right in place.
- */
 function GapInput({ given, locked, verdict, autoFocus, onChange }: {
   given: string;
   locked: boolean;
@@ -477,35 +437,22 @@ function GapInput({ given, locked, verdict, autoFocus, onChange }: {
   );
 }
 
-/** A gap shown in a list of questions: an empty box, not a row of underscores. */
 const QuestionText = ({ q }: { q: QuizQuestion }) => (
   q.type === 'blank' && hasGap(q.prompt)
     ? <GapPrompt text={q.prompt} className="quiz-question-prompt"><span className="gap-view" /></GapPrompt>
     : <div className="quiz-question-prompt"><Markdown text={q.prompt} /></div>
 );
 
-// ---------------------------------------------------------------- overview
-
 const TYPE_BADGE: Record<QuizQuestion['type'], string> = {
   mcq: 'choice', multi: 'select all', tf: 'true/false', numeric: 'numeric', short: 'written', blank: 'fill the gap',
 };
 
-/**
- * What you see when you open a quiz: everything in it, before you start.
- *
- * The same shape as a flashcard deck — scores at the top, the contents below —
- * because a quiz is the same kind of thing: something you made once and come
- * back to. Every question can be read, edited and rewritten here, and starting
- * from a particular question is just clicking it.
- */
 export function QuizView({ quiz, summary, notebookId, ctx, onBack, onPlay, onChanged }: {
   quiz: Quiz;
   summary: QuizSummary | undefined;
   notebookId: number;
-  /** The course and notebook, so a rewrite follows the same conventions. */
   ctx: StudyContext;
   onBack: () => void;
-  /** `only` starts at, or restricts to, particular questions. */
   onPlay: (only?: number[], startAt?: number) => void;
   onChanged: () => void;
 }) {
@@ -520,13 +467,6 @@ export function QuizView({ quiz, summary, notebookId, ctx, onBack, onPlay, onCha
     onChanged();
   };
 
-  /**
-   * What a rewrite is written from.
-   *
-   * The quiz does not record what it was generated from, so this rebuilds it:
-   * the sources the question itself cites if it has any, otherwise the
-   * notebook's material, and failing that the question's own topic.
-   */
   const materialFor = useCallback(async (q: QuizQuestion): Promise<GenSource> => {
     const cited = q.sources?.map((x) => x.sourceId) ?? [];
     const ids = cited.length
@@ -609,20 +549,12 @@ export function QuizView({ quiz, summary, notebookId, ctx, onBack, onPlay, onCha
   );
 }
 
-/**
- * Editing one question.
- *
- * The answer key is editable because a generated quiz is occasionally wrong,
- * and a wrong answer key teaches the wrong thing. The fields shown follow the
- * question's type, so there is no way to set an answer the marker cannot use.
- */
 function QuestionEditor({ question, index, onClose, onSave, onDelete, onRewrite }: {
   question: QuizQuestion;
   index: number;
   onClose: () => void;
   onSave: (q: QuizQuestion) => Promise<void>;
   onDelete?: () => Promise<void>;
-  /** Have the AI write a replacement for this question. */
   onRewrite?: (progress: (text: string) => void) => Promise<QuizQuestion>;
 }) {
   const [draft, setDraft] = useState<QuizQuestion>(question);
@@ -642,7 +574,6 @@ function QuestionEditor({ question, index, onClose, onSave, onDelete, onRewrite 
         throw new Error('A choice question needs at least two choices.');
       }
       if (multi && !(draft.answers ?? []).length) throw new Error('Tick which choices are correct.');
-      // An edited question is no longer the one Python checked.
       await onSave({ ...draft, verified: false });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -741,8 +672,6 @@ function QuestionEditor({ question, index, onClose, onSave, onDelete, onRewrite 
               setBusy(true);
               setError(null);
               try {
-                // The replacement lands in the editor rather than being saved
-                // straight away: the student sees it before it counts.
                 setDraft(await onRewrite(setStatus));
               } catch (e) {
                 setError(e instanceof Error ? e.message : String(e));
@@ -760,8 +689,6 @@ function QuestionEditor({ question, index, onClose, onSave, onDelete, onRewrite 
     </Modal>
   );
 }
-
-// ---------------------------------------------------------------- feedback
 
 function Feedback({ q, answer, reviewing, onAsk, onChange, onNext, last }: {
   q: QuizQuestion;
@@ -805,8 +732,6 @@ function Feedback({ q, answer, reviewing, onAsk, onChange, onNext, last }: {
     </div>
   );
 }
-
-// ----------------------------------------------------------------- results
 
 function Results({ quiz, order, answers, notebookId, cardsMade, onCardsMade, onRetryMissed, onRestart, onDone }: {
   quiz: Quiz;

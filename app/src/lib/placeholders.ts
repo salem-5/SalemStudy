@@ -1,12 +1,6 @@
 import type { Box, Question } from '../types';
 import { toText } from './mathpad.js';
 
-// Userscripts before 0.3.0 send WebAssign's raw .qContent markup: real
-// <select>/<input>/MathType widgets, grading badges and <script> blocks. This
-// is the app-side twin of the userscript's questionHtml(): it swaps each answer
-// widget for the placeholders QuestionHtml renders, so questions look right no
-// matter which userscript version is installed.
-
 const hasPlaceholders = (html: string) => /class="wa-(slot|opt|static)"/.test(html);
 const clean = (s: string | null | undefined) => String(s ?? '').replace(/\s+/g, ' ').trim();
 const isEmptyMathML = (v: string | undefined) => !v || /^<math[^>]*\/>$/.test(v.trim());
@@ -20,17 +14,6 @@ const isWellFormedMath = (value: string): boolean => {
   }
 };
 
-/**
- * Closed/answered math boxes render their answer into a `.wa-static` span. If a
- * box's own value came back empty (the input was gone) or malformed (WebAssign
- * stores some answers with unescaped `<`/`>`), copy the well-formed static
- * answer onto the box so the card below shows the same math as the question.
- *
- * Every math box produces exactly one placeholder in DOM order: a `wa-slot`
- * while editable, or a `wa-static` once closed. So the placeholders zip 1:1
- * onto the math boxes. `data-boxid` (userscript 0.3.4+) is used as well when
- * present, which also covers odd layouts.
- */
 function fillStaticMath(q: Question): Question {
   if (!q.html) return q;
   const mathBoxes = q.boxes.filter((b) => b.kind === 'math');
@@ -40,16 +23,13 @@ function fillStaticMath(q: Question): Question {
   const readStatic = (el: HTMLElement): { value: string; text: string } => {
     const math = el.querySelector('math');
     if (math) {
-      // XMLSerializer escapes < in attributes/text (outerHTML does not), so a
-      // malformed server value becomes well-formed MathML here.
       const value = new XMLSerializer().serializeToString(math);
       if (isWellFormedMath(value)) {
         let text = '';
-        try { text = toText(value); } catch { /* keep text blank */ }
+        try { text = toText(value); } catch { }
         return { value, text };
       }
     }
-    // MathJax output without a usable <math> element: keep the visible text.
     return { value: '', text: (el.textContent ?? '').trim() };
   };
 
@@ -72,7 +52,6 @@ function fillStaticMath(q: Question): Question {
   let changed = false;
   const boxes = q.boxes.map((b) => {
     if (b.kind !== 'math') return b;
-    // Keep values that are present and well-formed.
     if (!isEmptyMathML(b.value) && isWellFormedMath(b.value)) return b;
     const ex = answers.get(b.id);
     if (!ex || (!ex.value && !ex.text)) return b;
@@ -85,8 +64,6 @@ function fillStaticMath(q: Question): Question {
 function convert(html: string, boxes: Box[], code: string | null): { html: string; display: Box['display'][] } {
   const doc = new DOMParser().parseFromString(`<div id="root">${html}</div>`, 'text/html');
   const root = doc.getElementById('root')!;
-  // Grading marks (.waMark) are left for sanitizeQuestionHtml, which reads the
-  // grade of closed questions' choices from them.
   root.querySelectorAll('script, style, link, .js-question-resources, .extraContent, .badgeWrap, .tooltip, .latex-source, .mathtype-overlay-trigger, [class*="mathtype-overlay"]')
     .forEach((e) => e.remove());
 
@@ -104,8 +81,6 @@ function convert(html: string, boxes: Box[], code: string | null): { html: strin
     if (b.kind === 'math') {
       const ed = root.querySelector(`#editable-math-${esc}`);
       const wrap = ed && (ed.closest('.mathtype-wrapper') ?? ed);
-      // Only a disabled editor or a .mtAnswer with real content is closed; an
-      // empty .mtAnswer is a placeholder and the box must stay an editable slot.
       const ans = wrap?.querySelector('.mtAnswer');
       const hasAnswer = !!ans && (!!ans.querySelector('math') || (ans.textContent ?? '').trim() !== '');
       const closed = !!wrap && (!!ed?.classList.contains('mtDisabled') || hasAnswer);
@@ -136,7 +111,6 @@ function convert(html: string, boxes: Box[], code: string | null): { html: strin
     return b.display ?? (isSelect ? 'dropdown' : null);
   });
 
-  // Remaining radios/checkboxes belong to closed questions; sanitizeQuestionHtml shows them read-only.
   root.querySelectorAll('input:not([type="radio"]):not([type="checkbox"]), select, textarea, button').forEach((e) => e.remove());
   if (code) {
     root.querySelectorAll('div').forEach((el) => {
@@ -146,14 +120,6 @@ function convert(html: string, boxes: Box[], code: string | null): { html: strin
   return { html: root.innerHTML, display };
 }
 
-/**
- * Unanswered MathType boxes sometimes arrive as an empty `.wa-static` (the
- * userscript sees an empty `.mtAnswer` and thinks the box is closed). Turn those
- * back into editable `wa-slot`s so they render as normal answer widgets.
- *
- * Every math box yields one placeholder in DOM order (slot or static), so the
- * placeholders zip 1:1 onto the math boxes.
- */
 function fixEmptyMathStatics(q: Question): Question {
   if (!q.html) return q;
   const mathBoxes = q.boxes.filter((b) => b.kind === 'math');
@@ -180,7 +146,6 @@ function fixEmptyMathStatics(q: Question): Question {
   return changed ? { ...q, html: root.innerHTML } : q;
 }
 
-/** Make a question from any userscript version render like one from the current version. */
 export function normalizeQuestion(q: Question): Question {
   const filled = fillStaticMath(fixEmptyMathStatics(q));
   if (!filled.html || hasPlaceholders(filled.html) || !filled.boxes.length) {

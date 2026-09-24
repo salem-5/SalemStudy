@@ -14,7 +14,6 @@ import { studyApi, type Note } from './api';
 import { AskableArea, ChatButton, noteBriefing } from './StudyChat';
 import { ConfirmDialog, NameDialog } from './dialogs';
 
-/** A plain-text taste of a note for the list: no title line, no maths, no markup. */
 const preview = (md: string) => md
   .replace(/^#.*$/m, '')
   .replace(/\$\$[\s\S]*?\$\$|\$[^$\n]*\$/g, ' … ')
@@ -79,7 +78,6 @@ export function NotesPane({ notes, onOpen, onGenerate, onBlank, onChanged }: {
 
 const REFINE_PRESETS = ['Make it shorter', 'Add more worked examples', 'Add a summary table', 'Simpler language', 'Add common mistakes', 'Turn it into a cheat sheet'];
 
-/** Export a note as a typeset PDF in Documents and open it. */
 async function exportPdf(note: Note): Promise<string> {
   const html = markdownToPrintHtml(note.content);
   const res = await api.exportPdf(note.title, html, [], '', note.title);
@@ -105,15 +103,6 @@ export function NoteView({ noteId, notebookId, onBack, onChanged }: { noteId: nu
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const paperRef = useRef<HTMLElement | null>(null);
 
-  /**
-   * Where the student had got to in this note.
-   *
-   * Each note keeps its own position, and it survives switching notes,
-   * notebooks and subjects, and closing the app. Restoring waits for the
-   * Markdown and the maths to finish laying out, or it would land in the
-   * wrong place — and it anchors on the paragraph that was at the top, so a
-   * rewrite further up does not throw the reader down the page.
-   */
   useEffect(() => {
     const scroller = scrollRef.current;
     const paper = paperRef.current;
@@ -121,17 +110,14 @@ export function NoteView({ noteId, notebookId, onBack, onChanged }: { noteId: nu
     tagAnchors(paper);
     const key = `note-${noteId}`;
     const saved = loadPosition(key);
-    // Nothing to restore while it is still being written — that view follows
-    // the text as it arrives.
     const stop = saved && !job ? restoreWhenReady(scroller, saved) : () => {};
     const unwatch = watch(scroller, key);
     return () => { stop(); unwatch(); };
   }, [noteId, draft, job, editing, fullscreen]);
 
   const load = () => studyApi.note(noteId).then((n) => { setNote(n); setDraft(n.content); }).catch(() => setNote(null));
-  // Reload when a writing job for this note finishes.
   const writing = !!job;
-  useEffect(() => { void load(); }, [noteId, writing]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { void load(); }, [noteId, writing]);
 
   useEffect(() => {
     if (!fullscreen) return;
@@ -140,7 +126,6 @@ export function NoteView({ noteId, notebookId, onBack, onChanged }: { noteId: nu
     return () => window.removeEventListener('keydown', onKey, true);
   }, [fullscreen]);
 
-  // Edits save themselves shortly after typing stops.
   const edit = (text: string) => {
     setDraft(text);
     if (saveTimer.current) window.clearTimeout(saveTimer.current);

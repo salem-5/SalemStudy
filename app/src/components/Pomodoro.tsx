@@ -6,7 +6,6 @@ import { Modal } from './Dialogs';
 
 const PHASES: Phase[] = ['focus', 'short', 'long'];
 
-/** The timer in every view's top bar: click the time to open Focus, the glyph to start/pause. */
 export function PomodoroChip({ onOpen }: { onOpen: () => void }) {
   const p = usePomodoro();
   const left = remainingOf(p);
@@ -23,7 +22,6 @@ export function PomodoroChip({ onOpen }: { onOpen: () => void }) {
   );
 }
 
-/** Shown when a phase ends; offers to start the next one. */
 export function PomodoroAlarm() {
   const p = usePomodoro();
   if (!p.alarm) return null;

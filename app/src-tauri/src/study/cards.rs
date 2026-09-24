@@ -1,6 +1,3 @@
-//! Flashcard decks (replayed for a score, no scheduling), quizzes, and the
-//! run / review / attempt logs that analytics read.
-
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -16,8 +13,6 @@ fn opt_json(v: &Value) -> Option<String> {
     if v.is_null() { None } else { Some(v.to_string()) }
 }
 
-// ---------------------------------------------------------------- flashcards
-
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Deck {
@@ -28,7 +23,6 @@ pub struct Deck {
     pub updated_at: i64,
     pub card_count: i64,
     pub runs: i64,
-    /// Share right, 0..1, of the best and the latest finished run.
     pub best: Option<f64>,
     pub last: Option<f64>,
 }
@@ -146,7 +140,6 @@ pub fn list_cards(conn: &Connection, deck_id: i64) -> rusqlite::Result<Vec<Card>
     .collect()
 }
 
-/// A finished play-through: one row for the score, one review per card.
 pub fn record_run(conn: &Connection, deck_id: i64, started_at: i64, results: &[CardResult]) -> rusqlite::Result<Option<i64>> {
     let notebook: Option<i64> = conn.query_row("SELECT notebook_id FROM deck WHERE id = ?1", [deck_id], |r| r.get(0)).optional()?;
     let Some(notebook_id) = notebook else { return Ok(None) };
@@ -303,8 +296,6 @@ pub fn deck_runs_list(app: AppHandle, db: State<'_, StudyDb>, notebook_id: i64, 
     })
 }
 
-// ------------------------------------------------------------------- quizzes
-
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct QuizSummary {
@@ -395,11 +386,6 @@ pub fn quiz_create(app: AppHandle, db: State<'_, StudyDb>, notebook_id: i64, tit
     })
 }
 
-/// Replace a quiz's questions — editing one, or regenerating one in place.
-///
-/// The whole list is written at once so a quiz can never end up half-updated,
-/// and attempts already recorded against it are left alone: a past score is a
-/// fact about what the student answered, not about the current wording.
 #[tauri::command]
 pub fn quiz_update(app: AppHandle, db: State<'_, StudyDb>, id: i64, questions: Value) -> Result<(), String> {
     if !questions.as_array().is_some_and(|a| !a.is_empty()) {

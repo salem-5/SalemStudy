@@ -1,21 +1,3 @@
-"""The Salem AI runtime: the one path every AI request in the app takes.
-
-It decides how much machinery a request deserves, runs it, keeps it bounded,
-recovers what it can, and always ends in an observable state — completed,
-failed or cancelled, never silently running forever.
-
-    agentic   a smolagents agent with tools, Python, sub-agents and validation.
-              What conversation gets, because an answer that was looked up and
-              checked beats one recalled in a single breath.
-    direct    one streamed completion, no agent loop. Reserved for work that
-              genuinely has nothing to look up — reading an image, naming a
-              chat — and for callers that ask for it by name.
-
-A direct pass that reaches for a tool escalates into the agentic path by
-itself, so a request routed to the cheap path can still end up in the right
-one.
-"""
-
 from __future__ import annotations
 
 import json
@@ -40,8 +22,6 @@ class Runtime:
     def __init__(self, host: Host) -> None:
         self.host = host
         self.runs: dict[str, RunContext] = {}
-
-    # ------------------------------------------------------------- lifecycle
 
     def cancel(self, run_id: str) -> None:
         ctx = self.runs.get(run_id)
@@ -77,8 +57,6 @@ class Runtime:
             except HostError:
                 pass
 
-    # ----------------------------------------------------------------- core
-
     def _run(self, ctx: RunContext, payload: dict) -> dict:
         kind = str(payload.get("agent") or "chat")
         if kind not in AGENTS:
@@ -98,11 +76,6 @@ class Runtime:
 
         mode = str(payload.get("mode") or "auto")
         schema = payload.get("schema")
-        # Conversation goes through an agent too. It costs a round trip that a
-        # plain completion does not, and buys the thing the student actually
-        # notices: the assistant looks in their notebooks, checks the maths in
-        # Python and searches the web, instead of answering from memory and
-        # being confidently wrong.
         if mode == "direct":
             direct = self._direct(ctx, model, registry, messages, payload, schema)
             if direct is not None:
@@ -112,17 +85,8 @@ class Runtime:
         result = self._agentic(ctx, registry, model_id, payload, memory, messages, schema)
         return self._finish(ctx, memory, result)
 
-    # --------------------------------------------------------------- direct
-
     def _direct(self, ctx: RunContext, model: HostModel, registry: Registry,
                 messages: list[dict], payload: dict, schema: Any = None) -> dict | None:
-        """One completion, and the answer if it is a good one.
-
-        Returns `None` — the signal to escalate to the agent — when the model
-        reached for a tool, said nothing, or (with a schema) wrote something
-        that does not fit. The cheap path is allowed to be wrong; it is not
-        allowed to hand back something wrong.
-        """
         ctx.state(EXECUTING, "Answering")
         tools = registry.select(
             ctx,
@@ -133,8 +97,6 @@ class Runtime:
         ask = (messages + [{"role": "user", "content": _parts(_schema_ask(schema))}]) if schema else messages
         reply = model.stream(
             ask, tools=tools or None,
-            # Streaming a schema answer to the UI would paint raw JSON across
-            # the chat while it arrives.
             stream_to_ui=not schema,
             response_format={"type": "json_object"} if schema else None,
         )
@@ -151,8 +113,6 @@ class Runtime:
                 return None
             return {"text": "", "structured": value, "state": COMPLETED, "path": "direct"}
         return {"text": text, "state": COMPLETED, "path": "direct"}
-
-    # -------------------------------------------------------------- agentic
 
     def _agentic(self, ctx: RunContext, registry: Registry, model_id: str, payload: dict,
                  memory: workmem.WorkingMemory, messages: list[dict],
@@ -189,8 +149,6 @@ class Runtime:
             except Exception as exc:
                 last_error = _readable(exc)
                 if attempt == _MAX_ATTEMPTS or ctx.remaining < 20:
-                    # Last resort: answer without the agent loop rather than
-                    # leaving the student with nothing.
                     return self._fallback(ctx, model_id, messages, last_error)
                 continue
 
@@ -219,9 +177,6 @@ class Runtime:
         raise RuntimeError(last_error or "the task could not be completed")
 
     def _fallback(self, ctx: RunContext, model_id: str, messages: list[dict], why: str) -> dict:
-        """The simpler execution path, used when the agent loop keeps failing.
-        The student is told the tools were not usable, not given a made-up
-        answer that pretends they were."""
         ctx.note("Tools kept failing — answering without them")
         model = HostModel(ctx, model_id)
         reply = model.stream(messages + [{"role": "user", "content": _parts(
@@ -231,16 +186,12 @@ class Runtime:
         return {"text": (reply.content or "").strip(), "state": COMPLETED, "path": "fallback",
                 "degraded": True, "reason": why}
 
-    # ---------------------------------------------------------------- finish
-
     def _finish(self, ctx: RunContext, memory: workmem.WorkingMemory, result: dict) -> dict:
         if memory.task_id:
             workmem.save(ctx, memory)
         ctx.state(COMPLETED, "Done")
         return {**result, "memory": memory.as_dict(), "telemetry": ctx.telemetry()}
 
-
-# --------------------------------------------------------------------- helpers
 
 
 def _budget(raw: Any, kind: str) -> Budget:
@@ -250,7 +201,6 @@ def _budget(raw: Any, kind: str) -> Budget:
     elif kind == "generation":
         base = base.scaled(2.0)
     elif kind == "notebook":
-        # Grounding an answer takes several searches and a read or two.
         base = base.scaled(1.5)
     if isinstance(raw, dict):
         for key in ("seconds", "steps", "toolCalls", "pythonCalls", "subagents", "subagentDepth", "tokens"):
@@ -262,12 +212,6 @@ def _budget(raw: Any, kind: str) -> Budget:
 
 
 def _messages(payload: dict, memory: workmem.WorkingMemory) -> list[dict]:
-    """System prompt (with the carried task state folded in), then the chat.
-
-    Content is always a list of parts, and neighbours with the same role are
-    merged: that is the shape smolagents' message cleaner insists on, and two
-    adjacent system messages would otherwise blow up inside it.
-    """
     system = "\n\n".join(x for x in (str(payload.get("system") or "").strip(), memory.as_prompt()) if x)
     out: list[dict] = [{"role": "system", "content": _parts(system)}] if system else []
     for message in payload.get("messages") or []:
@@ -285,7 +229,6 @@ def _messages(payload: dict, memory: workmem.WorkingMemory) -> list[dict]:
 
 
 def _parts(content: Any) -> list[dict]:
-    """Normalise a message body to smolagents' list-of-parts form."""
     if content is None:
         return []
     if isinstance(content, str):
@@ -309,7 +252,6 @@ def _last_user(messages: list[dict]) -> str:
 
 
 def _plain(content: Any) -> str:
-    """The readable text of a message body, images left out."""
     if isinstance(content, str):
         return content
     if isinstance(content, list):
@@ -318,8 +260,6 @@ def _plain(content: Any) -> str:
 
 
 def _task_text(messages: list[dict], memory: workmem.WorkingMemory, payload: dict) -> str:
-    """smolagents takes one task string, so the conversation is folded into it —
-    the task state first, because that is what must survive."""
     parts: list[str] = []
     carried = memory.as_prompt()
     if carried:
@@ -341,8 +281,6 @@ def _schema_note(schema: Any) -> str:
 
 
 def _schema_ask(schema: Any) -> str:
-    """What the one-pass path asks for. The agentic path says the same thing
-    in terms of `final_answer`; here there is no tool to call, only JSON."""
     return ("Answer with a single JSON object matching this schema exactly, and nothing else "
             "— no prose, no code fence:\n" + json.dumps(schema, ensure_ascii=False)[:6000])
 
@@ -354,9 +292,6 @@ def _retry_note(error: str) -> str:
 
 
 def _validate(output: Any, schema: Any) -> tuple[Any, str]:
-    """Structural validation of generated data. Deliberately small: it checks
-    shape, required keys and types, which is what actually goes wrong, and
-    leaves meaning to the checking sub-agents."""
     value = output
     if isinstance(value, str):
         text = value.strip()
@@ -409,8 +344,6 @@ def _check(value: Any, schema: Any, path: str) -> str:
 
 
 def _stalled(stalled: bool) -> dict:
-    """An answer that arrived only because the step limit ran out is reported
-    as partial. Saying "done" here would be claiming a success we did not get."""
     if not stalled:
         return {}
     return {"degraded": True, "reason": "ran out of steps before finishing — this answer may be incomplete"}

@@ -1,14 +1,6 @@
-/**
- * One set of preferences for the window and every tab: what is shared, what
- * stays with one page, and that a change made on one side reaches the other
- * without echoing back.
- */
-
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-/** A fresh storage class each time: the module patches its prototype, as it
- *  does the browser's, and one test's patch must not reach the next. */
 const memStorage = () => new (class MemStorage {
   map = new Map<string, string>();
   get length() { return this.map.size; }
@@ -43,7 +35,6 @@ async function setup(shared: Record<string, string>, local: Record<string, strin
   });
   g.window = win;
   const mod = await import(`./prefSync.ts?${Math.random()}`);
-  /** Deliver an event the way Tauri would. */
   const emit = (payload: unknown) => {
     const listen = calls.find((c) => c.cmd === 'plugin:event|listen');
     callbacks.get(Number(listen?.args.handler))?.({ event: 'prefs://changed', id: 1, payload });

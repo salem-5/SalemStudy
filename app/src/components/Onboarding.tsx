@@ -5,34 +5,18 @@ import { Modal } from './Dialogs';
 import { onPythonProgress, pythonSetup, pythonStatus, type PythonStatus } from '../lib/python';
 import { runtimeStatus, type RuntimeStatus } from '../lib/salem/runtime';
 
-/**
- * Getting Salem working, once, without a terminal.
- *
- * Three things the app needs and cannot ship: a Python it can build a
- * virtualenv in, the AI runtime inside that virtualenv, and a TeX engine for
- * PDF export. Each is installable from here, and each says plainly what it is
- * for so nothing is installed on blind faith.
- *
- * It only appears when something is actually missing, and it can always be
- * dismissed — the app works without any of it, just with less.
- */
-
 const SKIP_KEY = 'wa.onboarding.skipped';
 
-/** Has the student already said they do not want to be asked? */
 export const onboardingSkipped = (): boolean => {
   try { return localStorage.getItem(SKIP_KEY) === '1'; } catch { return false; }
 };
 
-/** Is anything missing that we should offer to fix? */
 export async function needsOnboarding(): Promise<boolean> {
   if (onboardingSkipped()) return false;
   const [python, ai] = await Promise.all([
     pythonStatus().catch(() => null),
     runtimeStatus().catch(() => null),
   ]);
-  // TeX alone is not worth interrupting anyone for: it only matters when they
-  // export, and the export dialog says so itself.
   return !python?.ready || !ai?.ready;
 }
 
@@ -60,7 +44,6 @@ export function Onboarding({ onClose }: { onClose: () => void }) {
     setLog('Starting…');
     try {
       await pythonSetup(false);
-      // The runtime has to be restarted to pick up the new environment.
       await invoke('salem_restart').catch(() => {});
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
@@ -96,7 +79,6 @@ export function Onboarding({ onClose }: { onClose: () => void }) {
       detail: ai?.ready
         ? `smolagents ${ai.hello?.smolagents ?? '?'} on Python ${ai.hello?.python ?? '?'}`
         : ai?.error ?? 'Not installed yet.',
-      // It comes with the Python setup; there is nothing separate to press.
       action: python?.ready && !ai?.ready
         ? { label: 'Repair the environment', run: () => void install() }
         : undefined,
@@ -136,7 +118,7 @@ export function Onboarding({ onClose }: { onClose: () => void }) {
 
       <div className="modal-actions">
         <button type="button" className="btn ghost" disabled={!!busy}
-          onClick={() => { try { localStorage.setItem(SKIP_KEY, '1'); } catch { /* ignore */ } onClose(); }}>
+          onClick={() => { try { localStorage.setItem(SKIP_KEY, '1'); } catch { } onClose(); }}>
           Do not ask again
         </button>
         <span className="spacer" />

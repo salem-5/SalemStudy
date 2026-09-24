@@ -25,14 +25,14 @@ import { fmtClock, remainingOf, usePomodoro } from './lib/pomodoro';
 
 const store = {
   get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } },
-  set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } },
+  set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { } },
 };
 
 function loadRoute(): Route {
   try {
     const r = JSON.parse(store.get('wa.route') || '') as Route;
     if (r && ['solver', 'study', 'chat', 'focus', 'schedule', 'subject', 'notebook'].includes(r.kind)) return r;
-  } catch { /* default */ }
+  } catch { }
   return { kind: 'study' };
 }
 
@@ -44,16 +44,10 @@ type Dialog =
   | { kind: 'edit-notebook'; notebook: NotebookSummary }
   | { kind: 'delete-notebook'; notebook: NotebookSummary };
 
-/**
- * Top level: a global sidebar with the two products. The solver stays mounted
- * while Study is open, so a running solve or unsaved draft survives switching.
- */
 export default function Shell() {
   const solverOn = useSolverEnabled();
   const [route, setRoute] = useState<Route>(() => { const r = loadRoute(); return r.kind === 'solver' && !solverEnabled() ? { kind: 'study' } : r; });
-  // Turning the solver off while it is open goes back to Study.
   useEffect(() => { if (!solverOn && route.kind === 'solver') setRoute({ kind: 'study' }); }, [solverOn, route.kind]);
-  // The switch lives in Settings, whose host changes with it: keep the dialog open across the swap.
   const lastSolver = useRef(solverOn);
   useEffect(() => {
     if (lastSolver.current === solverOn) return;
@@ -65,9 +59,6 @@ export default function Shell() {
     try { return JSON.parse(store.get('wa.nav.folded') || '[]'); } catch { return []; }
   });
   const [navSmall, setNavSmall] = useState(() => store.get('wa.nav.small') === '1');
-  // Work the student cannot see from where they are standing. The sidebar is
-  // the one thing always on screen, so it is where "something is happening"
-  // belongs.
   const chatsRunning = useChatRunCount();
   const studyRunning = useTasks().filter((t) => !['completed', 'failed', 'cancelled'].includes(t.state)).length;
   const [dialog, setDialog] = useState<Dialog | null>(null);
@@ -75,19 +66,14 @@ export default function Shell() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [settingsSignal, setSettingsSignal] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  // Tab mode is the window serving the app to a browser, so it is offered
-  // only in the window — a tab cannot hand out its own address.
   const [tabModeOpen, setTabModeOpen] = useState(false);
-  /** Shown once on startup when something Salem needs is not installed. */
   const [onboarding, setOnboarding] = useState(false);
   useEffect(() => {
-    // A moment's grace so it does not race the window opening.
     const t = window.setTimeout(() => { void needsOnboarding().then(setOnboarding).catch(() => {}); }, 1200);
     return () => window.clearTimeout(t);
   }, []);
   const canServe = !inTabMode();
   const [searching, setSearching] = useState(false);
-  // ⌘K / Ctrl+K opens search from anywhere.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setSearching((v) => !v); }
@@ -103,7 +89,6 @@ export default function Shell() {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === 'err' ? 8000 : 3500);
   }, []);
 
-  /** Bumped on every reload of the study space, for views that cache from it. */
   const [treeVersion, setTreeVersion] = useState(0);
   const refresh = useCallback(async () => {
     try { setTree(await studyApi.tree()); } catch (e) { toast('err', `Study: ${String(e)}`); setTree([]); }
@@ -117,7 +102,6 @@ export default function Shell() {
     return t;
   }, []);
   useEffect(() => {
-    // A one-off target (a search hit) is not reopened on the next launch.
     store.set('wa.route', JSON.stringify(route.kind === 'notebook' ? { kind: 'notebook', id: route.id } : route));
     if (route.kind === 'chat') { setLastChat(route.id ?? null); store.set('wa.chat.last', String(route.id ?? '')); }
   }, [route]);
@@ -133,7 +117,6 @@ export default function Shell() {
     return null;
   };
 
-  // A route to something that was deleted falls back to the Study overview.
   useEffect(() => {
     if (!tree) return;
     if ((route.kind === 'subject' && !subjectOf(route.id)) || (route.kind === 'notebook' && !notebookOf(route.id))) {
@@ -176,7 +159,6 @@ export default function Shell() {
   ];
 
   const inStudy = route.kind !== 'solver';
-  // Views cross-fade when the route changes; chats switch inside the chat view.
   const viewKey = route.kind === 'chat' ? 'chat' : `${route.kind}:${'id' in route ? route.id : ''}`;
   const openFocus = useCallback(() => setRoute({ kind: 'focus' }), []);
   const activeSubject = route.kind === 'subject' ? route.id : route.kind === 'notebook' ? notebookOf(route.id)?.subject.id : undefined;
@@ -293,7 +275,6 @@ export default function Shell() {
       </nav>
 
       <OpenFocus.Provider value={openFocus}>
-        {/* The solver owns the settings dialog while it is mounted (saving reloads its config). */}
         {solverOn ? (
           <div className="shell-pane" hidden={inStudy}>
             <App active={!inStudy} settingsSignal={settingsSignal} />
@@ -364,8 +345,6 @@ export default function Shell() {
   );
 }
 
-/** Sidebar entry for the timer; shows the countdown while it runs. */
-/** "Something is happening over here." A dot, not a number. */
 function Busy({ what }: { what: string }) {
   return <span className="nav-busy" role="status" aria-label={what} title={what} />;
 }

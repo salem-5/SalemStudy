@@ -1,20 +1,3 @@
-"""Sandboxed runner for model-written Python.
-
-Started as `python -I -B sandbox_runner.py <job.json> <result.json>` with the
-working directory set to a throwaway folder and a scrubbed environment (see
-python.rs). It reads the code out of the job file, runs it with the math
-libraries already imported, and writes the captured output to the result file
-as JSON. Nothing is ever printed to the real stdout, so a crash of this script
-is the only thing the parent sees there.
-
-Layers of containment, weakest to strongest:
-  * `-I` isolated mode + a scrubbed environment + a throwaway cwd,
-  * an audit hook that refuses processes, sockets and writes outside the cwd,
-  * POSIX resource limits on memory, CPU time and file size,
-  * a watchdog that interrupts the main thread on timeout,
-  * the parent, which kills the whole process after a grace period.
-"""
-
 import ast
 import io
 import json
@@ -37,7 +20,6 @@ MAX_OUTPUT = int(JOB.get("max_output", 20000))
 MAX_FIGURES = int(JOB.get("max_figures", 8))
 MAX_FIGURE_BYTES = 4 * 1024 * 1024
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp")
-# normcase so a Windows path that differs only in case still matches.
 SANDBOX = os.path.normcase(os.path.realpath(os.getcwd()))
 
 
@@ -52,10 +34,6 @@ def write_result(payload):
     os.replace(tmp, RESULT_PATH)
 
 
-# --------------------------------------------------------------------------
-# Resource limits (POSIX only; on Windows the parent's kill is the backstop)
-# --------------------------------------------------------------------------
-
 def apply_limits():
     try:
         import resource
@@ -68,8 +46,6 @@ def apply_limits():
         ("RLIMIT_NOFILE", (256, 256)),
         ("RLIMIT_CORE", (0, 0)),
     ]
-    # numpy/scipy reserve a lot of address space up front, so the address-space
-    # cap is generous and only there to stop a runaway allocation.
     if MEMORY_MB > 0 and sys.platform != "darwin":
         limits.append(("RLIMIT_AS", (MEMORY_MB * 1024 * 1024,) * 2))
     for name, value in limits:
@@ -86,10 +62,6 @@ def apply_limits():
         except (ValueError, OSError):
             pass
 
-
-# --------------------------------------------------------------------------
-# Audit hook: no processes, no network, no writing outside the sandbox
-# --------------------------------------------------------------------------
 
 class Denied(RuntimeError):
     pass
@@ -144,14 +116,7 @@ def audit(event, args):
                 raise Denied(f"the sandbox can only touch files in its own folder ({event})")
 
 
-# --------------------------------------------------------------------------
-# Namespace
-# --------------------------------------------------------------------------
-
 def build_namespace():
-    """Import the math stack *before* the audit hook goes up: some libraries
-    read config files and probe the machine on import, which the hook would
-    refuse."""
     ns = {"__name__": "__main__", "__builtins__": __builtins__}
     loaded, failed = [], []
     for alias, module in (
@@ -175,13 +140,11 @@ def build_namespace():
         ns["Decimal"] = Decimal
     except Exception:
         pass
-    # Heavier optional libraries are only imported when the code mentions them.
     if any(word in CODE for word in ("plt", "matplotlib", "pyplot")):
         try:
             import matplotlib
             matplotlib.use("Agg")
             import matplotlib.pyplot as plt
-            # Figures are collected after the run, so show() only has to not block.
             plt.show = lambda *args, **kwargs: None
             plt.rcParams["figure.dpi"] = 110
             ns["matplotlib"] = matplotlib
@@ -224,10 +187,6 @@ def build_namespace():
 NAMESPACE, LOADED, FAILED = build_namespace()
 
 
-# --------------------------------------------------------------------------
-# Run
-# --------------------------------------------------------------------------
-
 def clip(text):
     if len(text) <= MAX_OUTPUT:
         return text, False
@@ -235,7 +194,6 @@ def clip(text):
 
 
 def describe(value):
-    """A readable form of the last expression's value, sympy included."""
     try:
         text = repr(value)
     except Exception:
@@ -253,8 +211,6 @@ def describe(value):
 
 
 def collect_figures(before):
-    """Open matplotlib figures, saved as PNGs, plus any image the code wrote
-    itself. Returns file names inside the sandbox; the parent reads them."""
     names = []
     plt = sys.modules.get("matplotlib.pyplot")
     if plt is not None:
@@ -279,8 +235,6 @@ FINISHED = threading.Event()
 
 
 def watchdog():
-    # Only interrupt while the model's code is still running: once it is done
-    # the process is busy writing the result, which must not be disturbed.
     if not FINISHED.wait(TIMEOUT):
         _thread.interrupt_main()
 
@@ -305,8 +259,6 @@ def main():
         })
         return
 
-    # A trailing expression is echoed the way a REPL would, so the model gets
-    # an answer even when it forgets to print.
     tail = None
     if tree.body and isinstance(tree.body[-1], ast.Expr):
         tail = ast.Expression(tree.body.pop().value)
@@ -336,7 +288,6 @@ def main():
         error = "the code ran out of memory in the sandbox"
     except BaseException:
         lines = traceback.format_exception(*sys.exc_info())
-        # Drop this runner's own frames; keep the ones from the model's code.
         error = "".join([lines[0]] + [ln for ln in lines[1:] if "sandbox_runner.py" not in ln]).strip()
     finally:
         FINISHED.set()

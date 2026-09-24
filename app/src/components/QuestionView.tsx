@@ -18,7 +18,6 @@ type Props = {
 };
 
 const WA = 'https://www.webassign.net';
-// MathType's accessibility overlay sometimes reaches the text view; drop it.
 const MATH_TYPE_NOISE = /Press Space or Enter to edit this math answer\.?/gi;
 
 function QuestionText({ text, boxes }: { text: string; boxes: Box[] }) {
@@ -37,7 +36,6 @@ function QuestionText({ text, boxes }: { text: string; boxes: Box[] }) {
         }
         const img = /^\[image: ([^\]]+)\]$/.exec(p);
         if (img) {
-          // MathType grading-mark icons are noise, not figures.
           if (/mcorrect|mincorrect|mpartial/i.test(img[1])) return null;
           const src = img[1].startsWith('/') ? WA + img[1] : img[1];
           return <img key={i} className="qimg" src={src} alt="" />;
@@ -78,8 +76,6 @@ export function QuestionView({
 }: Props) {
   const left = question.boxes.map(attemptsLeft).filter((x): x is number => x != null);
   const noneLeft = left.length > 0 && left.every((x) => x <= 0);
-  // Older userscripts sent raw WebAssign markup without widget placeholders; use the text view then.
-  // `wa-static` counts too: closed/answered math boxes are rendered as static answers, not slots.
   const richHtml = question.html
     && (!question.boxes.length || /class="wa-(slot|opt|static)"/.test(question.html)) ? question.html : null;
 

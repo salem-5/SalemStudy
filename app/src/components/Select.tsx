@@ -2,44 +2,25 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type 
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown } from 'lucide-react';
 
-/**
- * The app's dropdown, in place of the native `<select>`.
- *
- * A native select opens the operating system's menu — a different font, a
- * white sheet on a dark app, and on Windows a different thing again. This is
- * the same control drawn in the app's own style: a button showing the choice,
- * and a list that opens under it (or over it, near the bottom of the window).
- *
- * It behaves the way a select does from the keyboard: ↑/↓ or Enter/Space
- * opens it; ↑/↓, Home/End and typing the first letters move through it; Enter
- * picks; Esc and Tab close it without changing anything. The list is drawn in
- * a portal so a dialog or a scrolling pane never clips it.
- */
-
 export type SelectOption = {
   value: string;
   label: ReactNode;
-  /** What to match when the student types to jump; defaults to the label's text. */
   text?: string;
   disabled?: boolean;
-  /** A second, quieter line of text. */
   hint?: ReactNode;
 };
 
-/** Set while any list is open, so a dialog leaves Esc to the list. */
 export const POPOVER_OPEN = 'data-select-open';
 
 export function Select({ value, onChange, options, className = 'select', disabled, title, placeholder, ariaLabel, width }: {
   value: string;
   onChange: (value: string) => void;
   options: SelectOption[];
-  /** The trigger's look, so it can stand where a `.select` or `.field-input` stood. */
   className?: string;
   disabled?: boolean;
   title?: string;
   placeholder?: string;
   ariaLabel?: string;
-  /** Fix the trigger's width (CSS length); by default it fits its container. */
   width?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -71,7 +52,6 @@ export function Select({ value, onChange, options, className = 'select', disable
     setOpen(true);
   };
 
-  // Where the list goes: under the button, or over it when there is no room.
   const measure = useCallback(() => {
     const b = trigger.current?.getBoundingClientRect();
     if (!b) return;
@@ -97,7 +77,6 @@ export function Select({ value, onChange, options, className = 'select', disable
       const t = e.target as Node;
       if (!list.current?.contains(t) && !trigger.current?.contains(t)) close(false);
     };
-    // Scrolling the page under it would leave it floating in the wrong place.
     const reflow = (e: Event) => { if (!list.current?.contains(e.target as Node)) measure(); };
     const blur = () => close(false);
     window.addEventListener('mousedown', outside, true);
@@ -113,7 +92,6 @@ export function Select({ value, onChange, options, className = 'select', disable
     };
   }, [open, close, measure]);
 
-  // Keep the highlighted option in view.
   useEffect(() => {
     if (!open) return;
     list.current?.querySelector<HTMLElement>(`[data-index="${active}"]`)?.scrollIntoView({ block: 'nearest' });
@@ -144,7 +122,6 @@ export function Select({ value, onChange, options, className = 'select', disable
     if (!open) {
       if (['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(e.key)) { e.preventDefault(); openList(); return; }
       if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        // Closed, typing picks straight away, the way a native select does.
         const n = jump(e.key);
         if (n >= 0) { e.preventDefault(); onChange(options[n].value); }
       }
@@ -197,7 +174,6 @@ export function Select({ value, onChange, options, className = 'select', disable
             maxHeight: place.max,
             ...(place.up ? { bottom: window.innerHeight - place.top } : { top: place.top }),
           }}
-          // Clicks in the list are not "outside" to anything behind it.
           onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
           onKeyDown={onKeyDown}
         >

@@ -1,16 +1,8 @@
 import type { Box, Question } from '../types';
 import { boxContexts } from './ai';
 
-// ---------------------------------------------------------------------------
-// WebAssign prints part of the answer itself: the box sits inside brackets it
-// already draws, after an "=", or in front of a unit. Models keep repeating
-// those, and a repeated bracket is graded wrong. The prompt asks them not to;
-// this strips them anyway, because a rule the model can ignore is not a rule.
-// ---------------------------------------------------------------------------
-
 export type BoxContext = { before: string; after: string };
 
-/** Bracket families, so a printed `⟨` also catches an answer written `<…>`. */
 const FAMILIES: { opens: string[]; closes: string[] }[] = [
   { opens: ['('], closes: [')'] },
   { opens: ['['], closes: [']'] },
@@ -22,7 +14,6 @@ const FAMILIES: { opens: string[]; closes: string[] }[] = [
 
 const familyOf = (ch: string) => FAMILIES.find((f) => f.opens.includes(ch) || f.closes.includes(ch));
 
-/** The bracket pair the question itself draws around a box, if any. */
 export function printedBrackets(ctx: BoxContext | undefined): { opens: string[]; closes: string[] } | null {
   if (!ctx) return null;
   const open = ctx.before.trimEnd().slice(-1);
@@ -32,9 +23,7 @@ export function printedBrackets(ctx: BoxContext | undefined): { opens: string[];
   return family.closes.includes(close) ? family : null;
 }
 
-/** True when the brackets inside `s` never close more than they opened. */
 function balancedInside(s: string, opens: string[], closes: string[]): boolean {
-  // A bar is its own partner, so "balance" just means none is left over.
   if (opens.some((o) => closes.includes(o))) return !opens.some((o) => s.includes(o));
   let depth = 0;
   for (const ch of s) {
@@ -44,7 +33,6 @@ function balancedInside(s: string, opens: string[], closes: string[]): boolean {
   return depth === 0;
 }
 
-/** Peel bracket layers the question already prints around the box. */
 function stripBrackets(value: string, family: { opens: string[]; closes: string[] }): string {
   let s = value.trim();
   for (;;) {
@@ -59,10 +47,6 @@ function stripBrackets(value: string, family: { opens: string[]; closes: string[
 
 const UNITS = ['°', '%', '$', '£', '€'];
 
-/**
- * Clean one answer against what the question prints around its box. Returns
- * the value unchanged when there is nothing to remove.
- */
 export function fixAnswerText(value: string, ctx: BoxContext | undefined): { value: string; notes: string[] } {
   const notes: string[] = [];
   let s = value.trim();
@@ -77,8 +61,6 @@ export function fixAnswerText(value: string, ctx: BoxContext | undefined): { val
     }
   }
 
-  // "u . v = [1]": the box takes the right-hand side only. A comparison
-  // operator (<=, >=, !=, ==) is part of the answer, not a restated equation.
   if (/[=:]\s*$/.test(ctx.before)) {
     const at = s.search(/(?<![<>!=])=(?!=)[^=]*$/);
     const rhs = at >= 0 ? s.slice(at + 1).trim() : '';
@@ -88,7 +70,6 @@ export function fixAnswerText(value: string, ctx: BoxContext | undefined): { val
     }
   }
 
-  // "[1] °" or "$ [1]": the symbol is printed, not typed.
   const trailing = UNITS.find((u) => ctx.after.trimStart().startsWith(u));
   if (trailing && s.endsWith(trailing)) {
     notes.push(`dropped the trailing "${trailing}" the question already prints`);
@@ -103,13 +84,8 @@ export function fixAnswerText(value: string, ctx: BoxContext | undefined): { val
   return { value: s || value, notes };
 }
 
-/** Whether a box's answer is free text the fixes above apply to. */
 const typed = (b: Box) => b.kind === 'math' || b.kind === 'text' || b.kind === 'unsupported';
 
-/**
- * Apply the fixes to a whole set of proposed answers, reporting each change so
- * the student sees what was corrected before it is submitted.
- */
 export function fixAnswers(
   q: Question,
   answers: Record<string, unknown>,

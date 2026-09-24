@@ -1,6 +1,3 @@
-//! One search box across every notebook: source text (full-text index),
-//! notes, flashcards and chat messages.
-
 use rusqlite::{params, Connection};
 use serde::Serialize;
 use tauri::{AppHandle, State};
@@ -10,15 +7,12 @@ use super::{sources::fts_query, with_db, StudyDb};
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Found {
-    /// source, note, card, chat.
     pub kind: String,
     pub id: i64,
     pub notebook_id: Option<i64>,
     pub title: String,
-    /// Page/slide label for sources, deck for cards.
     pub detail: String,
     pub snippet: String,
-    /// Where to open it: the unit (page, slide) of a source, the deck of a card.
     pub target: Option<i64>,
 }
 

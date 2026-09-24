@@ -1,21 +1,3 @@
-"""Line-delimited JSON over stdio, between the runtime and the Rust host.
-
-The runtime never talks to the network, the database or the user's files on
-its own: everything it needs it asks the host for, and the host is the only
-side that holds the API key, the SQLite handle and the sandbox. That keeps
-"UI, persistence, application state, permissions, source management and
-database operations" outside smolagents, as the architecture requires.
-
-Two directions share one pipe:
-
-  host -> runtime   start / cancel / reply / shutdown
-  runtime -> host   hello / call / event / done / log
-
-`call` is the only one that blocks: a worker thread parks on a `Future` until
-the reader thread hands back the matching `reply`. Everything else is fire and
-forget, so a run can keep streaming while another waits on a tool.
-"""
-
 from __future__ import annotations
 
 import json
@@ -27,11 +9,11 @@ from typing import Any, Callable
 
 
 class HostError(RuntimeError):
-    """The host refused or failed a call. Agents catch these and recover."""
+    pass
 
 
 class Cancelled(RuntimeError):
-    """The user stopped this run. Never reported as a failure."""
+    pass
 
 
 @dataclass
@@ -43,8 +25,6 @@ class _Pending:
 
 
 class Host:
-    """The other end of the pipe. One instance per process."""
-
     def __init__(self, stdin=None, stdout=None) -> None:
         self._in = stdin or sys.stdin
         self._out = stdout or sys.stdout
@@ -54,8 +34,6 @@ class Host:
         self._next_id = 0
         self._handlers: dict[str, Callable[[dict], None]] = {}
         self._closed = threading.Event()
-
-    # ---------------------------------------------------------------- writing
 
     def _send(self, payload: dict) -> None:
         line = json.dumps(payload, ensure_ascii=False, default=str)
@@ -73,25 +51,13 @@ class Host:
         self._send({"t": "log", "level": level, "message": message})
 
     def event(self, run: str, event: dict) -> None:
-        """A progress event for one run. The UI renders these; they must never
-        carry private chain-of-thought, only the states listed in `state.py`."""
         self._send({"t": "event", "run": run, "event": event})
 
     def done(self, run: str, ok: bool, result: Any = None, error: str = "") -> None:
         self._send({"t": "done", "run": run, "ok": ok, "result": result, "error": error})
 
-    # ---------------------------------------------------------------- calling
-
     def call(self, method: str, args: dict, timeout: float | None = None,
              abort: threading.Event | None = None) -> Any:
-        """Ask the host to do something and wait for its answer.
-
-        Raises `HostError` on a refusal, a timeout or a closed pipe — always a
-        real error the agent can see and recover from, never a fabricated
-        success — and `Cancelled` the moment `abort` is set, so stopping a run
-        does not have to wait out a slow tool. The host is told to abandon the
-        work it had started for us.
-        """
         if self._closed.is_set():
             raise HostError("the app is no longer listening")
         if abort is not None and abort.is_set():
@@ -119,18 +85,14 @@ class Host:
         return slot.data
 
     def _abandon(self, call_id: int, why: str) -> None:
-        """Stop waiting, and let the host drop whatever it started for us."""
         with self._pending_lock:
             self._pending.pop(call_id, None)
         self._send({"t": "abandon", "id": call_id, "reason": why})
-
-    # ---------------------------------------------------------------- reading
 
     def on(self, kind: str, handler: Callable[[dict], None]) -> None:
         self._handlers[kind] = handler
 
     def serve(self) -> None:
-        """Read messages until stdin closes or the host asks us to stop."""
         for line in self._in:
             line = line.strip()
             if not line:
@@ -152,7 +114,7 @@ class Host:
                 continue
             try:
                 handler(msg)
-            except Exception as exc:  # a bad message must not kill the runtime
+            except Exception as exc:
                 self.log("error", f"{kind} handler failed: {exc}")
         self.close()
 
@@ -167,7 +129,6 @@ class Host:
         slot.done.set()
 
     def close(self) -> None:
-        """Fail every waiting call, so no worker thread is left parked."""
         self._closed.set()
         with self._pending_lock:
             waiting = list(self._pending.values())

@@ -1,19 +1,3 @@
-"""The Salem tool registry, expressed as smolagents tools.
-
-Tools are *declared* by the app (Rust for data and the web, TypeScript for the
-study space and the UI) and sent over at the start of a run. This module turns
-each declaration into a real `smolagents.Tool` whose `forward` is a host call,
-so:
-
-  * a tool call always executes the actual tool and returns its actual result
-    or its actual error — the model is never in a position to invent one;
-  * arguments are validated against the declared schema before they leave;
-  * permissions, mutation safety and the database stay on the app's side of
-    the wire, where the registry can refuse a call the agent is not allowed
-    to make;
-  * the UI gets a running / completed / failed state for every call.
-"""
-
 from __future__ import annotations
 
 import inspect
@@ -28,13 +12,11 @@ from smolagents import Tool
 from .rpc import Cancelled, HostError
 from .state import RunContext, WAITING_TOOL, EXECUTING, RUNNING_PYTHON, RETRIEVING
 
-# smolagents only understands these JSON-schema types.
 _TYPES = {"string", "boolean", "integer", "number", "image", "audio", "array", "object", "any", "null"}
 
 
 class ToolFailed(RuntimeError):
-    """The tool ran and failed. The message is what the agent sees, so it is
-    written for recovery ("no notebook called X; the ones that exist are …")."""
+    pass
 
 
 @dataclass
@@ -49,8 +31,6 @@ class ToolSpec:
     label: str = ""
     timeout: float = 60.0
     state: str = WAITING_TOOL
-    #: Argument names this end changed, mapped back to what the app declared.
-    #: Only the ones that had to move; usually empty.
     aliases: dict[str, str] = field(default_factory=dict)
 
     @staticmethod
@@ -60,10 +40,6 @@ class ToolSpec:
             if value.get("type") not in _TYPES:
                 value["type"] = "string"
             value.setdefault("description", key)
-        # Required first, then optional. A tool becomes a Python function on
-        # this side, and a function cannot take a required argument after one
-        # with a default — an app that happens to declare its optional
-        # argument first would otherwise take the whole run down with it.
         order = sorted(declared, key=lambda k: bool(declared[k].get("nullable")))
         inputs: dict[str, dict] = {}
         aliases: dict[str, str] = {}
@@ -89,16 +65,6 @@ class ToolSpec:
 
 
 def _safe_name(name: str, taken: set[str]) -> str:
-    """A declared argument name, as something Python can actually take.
-
-    The app declares its tools in JSON, where `from` is an ordinary key; here
-    each one becomes a parameter of a real function, and `inspect.Parameter`
-    refuses a keyword or anything that is not an identifier. That refusal used
-    to escape `select()` and end the run before its first step, so one awkward
-    name in one tool meant every agentic feature in the app was dead. The name
-    is adjusted instead, and `forward` puts the original back before the call
-    leaves.
-    """
     candidate = re.sub(r"\W", "_", name)
     if not candidate or candidate[0].isdigit():
         candidate = f"arg_{candidate}"
@@ -112,15 +78,11 @@ def _friendly(name: str) -> str:
 
 
 def build_tool(spec: ToolSpec, ctx: RunContext) -> Tool:
-    """One smolagents tool that runs the real thing through the host."""
-
     call_no = {"n": 0}
 
     def forward(self, *args: Any, **kwargs: Any):
         names = list(spec.inputs)
         kwargs.update(dict(zip(names, args)))
-        # Drop the nulls smolagents fills optional arguments with, so the app
-        # sees "not given" rather than an explicit null.
         payload = {spec.aliases.get(k, k): v for k, v in kwargs.items() if v is not None}
 
         ctx.spend_tool()
@@ -141,8 +103,6 @@ def build_tool(spec: ToolSpec, ctx: RunContext) -> Tool:
                     "args": payload,
                     "run": ctx.run_id,
                     "depth": ctx.depth,
-                    # A stable key per (tool, arguments, attempt) so the app can
-                    # refuse to apply the same mutation twice after a retry.
                     "idem": _idem_key(ctx.run_id, spec, payload) if spec.mutating else None,
                 },
                 timeout=min(spec.timeout, max(5.0, ctx.remaining)),
@@ -160,8 +120,6 @@ def build_tool(spec: ToolSpec, ctx: RunContext) -> Tool:
             ctx.emit({"kind": "tool", "id": call_id, "name": spec.name, "status": "error",
                       "label": label, "detail": detail})
             ctx.state(EXECUTING)
-            # Raised, not returned: smolagents records it as the observation for
-            # this step and the agent gets a chance to recover from it.
             raise ToolFailed(f"{spec.name} failed: {detail}") from exc
 
         body = result.get("result") if isinstance(result, dict) and "result" in result else result
@@ -218,8 +176,6 @@ def _detail(result: Any) -> str:
 
 
 def _preview(value: Any, limit: int = 600) -> Any:
-    """What the UI is shown of a tool's arguments and result: enough to make the
-    step meaningful, short enough not to leak a whole document into the log."""
     try:
         text = json.dumps(value, ensure_ascii=False, default=str)
     except (TypeError, ValueError):
@@ -228,8 +184,6 @@ def _preview(value: Any, limit: int = 600) -> Any:
 
 
 class Registry:
-    """The tools available to one run, filtered per agent."""
-
     def __init__(self, specs: list[dict]) -> None:
         self.specs: dict[str, ToolSpec] = {}
         for raw in specs:
@@ -244,12 +198,6 @@ class Registry:
 
     def select(self, ctx: RunContext, *, allow: list[str] | None = None, deny: list[str] | None = None,
                scopes: list[str] | None = None, read_only: bool = False) -> list[Tool]:
-        """The tool list for one agent.
-
-        `allow` wins over everything; otherwise a tool has to be in one of the
-        permitted scopes, must not be denied, and — for the generation and
-        notebook agents — must not mutate the app.
-        """
         out: list[Tool] = []
         for name, spec in sorted(self.specs.items()):
             if allow is not None and name not in allow:
@@ -263,9 +211,5 @@ class Registry:
             try:
                 out.append(build_tool(spec, ctx))
             except Exception as exc:
-                # One tool the app declared in a way smolagents will not take
-                # must cost the run that tool, not the run. This used to raise
-                # straight out of `select`, before the first step, so a single
-                # bad declaration looked like the whole AI being broken.
                 ctx.host.log("error", f"tool {name!r} could not be built and was left out: {exc}")
         return out

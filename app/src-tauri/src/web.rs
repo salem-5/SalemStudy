@@ -1,12 +1,3 @@
-//! Web search and page reading for the chats.
-//!
-//! Search goes through DuckDuckGo's HTML endpoint, which needs no API key, and
-//! the results are parsed with plain string scanning (no HTML crate). Reading a
-//! page strips the markup down to the readable text the model can use.
-//!
-//! Both refuse private/loopback hosts, like `fetch_image_any`, so a crafted
-//! page or question cannot turn the app into a local-network probe.
-
 use serde::Serialize;
 use serde_json::Value;
 use tauri::State;
@@ -23,10 +14,6 @@ pub struct SearchResult {
     pub url: String,
     pub snippet: String,
 }
-
-// ---------------------------------------------------------------------------
-// Small HTML helpers
-// ---------------------------------------------------------------------------
 
 fn percent_decode(s: &str) -> String {
     let b = s.as_bytes();
@@ -65,7 +52,6 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// The handful of entities that actually show up in page text.
 pub fn unescape_entities(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
@@ -116,8 +102,6 @@ pub fn unescape_entities(s: &str) -> String {
     out
 }
 
-/// Drop every tag, and the whole of `<script>`/`<style>`/`<svg>`, leaving the
-/// text with block elements turned into line breaks.
 pub fn html_to_text(html: &str) -> String {
     let lower = html.to_ascii_lowercase();
     let mut out = String::with_capacity(html.len() / 2);
@@ -159,7 +143,6 @@ pub fn html_to_text(html: &str) -> String {
         i = close + 1;
     }
     let text = unescape_entities(&out);
-    // Collapse runs of blank lines and trailing spaces; keep paragraph breaks.
     let mut lines: Vec<String> = Vec::new();
     for raw in text.lines() {
         let line = raw.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -183,7 +166,6 @@ fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
     Some(&tag[at..end])
 }
 
-/// A DuckDuckGo redirect (`//duckduckgo.com/l/?uddg=…`) unwrapped to the real URL.
 fn real_url(href: &str) -> Option<String> {
     let href = unescape_entities(href);
     if let Some(at) = href.find("uddg=") {
@@ -201,12 +183,10 @@ fn real_url(href: &str) -> Option<String> {
     None
 }
 
-/// Pull `{title, url, snippet}` triples out of DuckDuckGo's HTML results page.
 pub fn parse_results(html: &str, limit: usize) -> Vec<SearchResult> {
     let mut out: Vec<SearchResult> = Vec::new();
     let lower = html.to_ascii_lowercase();
     let mut i = 0;
-    // Each result is a `result__a` link followed by a `result__snippet` block.
     while out.len() < limit {
         let Some(at) = lower[i..].find("result__a").map(|n| i + n) else { break };
         let Some(open) = lower[..at].rfind('<') else { break };
@@ -236,13 +216,6 @@ pub fn parse_results(html: &str, limit: usize) -> Vec<SearchResult> {
     out
 }
 
-// ---------------------------------------------------------------------------
-// Commands
-// ---------------------------------------------------------------------------
-
-/// Search, as both the `web_search` command and the Salem tool of the same
-/// name use it. Taking the client rather than the whole app state is what lets
-/// the AI runtime call it without going through the webview.
 pub async fn search(http: &reqwest::Client, query: String, count: Option<usize>) -> Result<Vec<SearchResult>, String> {
     let q = query.trim();
     if q.is_empty() {
@@ -267,8 +240,6 @@ pub async fn search(http: &reqwest::Client, query: String, count: Option<usize>)
     Ok(hits)
 }
 
-/// Read a page down to its text, for the `web_fetch` command and the Salem
-/// tool of the same name.
 pub async fn fetch(http: &reqwest::Client, url: String, max_chars: Option<usize>) -> Result<Value, String> {
     let parsed = reqwest::Url::parse(url.trim()).map_err(|e| format!("bad url: {e}"))?;
     if parsed.scheme() != "https" && parsed.scheme() != "http" {
@@ -321,10 +292,6 @@ pub async fn fetch(http: &reqwest::Client, url: String, max_chars: Option<usize>
     Ok(serde_json::json!({ "url": final_url, "title": title, "text": text, "truncated": truncated }))
 }
 
-// ---------------------------------------------------------------------------
-// Commands
-// ---------------------------------------------------------------------------
-
 #[tauri::command]
 pub async fn web_search(state: State<'_, AppState>, query: String, count: Option<usize>) -> Result<Vec<SearchResult>, String> {
     search(&state.http, query, count).await
@@ -342,7 +309,6 @@ mod tests {
     #[test]
     fn strips_markup_scripts_and_entities() {
         let html = "<html><head><title>T</title></head><body><script>var a = 1 < 2;</script><h1>Cell &amp; Wall</h1><p>Line one</p><p>Line&nbsp;two &#8212; end</p></body></html>";
-        // Block elements keep their paragraph break; runs of them collapse to one.
         assert_eq!(html_to_text(html), "Cell & Wall\n\nLine one\n\nLine two — end");
     }
 

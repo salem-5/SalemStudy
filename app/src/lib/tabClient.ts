@@ -1,17 +1,3 @@
-/**
- * Salem running in a browser tab.
- *
- * The page is the same build the desktop window runs; only the transport
- * underneath it changes. Rather than teaching every feature about tab mode,
- * this stands in for Tauri itself: `invoke` becomes a POST to the app's
- * loopback server, and `listen` becomes a poll of the same event feed the
- * window gets. Nothing above this file knows the difference.
- *
- * The token comes in the URL the app shows, is kept for the session only, and
- * is stripped from the address bar immediately — a token in browser history
- * is a token in the student's synced history.
- */
-
 const TOKEN_KEY = 'wa.tab.token';
 
 type Args = Record<string, unknown>;
@@ -32,16 +18,8 @@ export function tabToken(): string | null {
   }
 }
 
-/** Set once this page has put its HTTP stand-in for Tauri in place. */
 const TAB_FLAG = '__SALEM_TAB__';
 
-/**
- * Is this page being served by the app's own tab-mode server?
- *
- * Once the tab installs its stand-in, `__TAURI_INTERNALS__` exists here too,
- * so that alone cannot tell the tab from the desktop window — asked after
- * boot it said "desktop", and the tab put up the desktop's lock screen.
- */
 export function inTabMode(): boolean {
   if ((window as unknown as Record<string, unknown>)[TAB_FLAG]) return true;
   if ('__TAURI_INTERNALS__' in window) return false;
@@ -50,15 +28,6 @@ export function inTabMode(): boolean {
 
 type Listener = (event: { event: string; id: number; payload: unknown }) => void;
 
-/**
- * Tab mode is over: say so, and close the tab.
- *
- * A browser only lets a page close a tab a script opened, and this one was
- * opened by the app from outside the browser, so the close may be refused.
- * Either way nothing in the tab works any more, so it is covered with a plain
- * page saying why — drawn without React, which may be what just lost its
- * connection.
- */
 export function showTabClosed(reason: 'off' | 'gone') {
   if (typeof document === 'undefined' || document.getElementById('salem-tab-closed')) return;
   const cover = document.createElement('div');
@@ -81,16 +50,9 @@ export function showTabClosed(reason: 'off' | 'gone') {
   card.append(title, text, close);
   cover.append(card);
   document.body.append(cover);
-  // Try straight away; where the browser allows it, the tab just goes.
   window.setTimeout(() => window.close(), 400);
 }
 
-/**
- * Stand in for Tauri, so the rest of the app carries on unchanged.
- *
- * Returns a promise that resolves once the server has answered once, so the
- * app does not render against a connection that was never going to work.
- */
 export async function installTabTransport(token: string): Promise<void> {
   const headers = { 'Content-Type': 'application/json', 'X-Salem-Token': token };
 
@@ -107,8 +69,6 @@ export async function installTabTransport(token: string): Promise<void> {
     return body.data;
   };
 
-  // Tauri's event plugin registers listeners by name through `invoke`, so the
-  // shim keeps its own table and feeds it from the server's event log.
   const listeners = new Map<number, { event: string; handler: Listener }>();
   const callbacks = new Map<number, (payload: unknown) => void>();
   let nextCallback = 1;
@@ -140,8 +100,6 @@ export async function installTabTransport(token: string): Promise<void> {
           deliver(entry.event, entry.payload);
         }
       } catch {
-        // The window may be restarting: back off rather than hammering it.
-        // Still unreachable after a few tries, the app has gone.
         failures += 1;
         if (failures >= 4) { closed = true; showTabClosed('gone'); break; }
         await new Promise((r) => setTimeout(r, backoff));
@@ -152,7 +110,6 @@ export async function installTabTransport(token: string): Promise<void> {
 
   const internals = {
     invoke: async (cmd: string, args: Args) => {
-      // These belong to the tab, not to the app it is talking to.
       if (cmd === 'plugin:event|listen') {
         const id = nextListener++;
         const { event, handler } = args as unknown as { event: string; handler: number };
@@ -180,7 +137,6 @@ export async function installTabTransport(token: string): Promise<void> {
     unregisterListener: (_event: string, id: number) => { listeners.delete(id); },
   };
 
-  // Fail loudly here rather than letting every screen fail on its own.
   const ping = await fetch('/salem/ping', { headers }).catch(() => null);
   if (!ping?.ok) {
     throw new Error('Salem is not answering. Make sure the app is still open, then reopen this tab from it.');

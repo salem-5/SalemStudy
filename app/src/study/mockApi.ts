@@ -1,6 +1,3 @@
-// Browser-only stand-in for the Study commands (`npm run dev` without Tauri).
-// Mirrors the Rust behaviour closely enough to exercise the UI: localStorage
-// for data, word overlap for search.
 import {
   studyApi, type AttachmentInfo, type Attempt, type AttemptAnswer, type Card, type CardResult, type ChatMessage, type ChatThread, type Deck,
   type DeckRun, type MessageMeta, type Note, type NewCard, type NotebookSummary, type Quiz, type QuizQuestion, type Review, type Source, type SourceHit,
@@ -45,8 +42,6 @@ function seed(): Db {
     subj('Physics I', ['Kinematics', "Newton's Laws", 'Energy']),
     subj('Linear Algebra', ['Vectors', 'Matrices']),
   ];
-  // One quiz covering every question type, so the player, the navigator, the
-  // hints and Ask AI can all be exercised in the browser preview.
   const demoQuiz: Quiz = {
     id: next++,
     notebookId: subjects[0].notebooks[0].id,
@@ -105,11 +100,9 @@ function seed(): Db {
   return { next, subjects, threads: [], messages: [], attachments: [], decks: [], cards: [], reviews: [], runs: [], quizzes: [demoQuiz], attempts: [], sources: [], units: [], notes: [] };
 }
 
-/** As in Rust: a notebook's course wins over the one given. */
 const courseOf = (db: { subjects: SubjectNode[] }, e: EventInput) =>
   (e.notebookId !== null ? db.subjects.find((s) => s.notebooks.some((n) => n.id === e.notebookId))?.id : undefined) ?? e.subjectId ?? null;
 
-/** Preview only: Notes in memory, with a few to look at. */
 function installPadMock() {
   let nextId = 100;
   const now = Date.now();
@@ -168,8 +161,7 @@ export function installStudyMock() {
     try { return { ...seed(), ...(JSON.parse(localStorage.getItem(KEY) || '') as Db) }; } catch { return seed(); }
   };
   const save = (db: Db) => {
-    // Source files can be big; keep them out of localStorage.
-    try { localStorage.setItem(KEY, JSON.stringify({ ...db, sources: db.sources.map((s) => ({ ...s, data: s.data && s.data.length < 200_000 ? s.data : null })) })); } catch { /* quota */ }
+    try { localStorage.setItem(KEY, JSON.stringify({ ...db, sources: db.sources.map((s) => ({ ...s, data: s.data && s.data.length < 200_000 ? s.data : null })) })); } catch { }
   };
   const mutate = <T,>(fn: (db: Db) => T): Promise<T> => {
     try {
@@ -324,7 +316,6 @@ export function installStudyMock() {
       const gone = db.subjects.find((s) => s.id === id);
       const notebooks = new Set((gone?.notebooks ?? []).map((n) => n.id));
       db.subjects = db.subjects.filter((s) => s.id !== id);
-      // The calendar goes with the course, as it does in the real database.
       db.events = (db.events ?? []).filter((e) => e.subjectId !== id && !notebooks.has(e.notebookId as number));
     }),
     createNotebook: (subjectId: number, name: string, description?: string) => mutate((db) => {

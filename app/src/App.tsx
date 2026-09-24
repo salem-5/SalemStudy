@@ -32,7 +32,6 @@ function injectQuestionCss(css: string | null) {
   if (!el) {
     el = document.createElement('style');
     el.id = 'wa-question-css';
-    // Before our stylesheet so app overrides win.
     document.head.prepend(el);
   }
   el.textContent = css;
@@ -40,11 +39,9 @@ function injectQuestionCss(css: string | null) {
 
 const store = {
   get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } },
-  set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } },
+  set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { } },
 };
 
-/** The Assignment Solver. `active` is false while Study is on screen: the
- *  solver stays mounted but ignores the keyboard. */
 export default function App({ active = true, settingsSignal = 0 }: { active?: boolean; settingsSignal?: number }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
@@ -79,7 +76,6 @@ export default function App({ active = true, settingsSignal = 0 }: { active?: bo
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === 'err' ? 8000 : 3500);
   }, []);
 
-  // ---- bridge status -------------------------------------------------------
   useEffect(() => {
     let alive = true;
     const tick = async () => {
@@ -92,7 +88,7 @@ export default function App({ active = true, settingsSignal = 0 }: { active?: bo
       try {
         const b = await api.bridgeInfo();
         if (alive) setBridge(b);
-      } catch { /* not in Tauri */ }
+      } catch { }
     };
     tick();
     const t = setInterval(tick, 2500);
@@ -101,7 +97,6 @@ export default function App({ active = true, settingsSignal = 0 }: { active?: bo
 
   const connected = !!status?.connected;
 
-  // ---- data loading --------------------------------------------------------
   const loadList = useCallback(async (sec?: string, quiet = false) => {
     if (!quiet) setListLoading(true);
     try {
@@ -116,10 +111,6 @@ export default function App({ active = true, settingsSignal = 0 }: { active?: bo
     }
   }, [toast]);
 
-  // Assignments are cached in memory (lib/cache.ts). Switching back reuses the
-  // cache; a completed assignment is never refetched; the rest refresh at most
-  // once per TTL and within a per-session refetch budget. `force` (Ctrl+R) asks
-  // for fresh data but still respects the budget.
   const loadAssignment = useCallback(async (id: number, force = false): Promise<Assignment | null> => {
     const cached = cachedAssignment(id);
     const complete = !!cached && isAssignmentComplete(cached);
@@ -156,7 +147,6 @@ export default function App({ active = true, settingsSignal = 0 }: { active?: bo
     }
   }, [toast]);
 
-  // WebAssign's question-layout CSS, fetched once per session and cached for the next launch.
   const stylesLoaded = useRef(false);
   useEffect(() => {
     injectQuestionCss(store.get('wa.qcss.v1'));
@@ -177,8 +167,6 @@ export default function App({ active = true, settingsSignal = 0 }: { active?: bo
       if (selected) loadAssignment(selected);
     }
     wasConnected.current = connected;
-    // Only react to the link coming up.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected]);
 
   const selectAssignment = (id: number, additive = false) => {
@@ -201,7 +189,6 @@ export default function App({ active = true, settingsSignal = 0 }: { active?: bo
     if (focus) requestAnimationFrame(() => focusBox(1));
   }, [assignment]);
 
-  // ---- drafts --------------------------------------------------------------
   const question: Question | undefined = assignment?.questions.find((q) => q.number === qnum) ?? assignment?.questions[0];
   const dep = assignment?.id ?? 0;
 
@@ -224,12 +211,10 @@ export default function App({ active = true, settingsSignal = 0 }: { active?: bo
     if (!cur) return;
     const next: Assignment = {
       ...cur,
-      // Keep the previous markup if a response came back without it.
       questions: cur.questions.map((x) => (x.number === fresh.number ? { ...fresh, html: fresh.html ?? x.html } : x)),
     };
     assignmentRef.current = next;
     setAssignment(next);
-    // Keep the cached copy and the sidebar summary in step, with no refetch.
     updateCachedQuestion(cur.id, fresh);
     const score = next.questions.reduce((s, q) => s + (q.score ?? 0), 0);
     const total = next.questions.reduce((s, q) => s + (q.total ?? 0), 0);
@@ -239,7 +224,6 @@ export default function App({ active = true, settingsSignal = 0 }: { active?: bo
         arr.map((x) => (x.id === next.id ? { ...x, score, total, percentage: total ? Math.round((score / total) * 100) : 0 } : x));
       return { ...l, current: patch(l.current), past: patch(l.past) };
     });
-    // Drop drafts the server now agrees with.
     drafts.clear(fresh.boxes
       .filter((b) => {
         const d = drafts.map[draftKey(cur.id, fresh.number, b.index)];
@@ -251,7 +235,6 @@ export default function App({ active = true, settingsSignal = 0 }: { active?: bo
   const rememberMath = (q: Question) =>
     pushHistory(unsavedIn(q).filter((b) => b.kind === 'math').map((b) => String(draftOf(q, b))));
 
-  // ---- AI solver -----------------------------------------------------------
   const solver = useSolver({
     questionOf: (n) => assignmentRef.current?.questions.find((q) => q.number === n),
     applyAnswers: (q, answers) => {
@@ -269,7 +252,7 @@ export default function App({ active = true, settingsSignal = 0 }: { active?: bo
       setResults((m) => ({ ...m, [`${id}:${q.number}`]: r }));
       return r;
     },
-    afterGraded: () => { /* submit() already applied the regraded question */ },
+    afterGraded: () => { },
     toast,
     recordUsage: (n, model, u) => {
       const a = assignmentRef.current;
@@ -279,18 +262,14 @@ export default function App({ active = true, settingsSignal = 0 }: { active?: bo
   });
 
   useEffect(() => { store.set('wa.ai.open', aiOpen ? '1' : '0'); }, [aiOpen]);
-  // Keep the AI panel pointed at the question the user is looking at.
   useEffect(() => {
     if (qnum) solver.focus(qnum);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qnum, assignment?.id]);
-  // Follow the solver as it moves through the assignment.
   useEffect(() => {
     if (solver.qnum != null && solver.status !== 'idle' && solver.qnum !== qnum) {
       setQnum(solver.qnum);
       if (assignmentRef.current) store.set(`wa.q.${assignmentRef.current.id}`, String(solver.qnum));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [solver.qnum, solver.status]);
 
   const solveAssignment = async (id: number) => {
@@ -326,7 +305,6 @@ export default function App({ active = true, settingsSignal = 0 }: { active?: bo
         if (a) entries.push({ id: a.id, name: a.name || `Assignment ${a.id}`, assignment: a });
         setExportLoading({ done: i + 1, total: ids.length, label: 'Preparing…' });
       }
-      // The dialog builds the LaTeX itself, so its options can change it.
       if (entries.length) setExportEntries({ entries, meta });
     } finally {
       setExportLoading(null);
@@ -353,7 +331,6 @@ export default function App({ active = true, settingsSignal = 0 }: { active?: bo
     ];
   };
 
-  // ---- actions -------------------------------------------------------------
   const save = async () => {
     if (!question || busy) return;
     const answers = answersFor(question);
@@ -418,13 +395,11 @@ export default function App({ active = true, settingsSignal = 0 }: { active?: bo
     toast('info', 'Question cache cleared — questions will be refetched.');
   };
 
-  // ---- keyboard ------------------------------------------------------------
   const keyState = useRef({ save, submit: () => setConfirm(true), reload, gotoQuestion, question, assignment });
   keyState.current = { save, submit: () => setConfirm(true), reload, gotoQuestion, question, assignment };
   const activeRef = useRef(active);
   activeRef.current = active;
 
-  // The global sidebar's Settings button.
   useEffect(() => { if (settingsSignal) setAiSettings(true); }, [settingsSignal]);
 
   useEffect(() => {
@@ -457,7 +432,6 @@ export default function App({ active = true, settingsSignal = 0 }: { active?: bo
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // ---- render --------------------------------------------------------------
   const summary = useMemo(
     () => [...(list?.current ?? []), ...(list?.past ?? [])].find((a) => a.id === selected),
     [list, selected],

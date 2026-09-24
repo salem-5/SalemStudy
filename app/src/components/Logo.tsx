@@ -1,4 +1,3 @@
-/** The app mark: an open book with a prompt on the right page, drawn flat to match the terminal theme. */
 export function Logo({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="228 300 568 450" aria-hidden>

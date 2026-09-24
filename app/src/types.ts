@@ -28,7 +28,6 @@ export type AssignmentList = { sectionId: string; current: AssignmentSummary[]; 
 export type BoxKind = 'math' | 'text' | 'essay' | 'choice' | 'checkboxes' | 'multiselect' | 'unsupported';
 export type BoxStatus = 'correct' | 'incorrect' | 'partial' | 'submitted' | 'unanswered';
 
-/** `html` is the option's label markup (may contain images or math). */
 export type Choice = { value: string; label: string; html?: string | null };
 
 export type Box = {
@@ -37,7 +36,6 @@ export type Box = {
   type: string;
   typeName: string;
   kind: BoxKind;
-  /** How WebAssign presents a choice box. */
   display: 'dropdown' | 'radio' | 'checkbox' | null;
   value: string;
   text: string;
@@ -63,7 +61,6 @@ export type Question = {
   total: number | null;
   submissions: string | null;
   text: string;
-  /** Sanitized question markup with .wa-slot / .wa-opt placeholders (requested with ?html=1). */
   html?: string;
   boxes: Box[];
 };
@@ -96,7 +93,6 @@ export type Status = {
   connected: boolean;
   lastPollAgoMs: number | null;
   page: string | null;
-  /** Userscript version; null when the connected script predates version reporting (< 0.3.0). */
   userscriptVersion?: string | null;
   queued: number;
   inFlight: number;
@@ -112,5 +108,4 @@ export type BridgeInfo = {
 
 export type ApiError = { status: number; error: string };
 
-/** What the user is typing for a box: text, or a list for checkbox/multiselect boxes. */
 export type Draft = string | string[];

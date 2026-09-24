@@ -1,10 +1,3 @@
-/**
- * Reconciling a fresh WebAssign listing against what we already knew.
- *
- * The rule that matters: a date only ever changes because WebAssign said a
- * new one. Nothing here may invent, lose or silently overwrite a due date.
- */
-
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 

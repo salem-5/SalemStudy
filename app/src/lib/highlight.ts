@@ -23,8 +23,6 @@ import typescript from 'highlight.js/lib/languages/typescript';
 import xml from 'highlight.js/lib/languages/xml';
 import yaml from 'highlight.js/lib/languages/yaml';
 
-/** Syntax highlighting for code in chats, notes and the Python tool card. */
-
 const LANGS = {
   bash, c, cpp, csharp, css, go, java, javascript, json, kotlin, latex, markdown, matlab, plaintext, python, r, rust, shell, sql, swift, typescript, xml, yaml,
 };
@@ -42,7 +40,6 @@ hljs.registerAliases(['text', 'txt'], { languageName: 'plaintext' });
 
 const escapeHtml = (t: string) => t.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]!);
 
-/** Highlighted HTML for `code`; an unknown or missing language is guessed, briefly. */
 export function highlight(code: string, lang?: string | null): { html: string; lang: string } {
   const name = (lang ?? '').trim().toLowerCase().split(/\s+/)[0];
   try {
@@ -51,6 +48,6 @@ export function highlight(code: string, lang?: string | null): { html: string; l
       const auto = hljs.highlightAuto(code, ['python', 'javascript', 'typescript', 'bash', 'json', 'cpp', 'java', 'rust', 'sql', 'latex', 'matlab']);
       if (auto.relevance > 4 && auto.language) return { html: auto.value, lang: auto.language };
     }
-  } catch { /* fall through to plain text */ }
+  } catch { }
   return { html: escapeHtml(code), lang: name || 'text' };
 }

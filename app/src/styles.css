@@ -1,6 +1,4 @@
 :root {
-  /* Flat, terminal-like dark theme: one restrained accent, status colours only
-     where they carry meaning, no glow, no gradients. */
   --bg: #0e1012;
   --bg-2: #121417;
   --panel: #15181b;
@@ -26,12 +24,8 @@
   --mono: 'JetBrains Mono', 'SF Mono', 'Cascadia Mono', Menlo, Consolas, ui-monospace, monospace;
   --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI', Inter, system-ui, sans-serif;
   --math: 'STIX Two Math', 'Cambria Math', 'Latin Modern Math', math;
-  /* Chart series (validated on the dark surface: blue, orange). */
-  /* Charts follow the accent (Settings → Appearance); the second series is a neutral
-     that stays distinct from any accent. */
   --series-1: var(--accent);
   --series-2: color-mix(in srgb, var(--text-2) 55%, var(--bg));
-  /* Motion. */
   --ease: cubic-bezier(0.2, 0, 0, 1);
   --dur-1: 120ms;
   --dur-2: 200ms;
@@ -39,7 +33,6 @@
   --text-strong: #ffffff;
   --scrim: rgba(0, 0, 0, 0.72);
   --scrim-strong: rgba(14, 16, 18, 0.88);
-  /* Syntax colours. */
   --syn-keyword: #c792ea;
   --syn-string: #a5d6a7;
   --syn-number: #f5b97c;
@@ -51,7 +44,6 @@
   color-scheme: dark;
 }
 
-/* Light theme: the same roles, stepped for a light surface. */
 :root[data-theme='light'] {
   --bg: #f6f6f3;
   --bg-2: #eeeeea;
@@ -90,14 +82,11 @@
   --syn-meta: #c2410c;
   color-scheme: light;
 }
-/* WebAssign figures and glyphs are inverted for the dark theme only. */
 :root[data-theme='light'] .qhtml img[src*="/watex/img/"],
 :root[data-theme='light'] .qfig img.img-invert { filter: none; }
 :root[data-theme='light'] .qfig { background: #fff; }
 
 * { box-sizing: border-box; }
-/* Sharp (the default): nothing is rounded, whatever a rule below says. The
-   rounded shape lifts this and sets its own radii (end of this file). */
 :root:not([data-shape='rounded']) * { border-radius: 0 !important; }
 html, body, #root { height: 100%; margin: 0; }
 body {
@@ -109,8 +98,6 @@ body {
 }
 button, input, select, textarea { font: inherit; color: inherit; }
 ::selection { background: #3b4f63; color: var(--text); }
-/* Thin scrollbars that take no room of their own: a transparent track, and a
-   thumb drawn inside a transparent border. */
 ::-webkit-scrollbar { width: 8px; height: 8px; background: transparent; }
 ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--line-2); border: 2px solid transparent; background-clip: padding-box; }
@@ -132,8 +119,6 @@ kbd {
   letter-spacing: 0.02em;
 }
 code { color: var(--accent); font-size: 0.92em; }
-
-/* ---------------------------------------------------------------- layout */
 
 .app {
   display: grid;
@@ -185,8 +170,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .icon-btn:hover:not(:disabled), .icon-btn.on { border-color: var(--accent); color: var(--accent); }
 .icon-btn:disabled { opacity: 0.35; cursor: default; }
 
-/* --------------------------------------------------------------- sidebar */
-
 .sidebar {
   grid-area: side;
   border-right: 1px solid var(--line-2);
@@ -234,8 +217,6 @@ code { color: var(--accent); font-size: 0.92em; }
   background: var(--bg-2);
 }
 .side-ai { width: 100%; justify-content: center; }
-
-/* ------------------------------------------------------------------ main */
 
 .main {
   grid-area: main;
@@ -319,8 +300,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .chip.status-incorrect { border-color: var(--bad); color: var(--bad); }
 .chip.status-partial { border-color: var(--mid); color: var(--mid); }
 
-/* --------------------------------------------------------------- results */
-
 .result { border: 1px solid; padding: 12px 16px; margin-bottom: 16px; }
 .result.good { border-color: var(--accent); background: var(--accent-wash); }
 .result.bad { border-color: var(--bad); background: var(--bad-wash); }
@@ -340,8 +319,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .result-part.status-correct { color: var(--good); border-color: var(--good-dim); }
 .result-part.status-incorrect { color: var(--bad); border-color: var(--bad); }
 .result-part.status-partial { color: var(--mid); border-color: var(--mid); }
-
-/* ----------------------------------------------------------------- boxes */
 
 .boxes { display: flex; flex-direction: column; gap: 12px; padding-bottom: 20px; }
 .box {
@@ -437,8 +414,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .multiselect { display: flex; flex-wrap: wrap; gap: 8px; }
 .multiselect select { background: var(--bg); border: 1px solid var(--line-2); padding: 6px; }
 
-/* ----------------------------------------------------------- math editor */
-
 .mathed-row { display: flex; align-items: flex-start; gap: 8px; }
 .mathed-prompt { font: 700 15px/38px var(--mono); color: var(--accent); }
 .mathed-input { position: relative; flex: 1; }
@@ -531,8 +506,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .suggest-math math { font-size: 15px; }
 .suggest-kind { font: 10px var(--mono); color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; }
 
-/* ------------------------------------------------------------- actionbar */
-
 .actionbar {
   position: sticky;
   bottom: 0;
@@ -567,8 +540,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .link { background: none; border: 0; color: var(--text-2); font: 11px var(--mono); cursor: pointer; }
 .link:hover { color: var(--accent); }
 
-/* ------------------------------------------------------------- statusbar */
-
 .statusbar {
   grid-area: status;
   display: flex;
@@ -584,8 +555,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .dot.on { background: var(--accent); }
 .sep { color: var(--line-3); }
 .busy { color: var(--accent); }
-
-/* --------------------------------------------------------------- connect */
 
 .connect { max-width: 760px; padding: 48px 40px; }
 .connect h2 { font: 600 18px var(--mono); color: var(--text); margin: 0 0 20px; }
@@ -613,8 +582,6 @@ code { color: var(--accent); font-size: 0.92em; }
   max-height: 420px;
 }
 .code-block.log { max-height: 220px; }
-
-/* ---------------------------------------------------------------- modals */
 
 .modal-backdrop {
   position: fixed;
@@ -659,8 +626,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .keyrow { display: grid; grid-template-columns: 150px 1fr; align-items: center; gap: 10px; padding: 3px 0; font-size: 13px; }
 .keyrow kbd { justify-self: start; }
 
-/* ---------------------------------------------------------------- toasts */
-
 .toasts { position: fixed; right: 16px; bottom: 40px; z-index: 60; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
 .toast {
   max-width: 440px;
@@ -677,8 +642,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .toast.err { border-left-color: var(--bad); color: var(--bad); }
 .toast.info { border-left-color: var(--info); }
 
-/* ------------------------------------------------- rendered question HTML */
-
 .qframe {
   position: relative;
   padding: 20px 22px 8px;
@@ -687,8 +650,6 @@ code { color: var(--accent); font-size: 0.92em; }
   margin-bottom: 18px;
 }
 
-/* WebAssign lays questions out at 13px Verdana; scale the whole thing up so
-   watex math, images and spacing keep their proportions. */
 .qhtml { zoom: 1.2; color: var(--text); font-family: verdana, geneva, sans-serif; font-size: 13px; line-height: 1.4; overflow-x: auto; }
 .qhtml .qContent { color: var(--text); }
 .qhtml strong, .qhtml b { color: var(--text-strong); }
@@ -696,10 +657,7 @@ code { color: var(--accent); font-size: 0.92em; }
 .qhtml h4 { margin: 0; font: inherit; }
 .qhtml table { border-collapse: collapse; }
 
-/* Any watex glyph GIF not rebuilt as text (lib/sanitize.ts) is black-on-transparent: flip it. */
 .qhtml img[src*="/watex/img/"] { filter: invert(1) brightness(1.8); background: none; padding: 0; border: 0; }
-/* Figures, graphs and image choices: framed; light line art is inverted for the
-   dark theme (hue-rotate keeps blue lines blue). See lib/images.ts. */
 .qfig {
   position: relative;
   display: inline-block;
@@ -719,7 +677,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .qhtml math { font-family: var(--math); font-size: 1.1em; }
 .qhtml .wa-tex { font-family: var(--mono); color: var(--accent-2); }
 
-/* inline answer slots */
 .qhtml .wa-slot { display: inline-block; position: relative; vertical-align: middle; margin: 2px 2px; }
 .slot-tag {
   font: 700 9px var(--mono);
@@ -761,7 +718,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .slot-math.status-incorrect { border: 1px solid var(--bad); }
 .slot-empty { font: 11px var(--mono); color: var(--muted); letter-spacing: 0.08em; }
 
-/* radio / checkbox options inside WebAssign's layout */
 .opt-mark {
   display: inline-block;
   width: 14px;
@@ -785,7 +741,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .choices button .opt-html .qfig { padding: 6px; }
 .choices button .opt-html img { max-height: 160px; width: auto; }
 
-/* typeable dropdown */
 .combo { position: relative; display: inline-flex; align-items: center; vertical-align: middle; }
 .combo-input {
   background: var(--bg);
@@ -828,7 +783,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .combo-list li.chosen { color: var(--accent); }
 .combo-list li.none { color: var(--muted); cursor: default; }
 
-/* Option rows: center the marker against tall content like images/graphs. */
 .qhtml .questionRadio span.ms { display: flex; align-items: center; text-indent: 0; }
 .qhtml .wa-opt-label .qfig { transition: border-color 0.12s, box-shadow 0.12s; }
 .qhtml .wa-opt-label:hover .qfig { border-color: var(--line-3); }
@@ -846,8 +800,6 @@ code { color: var(--accent); font-size: 0.92em; }
   font-size: 13px;
 }
 .notice b { color: var(--mid); font-family: var(--mono); letter-spacing: 0.06em; }
-
-/* --------------------------------------------------------------- AI panel */
 
 .app.ai-open {
   grid-template-columns: 300px minmax(0, 1fr) 420px;
@@ -997,8 +949,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .ai-balance:hover { border-color: var(--accent); color: var(--accent); }
 .ai-sys.usage { color: var(--accent-2); }
 
-/* ------------------------------------------------ sandboxed python in chat */
-
 .ai-py { border: 1px solid var(--line-2); border-left: 2px solid var(--line-3); background: var(--panel); }
 .ai-py.ok { border-left-color: var(--good-dim); }
 .ai-py.bad { border-left-color: var(--bad); }
@@ -1069,8 +1019,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .btn.ghost.danger { color: var(--bad); border-color: var(--line-2); }
 .btn.ghost.danger:hover:not(:disabled) { border-color: var(--bad); color: var(--bad); }
 
-/* ------------------------------------------------------------ context menu */
-
 .ctx-menu {
   position: fixed;
   z-index: 80;
@@ -1101,8 +1049,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .ctx-item.danger:hover:not(:disabled) { color: var(--bad); border-left-color: var(--bad); background: var(--bad-wash); }
 .ctx-item kbd { font-size: 10px; color: var(--muted); }
 .ctx-sep { height: 1px; margin: 4px 6px; background: var(--line-2); }
-
-/* ---------------------------------------------------------------- export */
 
 .export-dialog { display: flex; flex-direction: column; gap: 12px; }
 .export-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -1192,8 +1138,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .export-name { font: 600 13px var(--sans); }
 .export-path { margin-top: 6px; font: 11px var(--mono); color: var(--muted); word-break: break-all; }
 .asg.multi { border-left-color: var(--accent-2); background: var(--accent-wash); }
-
-/* ----------------------------------------------------------------- shell */
 
 .shell {
   display: grid;
@@ -1292,10 +1236,7 @@ code { color: var(--accent); font-size: 0.92em; }
 .nav-count { font-size: 11px; color: var(--muted); }
 .nav-foot { flex: none; border-top: 1px solid var(--line-2); padding: 4px 0; }
 
-/* The solver's own brand cell now just names the product. */
 .app .logo { font: 600 12.5px var(--mono); color: var(--text-2); letter-spacing: 0; }
-
-/* ----------------------------------------------------------------- pages */
 
 .page { max-width: 1040px; padding: 0 32px 48px; }
 .page-head {
@@ -1375,8 +1316,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .btn.danger { background: transparent; border-color: var(--bad); color: var(--bad); }
 .btn.danger:hover:not(:disabled) { background: var(--bad-wash); border-color: var(--bad); }
 
-/* ------------------------------------------------------------------- views */
-
 .view { display: flex; flex-direction: column; min-height: 100%; }
 .viewbar {
   position: sticky;
@@ -1398,8 +1337,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .crumb { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .view > .page { padding-top: 28px; }
 
-/* ----------------------------------------------------------- pomodoro chip */
-
 .pomo-chip {
   display: inline-flex;
   align-items: stretch;
@@ -1419,8 +1356,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .pomo-chip.running.short, .pomo-chip.running.long { border-color: var(--good-dim); }
 .pomo-chip.running .pomo-chip-toggle { border-right-color: var(--accent-dim) !important; }
 .pomo-chip.paused .pomo-chip-clock { animation: breathe 2.4s var(--ease) infinite; }
-
-/* ----------------------------------------------------------- focus page */
 
 .focus-tasks .section-title { margin-top: 4px; }
 .task-add { display: flex; gap: 8px; margin-bottom: 12px; }
@@ -1476,8 +1411,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .nav-timer { margin-left: auto; font-size: 11px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 .nav-timer.paused { animation: breathe 2.4s var(--ease) infinite; }
 
-/* --------------------------------------------------------------- stats */
-
 .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
 .stat { padding: 12px 14px; background: var(--panel); border: 1px solid var(--line-2); }
 .stat-label { font: 11.5px var(--mono); color: var(--muted); }
@@ -1529,8 +1462,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .meter-value { text-align: right; color: var(--text); }
 .meter-detail { font-size: 11px; }
 
-/* ------------------------------------------------------------ tabs & seg */
-
 .tabs { position: relative; display: grid; grid-template-columns: repeat(var(--n), 1fr); height: 38px; flex: none; border-bottom: 1px solid var(--line); }
 .tab {
   display: inline-flex;
@@ -1572,15 +1503,13 @@ code { color: var(--accent); font-size: 0.92em; }
 }
 .select:focus { border-color: var(--accent-dim); }
 
-/* ------------------------------------------------------ notebook workspace */
-
 .nbw {
   display: grid;
   grid-template-columns: 250px minmax(0, 1fr) 320px;
   grid-template-rows: 48px minmax(0, 1fr);
   grid-template-areas: 'head head head' 'sources center study';
   height: 100%;
-  overflow: hidden; /* full-height workspace: its panes scroll, the page never does */
+  overflow: hidden;
 }
 .nbw-head { grid-area: head; }
 .nbw-head .viewbar { position: static; }
@@ -1625,8 +1554,6 @@ code { color: var(--accent); font-size: 0.92em; }
   .scope { display: none; }
 }
 
-/* ------------------------------------------------------------ flashcards */
-
 .deck-hero { display: flex; align-items: center; justify-content: space-between; padding: 14px; background: var(--panel); border: 1px solid var(--line-2); }
 .deck-count { display: flex; align-items: baseline; gap: 8px; font: 12px var(--mono); }
 .deck-num { font: 500 28px/1 var(--mono); color: var(--text); font-variant-numeric: tabular-nums; }
@@ -1650,7 +1577,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .card-face.mini { position: static; min-height: 90px; padding: 14px; background: var(--bg); border: 1px solid var(--line-2); transform: none; backface-visibility: visible; }
 .card-face.mini.back { border-color: var(--accent-dim); }
 
-/* review stage: shared by flashcards and quizzes */
 .stage { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; animation: rise-in var(--dur-3) var(--ease); }
 .stage-head { display: flex; align-items: center; gap: 14px; height: 40px; flex: none; padding: 0 18px; border-bottom: 1px solid var(--line); }
 .stage-title { font: 600 12.5px var(--mono); color: var(--text); }
@@ -1727,8 +1653,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .summary-missed ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; font-size: 13.5px; }
 .summary .modal-actions { margin-top: 8px; flex-wrap: wrap; }
 
-/* ------------------------------------------------------------- quizzes */
-
 
 .question-card { width: min(760px, 100%); margin: 0 auto; padding: 32px 24px; display: flex; flex-direction: column; gap: 16px; animation: slide-in var(--dur-3) var(--ease); }
 .q-meta { display: flex; justify-content: space-between; font: 11.5px var(--mono); }
@@ -1762,7 +1686,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .choice.wrong { border-color: var(--bad); background: var(--bad-wash); animation: shake 320ms var(--ease); }
 .choice.picked kbd { border-color: var(--accent); color: var(--accent); }
 .numeric-row { display: flex; align-items: center; gap: 10px; max-width: 320px; }
-/* Fill the gap: the box sits in the sentence, where the gap was. */
 .gap-slot { display: inline-block; vertical-align: baseline; }
 .gap-input {
   font: inherit; color: var(--text); background: var(--panel);
@@ -1789,13 +1712,9 @@ code { color: var(--accent); font-size: 0.92em; }
 .feedback-explain { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line-2); font-size: 14px; }
 .gen-status { display: flex; align-items: center; gap: 10px; font: 12.5px var(--mono); color: var(--text-2); animation: fade-in var(--dur-2) var(--ease); }
 
-/* ------------------------------------------------------------- analytics */
-
 .analytics { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 20px 28px; animation: rise-in var(--dur-2) var(--ease); }
 .analytics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
 .analytics-grid .card-panel { margin: 0; }
-
-/* ------------------------------------------------------------------- chat */
 
 .chatw { display: grid; grid-template-columns: 250px minmax(0, 1fr); height: 100%; }
 .chatw-list { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line-2); background: var(--bg-2); }
@@ -1838,9 +1757,7 @@ code { color: var(--accent); font-size: 0.92em; }
 .msg-plain { white-space: pre-wrap; word-break: break-word; font-size: 14px; line-height: 1.55; }
 .msg-atts:empty { display: none; }
 .msg-atts { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
-/* A reference on a message that has been sent: same place as its files. */
 .ref-chips.msg-refs { justify-content: flex-end; padding: 0; }
-/* Near the top of the thread there is no room above; drop it below instead. */
 .msg-refs .ref-peek { bottom: auto; top: calc(100% + 8px); left: auto; right: 0; }
 .msg-body { display: flex; flex-direction: column; gap: 10px; font-size: 14.5px; line-height: 1.65; }
 .msg-error { padding: 8px 12px; border: 1px solid var(--bad); color: var(--bad); font: 12.5px var(--mono); background: var(--bad-wash); }
@@ -1892,8 +1809,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .composer-attach { height: 30px; min-width: 30px; font-size: 15px; }
 .composer-send { height: 30px; }
 
-/* ---------------------------------------------------------------- markdown */
-
 .md { overflow-wrap: anywhere; }
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
@@ -1911,7 +1826,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .md blockquote { margin: 0 0 0.8em; padding: 2px 0 2px 12px; border-left: 2px solid var(--line-3); color: var(--text-2); }
 .md .table-wrap { max-width: 100%; overflow-x: auto; margin: 0 0 0.8em; overscroll-behavior-x: contain; }
 .md table { border-collapse: collapse; margin: 0; font-size: 0.92em; width: max-content; max-width: none; }
-/* Columns keep a readable width (long cells wrap past ~28em) and the box scrolls instead. */
 .md th, .md td { padding: 5px 10px; border: 1px solid var(--line-2); min-width: 7em; max-width: 28em; vertical-align: top; overflow-wrap: normal; word-break: normal; }
 .md th { white-space: nowrap; }
 .md th { background: var(--panel); font-weight: 600; }
@@ -1921,11 +1835,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .md .katex { font-size: 1.08em; color: var(--text); }
 .md .katex-display { margin: 0.6em 0 0.9em; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
 
-/* ---------------------------------------------------------------- motion */
-
-/* Motion is quiet and functional: surfaces fade and rise a few pixels, lists
-   stagger briefly, folds and gliders slide, the flashcard flips. One easing
-   curve, 120–320 ms, nothing that bounces or glows. */
 @keyframes fade-in { from { opacity: 0; } }
 @keyframes rise-in { from { opacity: 0; transform: translateY(6px); } }
 @keyframes slide-in { from { opacity: 0; transform: translateX(14px); } }
@@ -1943,8 +1852,6 @@ code { color: var(--accent); font-size: 0.92em; }
 @keyframes modal-in { from { opacity: 0; transform: translateY(8px) scale(0.99); } }
 @keyframes menu-in { from { opacity: 0; transform: translateY(-3px); } }
 
-/* Route changes: the new view rises in. Full-height workspaces fade instead:
-   sliding them would overflow the pane and flash a scrollbar. */
 .shell-pane.study > * { animation: rise-in var(--dur-3) var(--ease); }
 .shell-pane.study > .nbw, .shell-pane.study > .chatw, .shell-pane.study > .schedule { animation-name: fade-in; }
 .app .question { animation: rise-in var(--dur-2) var(--ease); }
@@ -1957,21 +1864,17 @@ code { color: var(--accent); font-size: 0.92em; }
 .side-group { animation: fade-in var(--dur-2) var(--ease); }
 .ai-msg, .ai-sys { animation: rise-in var(--dur-2) var(--ease); }
 
-/* Lists stagger in; --i is set per item, capped so long lists do not drag. */
 .stagger > * { animation: rise-in var(--dur-3) var(--ease) backwards; animation-delay: calc(min(var(--i, 0), 12) * 28ms); }
 
-/* Height folds (sidebar subjects, card topics, python blocks). */
 .collapse { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--dur-2) var(--ease); }
 .collapse > * { overflow: hidden; min-height: 0; }
 .collapse.open { grid-template-rows: 1fr; }
 .collapse.open > * { animation: fade-in var(--dur-2) var(--ease); }
 
-/* Sidebar width and panes. */
 .shell { transition: grid-template-columns var(--dur-2) var(--ease); }
 .nav-item, .nav-row { transition: background-color var(--dur-1) var(--ease), color var(--dur-1) var(--ease), border-color var(--dur-2) var(--ease); }
 .nav-caret { transition: color var(--dur-1) var(--ease); }
 
-/* Press feedback and hover on interactive chrome. */
 .qcell, .asg, .btn, .icon-btn, .link, .choices button, .palette button, .combo-input, .result-part, .ctx-item, .opt-mark, .nb-card, .row-link td {
   transition: border-color var(--dur-1) var(--ease), color var(--dur-1) var(--ease), background-color var(--dur-1) var(--ease), transform var(--dur-1) var(--ease), opacity var(--dur-1) var(--ease);
 }
@@ -1983,8 +1886,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .ai-working i { width: 4px; height: 4px; background: var(--text-2); animation: step 1.2s steps(1) infinite; }
 .ai-working i:nth-child(2) { animation-delay: 0.4s; }
 .ai-working i:nth-child(3) { animation-delay: 0.8s; }
-
-/* -------------------------------------------------------------- skeletons */
 
 .skel {
   display: block;
@@ -2021,9 +1922,6 @@ code { color: var(--accent); font-size: 0.92em; }
     transition-duration: 0.001ms !important; }
 }
 
-/* ------------------------------------------------------------------ icons */
-
-/* Lucide icons size with the text they sit in and inherit its colour. */
 .lucide { width: 1.15em; height: 1.15em; stroke-width: 1.75; flex: none; vertical-align: -0.2em; }
 .btn .lucide, .link .lucide, .toggle .lucide, .with-icon .lucide { margin-right: 6px; }
 .btn { gap: 0; }
@@ -2059,15 +1957,11 @@ code { color: var(--accent); font-size: 0.92em; }
 .composer-send { height: 30px; min-width: 30px; }
 .thread-title.with-icon { display: inline-flex; align-items: center; }
 
-/* The segmented control's glider follows the number of options. */
 .seg { grid-template-columns: repeat(var(--n, 3), 1fr); grid-auto-flow: row; }
 .seg-glider { width: calc(100% / var(--n, 3)); }
 .seg.small { --n: 2; }
 
-/* ---------------------------------------------------------------- sources */
-
 .nbw.sources-collapsed { grid-template-columns: 44px minmax(0, 1fr) 320px; }
-/* With the sources folded away there is room for the study pane beside the chat again. */
 @media (max-width: 1240px) {
   .nbw.sources-collapsed {
     grid-template-columns: 44px minmax(0, 1fr) 280px;
@@ -2136,8 +2030,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .viewer-label .lucide { width: 11px; height: 11px; }
 .viewer-text { margin: 0; white-space: pre-wrap; word-break: break-word; font: 12.5px/1.6 var(--mono); color: var(--text); }
 
-/* ------------------------------------------------------------- citations */
-
 .cite {
   display: inline-grid; place-items: center; min-width: 17px; height: 17px; margin: 0 1px; padding: 0 4px;
   background: var(--accent-wash); border: 1px solid var(--accent-dim); color: var(--accent-2);
@@ -2150,10 +2042,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .cited-item:hover { border-color: var(--accent-dim); color: var(--text); }
 .cited-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; color: var(--text); }
 
-/* ------------------------------------------------------------------ decks */
-
-/* A deck, a quiz or a note in the notebook's right-hand pane: one shape for
-   all three, so each tab reads the same way. */
 .set-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .set-item { display: flex; align-items: center; gap: 2px; padding-right: 6px; background: var(--panel); border: 1px solid var(--line-2); transition: border-color var(--dur-1) var(--ease), background-color var(--dur-1) var(--ease); }
 .set-item:hover { border-color: var(--line-3); }
@@ -2168,14 +2056,12 @@ code { color: var(--accent); font-size: 0.92em; }
 .set-item.pending .set-main:hover .set-go { color: var(--text); transform: translateX(2px); }
 .set-play { height: 28px; min-width: 28px; }
 .set-play:hover:not(:disabled) { color: var(--bg); background: var(--accent); border-color: var(--accent); box-shadow: none; }
-/* Just written, not looked at yet. */
 .set-item.fresh { border-color: var(--accent-dim); background: var(--accent-wash); }
 .set-new { display: inline-block; padding: 0 6px; border-radius: 999px; background: var(--accent); color: var(--bg); font: 600 10px/16px var(--mono); text-transform: uppercase; letter-spacing: 0.04em; }
 .set-warn { display: flex; align-items: center; gap: 4px; font: 11px var(--mono); color: var(--bad); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .set-warn .lucide { width: 12px; height: 12px; flex: none; }
 .tab-busy { width: 12px; height: 12px; margin-left: 6px; color: var(--accent); vertical-align: -1px; }
 
-/* One deck or quiz: scores and how to play it, then everything in it. */
 .set-body { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 22px 30px; display: flex; flex-direction: column; gap: 14px; }
 .set-hero { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; padding: 16px 18px; background: var(--panel); border: 1px solid var(--line-2); }
 .set-scores { display: flex; gap: 28px; }
@@ -2196,11 +2082,9 @@ code { color: var(--accent); font-size: 0.92em; }
 .set-entry-stat.bad { color: var(--bad); }
 .set-entry-stat .lucide { width: 14px; height: 14px; }
 .set-entry-side { display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 0 12px; border-left: 1px solid var(--line); flex: none; }
-/* A card: its two sides side by side. */
 .set-card { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; height: 100%; background: var(--line); }
 .set-card-front, .set-card-back { padding: 10px 12px; background: var(--panel); font-size: 13.5px; line-height: 1.5; min-width: 0; }
 .set-card-back { color: var(--text-2); }
-/* A question: what kind it is, what it asks, and its answer. */
 .set-question { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; }
 @media (max-width: 640px) {
   .set-card { grid-template-columns: 1fr; }
@@ -2211,7 +2095,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .pick { display: flex; align-items: center; gap: 8px; padding: 5px 6px; font-size: 13px; cursor: pointer; }
 .pick:hover { background: var(--panel); }
 .pick span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* Sources in reading order: a number, and a way to move each up or down. */
 .pick-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .pick-row .pick { flex: 1; min-width: 0; }
 .pick-row:hover { background: var(--panel); }
@@ -2225,7 +2108,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .center-bar .tabs { width: 230px; }
 .tab .lucide { width: 13px; height: 13px; margin-right: 5px; }
 
-/* Narrow centre column: grade buttons share the card's width, toolbar buttons drop their labels. */
 .grade { width: min(640px, 100%); justify-content: center; }
 .grade-btn { flex: 1; min-width: 0; max-width: 240px; }
 .center-bar { min-width: 0; overflow: hidden; }
@@ -2233,10 +2115,6 @@ code { color: var(--accent); font-size: 0.92em; }
 .thread-select { flex: 0 1 200px; min-width: 70px; }
 @media (max-width: 1320px) { .center-bar .btn-label { display: none; } .center-bar .btn .lucide { margin-right: 0; } }
 
-/* ---------------------------------------------------------- form controls */
-
-/* Checkboxes, radios and sliders drawn for the dark theme: visible borders,
-   the accent when on, and a focus ring that matches the rest of the UI. */
 input[type='checkbox'], input[type='radio'] {
   appearance: none;
   -webkit-appearance: none;
@@ -2302,7 +2180,6 @@ input[type='range']::-moz-range-thumb { width: 11px; height: 11px; background: v
 select { color-scheme: dark; }
 .select, select { cursor: pointer; }
 
-/* On/off switch (e.g. App control). */
 .switch { display: inline-flex; align-items: center; gap: 7px; font: 12px var(--mono); color: var(--text-2); cursor: pointer; user-select: none; white-space: nowrap; }
 .switch input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
 .switch-track { position: relative; width: 28px; height: 16px; background: var(--bg); border: 1px solid var(--line-3); transition: background-color var(--dur-2) var(--ease), border-color var(--dur-2) var(--ease); }
@@ -2313,15 +2190,11 @@ select { color-scheme: dark; }
 .switch .lucide { width: 14px; height: 14px; }
 .switch:hover { color: var(--text); }
 
-/* ------------------------------------------------------------------ chips */
-
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip-btn { padding: 3px 9px; background: var(--bg); border: 1px solid var(--line-2); color: var(--text-2); font: 11.5px var(--mono); cursor: pointer; transition: border-color var(--dur-1) var(--ease), color var(--dur-1) var(--ease), background-color var(--dur-1) var(--ease); }
 .chip-btn:hover:not(:disabled) { border-color: var(--line-3); color: var(--text); }
 .chip-btn.on { border-color: var(--accent); color: var(--accent-2); background: var(--accent-wash); }
 .pick.all { padding: 2px 6px 6px; font: 12px var(--mono); color: var(--text-2); }
-
-/* ----------------------------------------------------------- app actions */
 
 .action-block { display: flex; align-items: center; gap: 8px; padding: 7px 10px; background: var(--panel); border: 1px solid var(--line-2); border-left: 2px solid var(--line-3); font: 12.5px var(--mono); animation: rise-in var(--dur-2) var(--ease); }
 .action-block.ok { border-left-color: var(--good); }
@@ -2331,8 +2204,6 @@ select { color-scheme: dark; }
 .action-block.running { border-left-color: var(--accent); }
 .action-label { color: var(--text); white-space: nowrap; flex: none; }
 .action-detail { min-width: 0; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-/* ------------------------------------------------------------------ notes */
 
 .note-view { position: relative; }
 .stage-title.as-button { background: none; border: 0; padding: 0; color: var(--text); cursor: text; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
@@ -2367,7 +2238,6 @@ select { color-scheme: dark; }
 .note-fullscreen .note-scroll { padding: 40px 24px 80px; }
 .note-fullscreen .note-paper { max-width: 820px; font-size: 16px; }
 
-/* Top bars never push the page sideways: labels give way to icons first. */
 .shell-pane.study { overflow-x: hidden; }
 .viewbar { min-width: 0; overflow: hidden; }
 .viewbar .btn, .viewbar .switch, .viewbar .icon-btn { flex: none; }
@@ -2387,13 +2257,10 @@ select { color-scheme: dark; }
   .stage-head .btn .lucide { margin-right: 0; }
 }
 
-/* The editor's card previews are flat: the flip rotation is for the player only. */
 .card-face.mini.back { transform: none; }
 
-/* Panes that switch content keep their scrollbar room, so nothing jumps sideways. */
 .tab-panel, .source-list, .thread-list, .nav-scroll { scrollbar-gutter: stable; }
 
-/* The app itself is not selectable text; what you read and write is. */
 body { -webkit-user-select: none; user-select: none; }
 input, textarea, [contenteditable='true'],
 .md, .msg-plain, .msg-bubble, .note-paper, .note-source, .viewer-body, .card-face, .q-prompt, .feedback, .choice,
@@ -2401,8 +2268,6 @@ input, textarea, [contenteditable='true'],
   -webkit-user-select: text;
   user-select: text;
 }
-
-/* ------------------------------------------------------------ code blocks */
 
 .md-block + .md-block { margin-top: 0.8em; }
 .md-block > :first-child { margin-top: 0; }
@@ -2447,8 +2312,6 @@ input, textarea, [contenteditable='true'],
 .overview-body h3 { font-size: 0.95em; color: var(--accent-2); margin-top: 1em; }
 .overview-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
 .center-bar .tabs { width: 330px; }
-
-/* --------------------------------------------------------------- schedule */
 
 .schedule .viewbar { position: static; }
 .schedule-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 320px; }
@@ -2503,8 +2366,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 :root[data-theme='light'] input[type='date'], :root[data-theme='light'] input[type='datetime-local'] { color-scheme: light; }
 @media (max-width: 1100px) { .schedule-body { grid-template-columns: 1fr; } .day-panel { border-left: 0; border-top: 1px solid var(--line-2); } }
 
-/* ----------------------------------------------------------------- search */
-
 .nav-search { display: flex; align-items: center; gap: 10px; margin: 8px 10px 2px; padding: 0 8px; height: 30px; background: var(--bg); border: 1px solid var(--line-2); color: var(--muted); font: 12.5px var(--mono); cursor: pointer; transition: border-color var(--dur-1) var(--ease), color var(--dur-1) var(--ease); }
 .nav-search:hover { border-color: var(--line-3); color: var(--text); }
 .nav-search span { flex: 1; text-align: left; }
@@ -2526,7 +2387,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .cmdk-snippet mark { background: var(--accent-wash); color: var(--accent-2); padding: 0 1px; }
 .cmdk-where { flex: none; max-width: 180px; font: 11px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
 
-/* ── study home ─────────────────────────────────────────── */
 .home { display: flex; flex-direction: column; gap: 18px; }
 .home-hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; flex-wrap: wrap; padding: 6px 0 4px; }
 .home-title { font: 600 22px var(--sans); color: var(--text-strong); margin: 0 0 4px; letter-spacing: -0.01em; }
@@ -2544,7 +2404,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .upcoming-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .upcoming-row .muted { font: 11px var(--mono); }
 
-/* heatmap */
 .heatmap { position: relative; --cell: 11px; }
 .heatmap-summary { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--text-2); margin-bottom: 10px; }
 .heatmap-summary b { color: var(--text); font-family: var(--mono); font-weight: 600; }
@@ -2564,7 +2423,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .heatmap-legend { display: flex; align-items: center; justify-content: flex-end; gap: 3px; margin-top: 8px; font-size: 10.5px; }
 .heatmap-legend .muted { margin: 0 4px; }
 .heatmap .viz-tip { transform: translate(-50%, calc(-100% - 6px)); white-space: nowrap; pointer-events: none; }
-/* The ramp follows the accent: empty → full accent. */
 :root { --heat-0: #1b1f23; }
 :root[data-theme='light'] { --heat-0: #ebebe6; }
 :root {
@@ -2574,7 +2432,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
   --heat-4: var(--accent);
 }
 
-/* subject cards */
 .subject-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
 .subject-card { cursor: pointer; position: relative; display: flex; flex-direction: column; gap: 10px; padding: 14px; background: var(--panel); border: 1px solid var(--line-2); border-top: 2px solid var(--subject, var(--accent)); transition: border-color var(--dur-2) var(--ease), transform var(--dur-2) var(--ease); }
 .subject-card:hover { border-color: var(--line-3); border-top-color: var(--subject, var(--accent)); transform: translateY(-1px); }
@@ -2597,7 +2454,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .subject-head { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
 .subject-head .subject-badge { grid-row: auto; }
 
-/* subject style dialog */
 .style-preview { display: flex; align-items: center; gap: 12px; padding: 12px; background: var(--bg-2); border: 1px solid var(--line-2); }
 .icon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(34px, 1fr)); gap: 4px; }
 .icon-choice { display: grid; place-items: center; height: 34px; background: var(--bg-2); border: 1px solid var(--line); color: var(--text-2); cursor: pointer; transition: all var(--dur-1) var(--ease); }
@@ -2613,15 +2469,12 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .nav-row.subject .nav-label > span, .nav-row.subject .nav-label { text-overflow: ellipsis; }
 .theme-switching, .theme-switching * { transition: background-color 300ms var(--ease), color 300ms var(--ease), border-color 300ms var(--ease) !important; }
 
-/* ── settings: appearance + usage ───────────────────────── */
 .theme-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
 .theme-opt { display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding: 6px 6px 7px; background: var(--bg-2); border: 1px solid var(--line-2); color: var(--text-2); font: 12px var(--sans); cursor: pointer; transition: border-color var(--dur-1), color var(--dur-1), transform var(--dur-1) var(--ease); }
 .theme-opt:hover { color: var(--text); border-color: var(--line-3); }
 .theme-opt.on { color: var(--text); border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
 .theme-name { display: flex; align-items: center; justify-content: center; gap: 5px; }
 .theme-name .lucide { width: 12px; height: 12px; opacity: 0.7; }
-/* A tiny window in the theme's own colours: a sidebar, and a card with two
-   lines of text and an accent mark. */
 .theme-mini { position: relative; display: flex; gap: 4px; height: 46px; padding: 5px; background: var(--b); border: 1px solid rgba(128, 128, 128, 0.25); overflow: hidden; }
 .theme-mini.split { padding: 0; gap: 0; border: 0; }
 .theme-mini.split > .theme-mini { flex: 1; border: 0; }
@@ -2646,7 +2499,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .usage-feature-num { font: 12px var(--mono); text-align: right; color: var(--text); }
 .usage-feature-tok { font: 11px var(--mono); text-align: right; }
 
-/* Custom accent (Settings → Appearance): one colour, the rest derived per theme. */
 :root[data-accent] {
   --accent: var(--accent-user);
   --accent-2: color-mix(in srgb, var(--accent-user) 78%, #fff);
@@ -2667,7 +2519,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .accent-custom { position: relative; overflow: hidden; background: conic-gradient(#e06c75, #d7a266, #98c379, #5cc2b8, #6aa6ff, #b59ad8, #e06c75); }
 .accent-custom input { position: absolute; inset: -8px; opacity: 0; cursor: pointer; }
 
-/* ── chat: actions, edit, thinking, suggestions ─────────── */
 .msg-actions { align-items: center; gap: 2px; }
 .msg-act { display: inline-grid; place-items: center; width: 26px; height: 24px; padding: 0; background: none; border: 1px solid transparent; color: var(--muted); cursor: pointer; transition: color var(--dur-1), border-color var(--dur-1); }
 .msg-act:hover { color: var(--text); border-color: var(--line-2); }
@@ -2699,7 +2550,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .suggest-chip { padding: 10px 12px; background: var(--panel); border: 1px solid var(--line-2); color: var(--text-2); font: 13px/1.4 var(--sans); text-align: left; cursor: pointer; transition: all var(--dur-1) var(--ease); }
 .suggest-chip:hover { color: var(--text); border-color: var(--accent-dim); background: var(--panel-2); }
 
-/* chat list: search, date groups, rename */
 .thread-search { display: flex; align-items: center; gap: 7px; margin: 8px 10px 2px; padding: 0 8px; height: 30px; background: var(--bg); border: 1px solid var(--line-2); color: var(--muted); }
 .thread-search:focus-within { border-color: var(--accent-dim); }
 .thread-search .lucide { width: 13px; height: 13px; flex: none; }
@@ -2713,7 +2563,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .thread-rename { width: calc(100% - 12px); margin: 2px 6px; padding: 6px 8px; background: var(--bg); border: 1px solid var(--accent-dim); color: var(--text); font: 13px var(--sans); outline: none; }
 .thread-none { padding: 10px 14px; }
 
-/* settings: features + personalization */
 .feature-row { display: flex !important; flex-direction: row !important; align-items: center; gap: 16px; cursor: pointer; }
 .feature-text { flex: 1; display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
 .feature-text .muted { font-size: 12px; line-height: 1.45; }
@@ -2725,7 +2574,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .tone-opt.on { border-color: var(--accent); background: var(--accent-wash); }
 @media (max-width: 760px) { .tone-row { grid-template-columns: repeat(2, 1fr); } }
 
-/* ── syllabus ───────────────────────────────────────────── */
 .syllabus-empty, .syllabus-drop { display: flex; align-items: center; gap: 14px; width: 100%; padding: 16px 18px; background: var(--panel); border: 1px dashed var(--line-3); color: var(--text); text-align: left; cursor: pointer; transition: border-color var(--dur-1), background var(--dur-1); }
 .syllabus-empty:hover, .syllabus-drop:hover, .syllabus-drop.on { border-color: var(--accent-dim); background: var(--accent-wash); }
 .syllabus-empty > .lucide, .syllabus-drop > .lucide { width: 22px; height: 22px; color: var(--accent); flex: none; }
@@ -2743,7 +2591,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .syllabus-more { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); z-index: 1; padding: 3px 12px; background: var(--panel-2); border: 1px solid var(--line-3); color: var(--text-2); font: 11.5px var(--mono); cursor: pointer; }
 .syllabus-more:hover { color: var(--text); }
 .syllabus-review { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); align-items: start; gap: 18px; }
-/* Each column scrolls on its own, so a long list never runs under the buttons. */
 .syllabus-review > section { max-height: min(58vh, calc(100vh - 260px)); overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; }
 .syllabus-review .panel-title-row { position: sticky; top: 0; z-index: 1; background: var(--panel); padding-bottom: 6px; }
 .syllabus-review .syllabus-summary { max-height: none; padding: 0; background: none; }
@@ -2759,7 +2606,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .schedule-tip > .lucide { width: 14px; height: 14px; flex: none; margin-top: 1px; }
 .schedule-tip .link { font: inherit; color: var(--accent); padding: 0; display: inline; }
 
-/* schedule: events wear their course's colour */
 .cal-pill { background: color-mix(in srgb, var(--k, var(--line-3)) 14%, var(--bg)); }
 .cal-pill.exam { font-weight: 600; }
 .day-event { background: color-mix(in srgb, var(--k, var(--line-3)) 5%, var(--panel)); }
@@ -2772,7 +2618,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .course-select .select { flex: 1; }
 .msg-body, .msg-body > .md { min-width: 0; max-width: 100%; }
 
-/* settings: memory */
 .memory-meter { display: flex; align-items: center; gap: 10px; margin: 12px 0 8px; font-size: 11.5px; }
 .memory-bar { flex: 1; height: 6px; background: var(--bg-2); border: 1px solid var(--line); }
 .memory-bar > span { display: block; height: 100%; background: var(--accent); transition: width var(--dur-3) var(--ease); }
@@ -2789,7 +2634,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .memory-empty { padding: 12px; font-size: 12.5px; }
 .memory-item .thread-rename { margin: 4px 6px; }
 
-/* settings: data (export / import / reset) */
 .data-row { display: flex; align-items: flex-start; gap: 16px; padding: 10px 0; border-top: 1px solid var(--line); }
 .data-row:first-of-type { border-top: 0; }
 .data-row .feature-text .account-check { margin-top: 6px; }
@@ -2809,12 +2653,10 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .btn.danger-solid { background: var(--bad); border-color: var(--bad); color: #fff; }
 .btn.danger-solid:disabled { opacity: 0.4; }
 .data-done { word-break: break-all; font-size: 12px; }
-/* Memory: about four facts visible, the rest scroll. */
 .memory-list { max-height: 218px; }
 .ai-settings .danger-confirm { flex-direction: row; align-items: center; justify-content: flex-start; }
 .ai-settings .danger-confirm > span { margin: 0; }
 
-/* ── focus page ─────────────────────────────────────────── */
 .focus-page { max-width: 1120px; }
 .focus-layout {
   display: grid;
@@ -2836,7 +2678,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 }
 .focus-timer.short, .focus-timer.long { border-top-color: var(--good); }
 .focus-timer .seg { width: min(100%, 340px); }
-/* The dial grows with the window but always leaves room for the rest. */
 .pomo-dial { position: relative; width: clamp(190px, 34vh, 300px); aspect-ratio: 1; height: auto; }
 .pomo-dial-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; text-align: center; }
 .pomo-clock { font: 500 clamp(40px, 7vh, 60px)/1 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; color: var(--text-strong); }
@@ -2857,7 +2698,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 
 .focus-tasks { grid-area: tasks; display: flex; flex-direction: column; min-height: 0; }
 .focus-tasks .task-add { margin-bottom: 10px; }
-/* Tasks scroll inside the panel, so the panel stays the timer's height. */
 .task-scroll { flex: 1; min-height: 120px; max-height: calc(34vh + 150px); overflow-y: auto; overscroll-behavior: contain; padding-right: 2px; }
 .task.current { border-color: var(--accent-dim); background: var(--accent-wash); }
 .focus-stats { grid-area: stats; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
@@ -2872,9 +2712,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .pomo-ring-track { stroke: var(--line-2); }
 .pomo-ring-fill { stroke: var(--accent); stroke-linecap: round; transition: stroke-dashoffset 400ms linear, stroke var(--dur-3) var(--ease); }
 .pomo-ring.short .pomo-ring-fill, .pomo-ring.long .pomo-ring-fill { stroke: var(--good); }
-
-/* ------------------------------------------------------------------ quizzes
-   A progress bar while answering, hints, and the "Ask AI" sheet. */
 
 .quiz-stage { display: flex; flex-direction: column; min-height: 0; }
 
@@ -2904,7 +2741,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
   margin-top: auto;
 }
 
-/* The Ask AI sheet: a full chat, so it needs room and its own scrolling. */
 .modal.quiz-ask {
   display: flex;
   flex-direction: column;
@@ -2929,21 +2765,15 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
   border-top: 1px solid var(--line);
 }
 
-/* The hint replayed under the feedback: one line, with its maths rendered. */
 .feedback-hint { display: flex; align-items: baseline; gap: 6px; margin-top: 8px; }
 .feedback-hint > svg { width: 13px; height: 13px; flex: none; align-self: center; }
 .feedback-hint-label { flex: none; }
 .md.tight > :first-child { margin-top: 0; }
 .md.tight > :last-child { margin-bottom: 0; }
 
-/* The hint button sits under the answer, not across it. */
 .quiz-hint-btn { align-self: flex-start; width: fit-content; }
 
-/* Previous and Next sit inset from the edges of the stage, with room inside
-   them, rather than flush against the frame. */
 .quiz-footer {
-  /* The card behind animates in from the side; without this the overflow
-     shows a scrollbar for the length of the animation. */
   overflow: hidden;
   padding-bottom: 18px;
 }
@@ -2953,24 +2783,17 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .quiz-footer .nav-prev .lucide, .quiz-footer .nav-next .lucide { width: 14px; height: 14px; }
 .quiz-finish { padding-left: 18px; padding-right: 18px; }
 
-/* The question animates in from the side, which overflows the stage for a
-   frame or two. Clipping it here is what stops the scrollbar flashing. */
 .quiz-stage, .question-askable { overflow-x: hidden; }
 .quiz-stage { padding-bottom: 4px; }
 
-/* A small button that sits comfortably in a header row. */
 .btn.small { padding: 4px 10px; font-size: 12px; }
 .btn.small .lucide { width: 13px; height: 13px; }
 
-/* The quiz's progress bar sits under the header, like a deck's. */
 .quiz-stage > .progress { margin: 10px 0 14px; }
 
-/* Choices and answers carry maths, so the feedback line renders them rather
-   than printing the LaTeX at the student. */
 .feedback-said { display: inline-flex; align-items: baseline; gap: 4px; }
 .md.inline, .md.inline > p { display: inline; margin: 0; }
 
-/* A boot failure in a browser tab, before React is up to show anything. */
 .boot-error {
   max-width: 34rem;
   margin: 18vh auto;
@@ -2982,8 +2805,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
   font: 14px/1.6 var(--mono);
 }
 
-/* An assignment WebAssign has stopped listing is kept and greyed, never
-   silently deleted — it may be a bad fetch rather than a removed assignment. */
 .day-event.webassign.stale { opacity: 0.55; }
 .day-event .tag {
   margin-left: 6px;
@@ -2996,30 +2817,23 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .day-event .tag.stale { color: var(--muted); }
 .due-note { display: flex; gap: 8px; align-items: baseline; }
 
-/* "Ask AI about this card" sits under the grade buttons, out of the way of
-   the flip target but reachable without leaving the card. */
 .card-actions { display: flex; justify-content: center; margin-top: 14px; }
 
-/* The deck player's footer matches the quiz's. */
 .review .quiz-footer { border-top: none; margin-top: 6px; }
 
 .quiz-question-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 11.5px; }
 .quiz-question-prompt { font-size: 13.5px; line-height: 1.5; }
 .quiz-question-answer { display: flex; align-items: baseline; gap: 5px; font-size: 12.5px; }
 
-/* Two short fields side by side in a dialog. */
 .form-row { display: flex; gap: 12px; }
 .form-row > .field { flex: 1; min-width: 0; }
 
 
-/* A deck or quiz being written: it takes its place in the list straight away
-   so the student can see it coming, and can stop it from there. */
 .set-item.pending { border-style: dashed; }
 .set-item.pending .set-icon { color: var(--text-2); }
 .set-item.pending.failed { border-color: var(--bad); }
 .set-item.pending.failed .set-icon, .set-item.pending.cancelled .set-icon { color: var(--bad); }
 
-/* A day on the activity map, opened up: what was studied, and where. */
 .heat.pickable { cursor: pointer; }
 .heat.pickable:hover { outline: 1px solid var(--accent); outline-offset: 1px; }
 .activity-day { display: flex; flex-direction: column; gap: 14px; }
@@ -3038,9 +2852,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .activity-count { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-2); }
 .activity-count .lucide { width: 13px; height: 13px; }
 
-/* ---------------------------------------------------------- onboarding
-   One row per thing Salem needs, each saying what it is for. Nothing is
-   installed without the student reading why. */
 .onboard-list { display: flex; flex-direction: column; gap: 8px; margin: 14px 0; }
 .onboard-row {
   display: flex;
@@ -3060,7 +2871,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .onboard-detail { font-family: var(--mono); font-size: 11.5px; word-break: break-word; }
 .onboard-row .btn { flex: none; align-self: center; }
 
-/* When the AI runtime will not start, the reason matters more than the fact. */
 .runtime-trouble { display: flex; flex-direction: column; gap: 6px; }
 .runtime-trouble summary { cursor: pointer; }
 .runtime-log {
@@ -3078,10 +2888,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 }
 
 .quiz-ask-wait { display: grid; place-items: center; flex: 1; padding: 30px; }
-
-/* ------------------------------------------------------- job in progress
-   The card standing in for the thing being made is also the way into what
-   it is doing: a spinner says it is alive, the steps say where it has got. */
 
 .task-detail { display: flex; flex-direction: column; gap: 14px; }
 .task-detail-head {
@@ -3125,10 +2931,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .task-step-text { min-width: 0; color: var(--text-2); }
 .task-steps li.now .task-step-text { color: var(--text); }
 
-/* ------------------------------------------------------------ busy marker
-   Work the student cannot see from where they are standing: an answer being
-   written in a chat they have left, a deck being made in another notebook.
-   A dot on the way back to it, not a number they have to read. */
 .nav-busy {
   width: 6px;
   height: 6px;
@@ -3145,9 +2947,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 }
 @media (prefers-reduced-motion: reduce) { .nav-busy { animation: none; } }
 
-/* ------------------------------------------------------ selection menu
-   The app suppresses the native context menu, so selected text needs its own.
-   It shows what you selected, so there is no doubt what the AI will be given. */
 .selection-menu {
   position: fixed;
   z-index: 80;
@@ -3188,9 +2987,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .selection-item .lucide { width: 14px; height: 14px; color: var(--text-2); }
 @media (prefers-reduced-motion: reduce) { .selection-menu { animation: none; } }
 
-/* ----------------------------------------------------- referenced material
-   Shown like attachments, because that is what they are: the assistant has
-   been handed this, and the student should be able to see exactly what. */
 .ref-chips {
   display: flex;
   flex-wrap: wrap;
@@ -3219,7 +3015,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
   text-overflow: ellipsis;
 }
 
-/* What was actually handed over, on hover: out of the way until it is wanted. */
 .ref-peek {
   position: absolute;
   bottom: calc(100% + 8px);
@@ -3256,21 +3051,14 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .ref-peek-note { font-size: 11px; color: var(--muted); }
 @media (prefers-reduced-motion: reduce) { .ref-peek { transition: none; } }
 
-/* The note's scroller keeps its own box; the askable wrapper only exists to
-   catch selections inside it. */
 .note-askable { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 
-/* The deck player's card slides away when it is graded, which overflows for
-   a frame; clipping it keeps a scrollbar from flashing. */
 .review-askable { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-x: hidden; }
 
-/* Tab mode's dialog had no room in it at all. */
 .modal.tab-mode { padding: 18px 20px 16px; }
 .modal.tab-mode .field { margin-top: 14px; }
 .modal.tab-mode .modal-actions { margin-top: 18px; }
 
-/* ------------------------------------------------------------------ cost
-   What a piece of work cost: small, tabular, never louder than the work. */
 .set-cost { margin-right: 6px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 .task-detail-cost { font-variant-numeric: tabular-nums; }
 .note-cost { font: 11.5px var(--mono); font-variant-numeric: tabular-nums; }
@@ -3283,19 +3071,13 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 }
 .reply-cost.live { color: var(--text-2); }
 
-/* Maths KaTeX still cannot typeset: the source, readable, not an alarm. */
 .math-raw { font-family: var(--mono); font-size: 0.92em; color: var(--text-2); }
 
-/* Fast mode, in the generate dialog. */
 .toggle.gen-fast { align-items: flex-start; grid-column: auto; line-height: 1.45; }
 .toggle.gen-fast input { margin-top: 3px; }
 .toggle.gen-fast .lucide { flex: none; width: 14px; height: 14px; margin: 2px 0 0; color: var(--accent); }
 .toggle.gen-fast > span { color: var(--text); }
 
-/* -------------------------------------------------------------- dropdowns
-   The app's own select (components/Select.tsx). The trigger keeps the look
-   of whatever it stands in for (.select, .field-input); the list is the same
-   family as the context menus. */
 .select-trigger {
   display: flex;
   align-items: center;
@@ -3352,10 +3134,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .opt-dotted i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .course-select .select-trigger .opt-dotted i { display: none; }
 
-/* ---------------------------------------------------------- colour themes
-   Palettes over the dark or light base (lib/theme.ts): surfaces, lines,
-   text and the palette's own accent. A custom accent still wins, so the
-   accent is only set where there is none. */
 :root[data-palette='midnight'] {
   --bg: #0b1020;
   --bg-2: #0f1528;
@@ -3529,11 +3307,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 }
 :root[data-palette='sepia']:not([data-accent]) { --accent: #8a5a2b; --accent-2: #6f4520; --accent-dim: #cfae88; --accent-wash: rgba(138, 90, 43, 0.09); }
 
-/* ------------------------------------------------------------------ shape
-   Rounded (Settings → Appearance): the same app with every box softened a
-   little. Only things that are boxes — controls, cards, bubbles, dialogs —
-   are rounded; panes, bars and dividers stay square, since rounding a layout
-   edge only opens gaps at the corners. */
 :root { --r-sm: 0; --r: 0; --r-lg: 0; }
 :root[data-shape='rounded'] { --r-sm: 5px; --r: 7px; --r-lg: 11px; }
 
@@ -3564,20 +3337,14 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
   .modal, .ctx-menu, .select-pop, .cmdk, .card-face, .export-loading-box, .combo-list, .selection-menu
 ) { border-radius: var(--r-lg); }
 
-/* What has a coloured inside needs its corners clipped to match. */
-/* (overflow: hidden lets a flex child shrink below its content, so these are
-   kept from shrinking — otherwise a list row or a score strip loses its
-   bottom half inside a scrolling column.) */
 :root[data-shape='rounded'] :is(.set-entry, .codeblock, .usage-totals, .seg, .modal, .card-face, .py-block, .quiz-question) { overflow: hidden; flex-shrink: 0; }
 :root[data-shape='rounded'] .seg-glider { border-radius: calc(var(--r) - 2px); }
 :root[data-shape='rounded'] .modal > header { border-radius: var(--r-lg) var(--r-lg) 0 0; }
-/* Things that are a stripe on one side keep that side square. */
 :root[data-shape='rounded'] :is(.select-option, .ctx-item) { border-left-width: 2px; }
 :root[data-shape='rounded'] .progress, :root[data-shape='rounded'] .progress > i { border-radius: 999px; }
 :root[data-shape='rounded'] :is(input[type='checkbox'], input[type='radio']) { border-radius: 4px; }
 :root[data-shape='rounded'] input[type='radio'] { border-radius: 50%; }
 
-/* Tab mode is on: this window only says so. */
 .tab-lock { display: grid; place-items: center; height: 100vh; padding: 24px; background: var(--bg); }
 .tab-lock-card { display: flex; flex-direction: column; align-items: center; gap: 14px; width: min(520px, 100%); padding: 32px 28px; text-align: center; background: var(--panel); border: 1px solid var(--line-2); animation: rise-in var(--dur-3) var(--ease); }
 .tab-lock-card h1 { margin: 0; font: 600 20px var(--sans); color: var(--text-strong); }
@@ -3590,10 +3357,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 :root[data-shape='rounded'] .tab-lock-card { border-radius: var(--r-lg); }
 :root[data-shape='rounded'] .tab-lock-icon { border-radius: 50%; }
 
-/* ---- rounded, everything else ------------------------------------------
-   Selection markers: a square stripe down the left edge does not round, so
-   in the rounded shape a selected row is a soft pill instead — inset from
-   the pane's edge, with the accent carried by its icon and a faint wash. */
 :root[data-shape='rounded'] :is(.nav-item, .nav-row, .thread-row, .source-row, .pick-row, .cmdk-row, .ctx-item, .select-option, .pick) {
   border-left-color: transparent !important;
   border-radius: var(--r-sm);
@@ -3606,14 +3369,11 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 }
 :root[data-shape='rounded'] :is(.ctx-item:hover:not(:disabled), .select-option.active) { background: color-mix(in srgb, var(--accent) 13%, transparent); }
 
-/* Tabs: the underline becomes a short rounded bar under the label; the
-   segmented switches get a pill that slides. */
 :root[data-shape='rounded'] .tabs-glider { height: 3px; bottom: -1px; border-radius: 3px 3px 0 0; clip-path: inset(0 18% 0 18% round 3px 3px 0 0); }
 :root[data-shape='rounded'] .tab:hover { color: var(--text); }
 :root[data-shape='rounded'] .seg { padding: 2px; background: var(--bg); }
 :root[data-shape='rounded'] .seg-glider { top: 2px; bottom: 2px; left: 2px; width: calc((100% - 4px) / var(--n, 3)); border-radius: calc(var(--r) - 2px); }
 
-/* Controls. */
 :root[data-shape='rounded'] .switch-track { border-radius: 999px; }
 :root[data-shape='rounded'] .switch-thumb { border-radius: 50%; }
 :root[data-shape='rounded'] input[type='checkbox'] { border-radius: 4px; }
@@ -3625,23 +3385,18 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 :root[data-shape='rounded'] :is(input[type='date'], input[type='datetime-local'], input[type='time'], input[type='number'], input[type='text'], input[type='search'], input:not([type])) { border-radius: var(--r); }
 :root[data-shape='rounded'] :is(.accent-dot, .swatch, .kind-dot, .viz-dot, .export-dot) { border-radius: 50%; }
 
-/* Graphs and meters: rounded tracks and fills. */
 :root[data-shape='rounded'] :is(.usage-bar, .usage-bar > span, .chart-track, .chart-track i, .meter-track, .meter-track i, .export-bar, .export-progress, .memory-bar, .pomo-ring-track) { border-radius: 999px; }
 :root[data-shape='rounded'] :is(.chart-track, .meter-track, .usage-bar) { overflow: hidden; }
 :root[data-shape='rounded'] .heat { border-radius: 3px; }
 :root[data-shape='rounded'] .heatmap-legend .heat { border-radius: 2px; }
 
-/* Groups of cells drawn with 1px gaps: round the group, clip the cells. */
 :root[data-shape='rounded'] :is(.home-stats, .usage-totals, .stats-row) { border-radius: var(--r); overflow: hidden; }
-/* A scroller already clips to its own rounded corners: `overflow: hidden`
-   here would stop it scrolling. */
 :root[data-shape='rounded'] .cal-scroll { border-radius: var(--r); }
 :root[data-shape='rounded'] .home-stats { flex-shrink: 0; }
 :root[data-shape='rounded'] .cal-pill { border-radius: 4px; border-left-width: 3px; }
 :root[data-shape='rounded'] .cal-num { border-radius: 5px; }
 :root[data-shape='rounded'] .cal-day.on { box-shadow: inset 0 0 0 1.5px var(--accent); }
 
-/* Settings: sections are soft cards rather than rows ruled apart. */
 :root[data-shape='rounded'] .ai-settings section {
   padding: 14px;
   background: var(--panel);
@@ -3650,18 +3405,13 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 }
 :root[data-shape='rounded'] .ai-settings section + section { border-top: 1px solid var(--line-2); padding-top: 14px; }
 
-/* Rules between things: rounded ends and a little inset, not edge to edge. */
 :root[data-shape='rounded'] :is(hr, .md hr) { border: 0; height: 1px; background: var(--line-2); border-radius: 1px; margin-left: 4px; margin-right: 4px; }
 :root[data-shape='rounded'] :is(.ctx-sep) { border-radius: 1px; }
 
-/* Pictures and embeds. */
 :root[data-shape='rounded'] :is(.md img, .note-paper img, .msg-body img, .qfig img, .viewer-picture img, iframe) { border-radius: var(--r); }
 :root[data-shape='rounded'] :is(.tab-count, .set-new) { border-radius: 999px; }
 :root[data-shape='rounded'] .cal-day.on { border-radius: 5px; }
 
-/* ---------------------------------------------------------- model provider
-   Settings → Model: provider (with its logo), its key, then a model from its
-   list — the way opencode lays it out. */
 .provider-settings { display: flex; flex-direction: column; gap: 14px; }
 .provider-current { display: flex; align-items: center; gap: 12px; }
 .provider-current-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
@@ -3670,7 +3420,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .provider-current .btn .lucide.flip, .model-caret.flip { transform: rotate(180deg); }
 .provider-current .btn .lucide { margin: 0 0 0 6px; transition: transform var(--dur-1) var(--ease); }
 
-/* A provider's logo: models.dev's monochrome SVG as a mask, in the text colour. */
 .prov-logo { display: inline-grid; place-items: center; flex: none; width: 26px; height: 26px; background: var(--bg-2); border: 1px solid var(--line-2); color: var(--text-2); font: 600 12px var(--sans); position: relative; }
 .prov-logo.big { width: 38px; height: 38px; font-size: 16px; }
 .prov-logo.has::after { content: ''; position: absolute; inset: 5px; background: var(--text); -webkit-mask: var(--logo) center / contain no-repeat; mask: var(--logo) center / contain no-repeat; }
@@ -3727,7 +3476,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .ollama-ctx { display: flex; flex-direction: column; gap: 5px; max-width: 360px; }
 .ollama-ctx > span { font-size: 12.5px; color: var(--text-2); }
 
-/* Tab mode ended: the tab says so, over everything. */
 .tab-closed { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 24px; background: var(--bg); animation: fade-in var(--dur-2) var(--ease); }
 .tab-closed-card { display: flex; flex-direction: column; align-items: center; gap: 12px; max-width: 460px; padding: 32px 28px; text-align: center; background: var(--panel); border: 1px solid var(--line-2); }
 .tab-closed-card h1 { margin: 0; font: 600 20px var(--sans); color: var(--text-strong); }
@@ -3737,10 +3485,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .set-stop .lucide { width: 11px; height: 11px; margin-right: 5px; fill: currentColor; }
 .set-stop:hover { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
 
-/* ------------------------------------------------------------------ notes
-   The Notes tab, after Apple Notes: folders, the notes in them (grouped by
-   date, pinned first), and the note on a quiet page. Drawn from the theme's
-   own tokens, so every palette and both shapes carry through. */
 .view:has(> .pad) { height: 100%; }
 .pad {
   flex: 1;
@@ -3751,8 +3495,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
   transition: grid-template-columns var(--dur-3) var(--ease);
   overflow: hidden;
 }
-/* The folders, put away, keep their width and slide under the note list
-   (later columns paint over earlier ones), so nothing squashes on the way. */
 .pad.no-folders { --pad-folders: 0px; }
 .pad-folders { width: var(--pad-folders-w, 210px); }
 .pad-folders, .pad-list { position: relative; }
@@ -3824,7 +3566,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .pad-prose { font: 15px/1.6 var(--sans); color: var(--text); caret-color: var(--accent); }
 .pad-prose > * + * { margin-top: 0.45em; }
 .pad-prose p { margin: 0; }
-/* The first line is the title, whatever it was typed as. */
 .pad-prose > :first-child { font: 700 24px/1.3 var(--sans); color: var(--text-strong); margin-bottom: 0.3em; }
 .pad-prose h1 { font: 700 24px/1.3 var(--sans); color: var(--text-strong); margin: 0.9em 0 0.2em; }
 .pad-prose h2 { font: 700 19px/1.35 var(--sans); color: var(--text-strong); margin: 0.8em 0 0.15em; }
@@ -3840,7 +3581,6 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .pad-prose ul, .pad-prose ol { margin: 0.3em 0; padding-left: 1.5em; }
 .pad-prose li > p { margin: 0; }
 .pad-prose li::marker { color: var(--muted); }
-/* Checklists, with round checks as in Apple Notes. */
 .pad-prose ul[data-type='taskList'] { list-style: none; padding-left: 2px; }
 .pad-prose ul[data-type='taskList'] li { display: flex; align-items: flex-start; gap: 9px; }
 .pad-prose ul[data-type='taskList'] li > label { flex: none; margin-top: 3px; user-select: none; }
@@ -3848,12 +3588,10 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .pad-prose ul[data-type='taskList'] input[type='checkbox'] { width: 17px; height: 17px; border-radius: 50% !important; border: 1.5px solid var(--line-3); background: transparent; }
 .pad-prose ul[data-type='taskList'] input[type='checkbox']:checked { background: var(--accent); border-color: var(--accent); }
 .pad-prose ul[data-type='taskList'] li[data-checked='true'] > div { color: var(--muted); }
-/* Maths. */
 .pad-prose [data-type='inline-math'] { padding: 0 2px; cursor: pointer; }
 .pad-prose [data-type='block-math'] { margin: 0.6em 0; padding: 8px; text-align: center; cursor: pointer; }
 .pad-prose [data-type='inline-math']:hover, .pad-prose [data-type='block-math']:hover { background: var(--accent-wash); }
 .pad-prose .inline-math-error, .pad-prose .block-math-error { color: var(--text-2); font-family: var(--mono); }
-/* The placeholder on an empty line. */
 .pad-prose p.is-empty::before, .pad-prose h1.is-empty::before { content: attr(data-placeholder); float: left; height: 0; color: var(--muted); pointer-events: none; font-weight: inherit; }
 .pad-prose ::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
 .pad-math-preview { min-height: 48px; display: grid; place-items: center; padding: 10px; background: var(--bg); border: 1px solid var(--line-2); font-size: 18px; }
