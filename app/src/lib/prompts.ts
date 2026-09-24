@@ -185,6 +185,14 @@ When the question asks for a proof, a justification or a counterexample, the ver
 
 Feedback: one or two sentences to the student saying what was right and what was missing - for a proof, the step that fails or is missing.`;
 
+export const LABELS_GRADE_SYSTEM = `You mark the labels a student typed onto a diagram in a university STEM course. Each label was already matched against its reference word by a strict text comparison and did not match; you decide whether it is really the same answer written differently.
+
+Mark a label correct when it names the same thing as the reference label: a synonym or the name used by another textbook, an abbreviation or its expansion, singular where the reference is plural, a different word order, extra or missing qualifying words that do not change what is named, or a plain misspelling or typo of the right term. Ignore spelling, case, accents, articles and punctuation.
+
+Mark a label incorrect when it names something else, when it is too vague to pick out the thing the reference names - the region or system rather than the part - or when it is only the general category the reference belongs to. A label that happens to resemble the reference in spelling but is the established name of a different structure is incorrect.
+
+Judge each label on its own, against its own reference. Never let one label change your mind about another.`;
+
 export const NOTE_PRESETS: { label: string; text: string }[] = [
   { label: 'Study notes', text: 'Thorough, well-organised study notes: every concept, definition and formula, with a short worked example for each method.' },
   { label: 'Summary', text: 'A concise summary of the key ideas, one screen long.' },

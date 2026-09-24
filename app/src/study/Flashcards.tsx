@@ -6,6 +6,7 @@ import { Markdown } from '../lib/markdown';
 import { DIRECT_CARD_COUNT, type CardOptions, type CardSize, type GenSource, type QuizOptions } from '../lib/studyGen';
 import { AskableArea, AskAboutCard, ChatButton, deckBriefing } from './StudyChat';
 import { clearDeckSession, deckSessionFits, loadDeckSession, pruneDeckSession, saveDeckSession } from '../lib/studySession';
+import { ConfirmDialog } from './dialogs';
 import {studyApi, type Card, type CardResult, type ChatThread, type Deck, type Source, type Difficulty, type QuestionType, type Note } from './api';
 import { wholeSources } from '../lib/material';
 import { applyOrder, CARD_BANDS, QUIZ_COUNT } from '../lib/deckPlan';
@@ -24,6 +25,8 @@ export function DeckView({ deck, notebookId, onBack, onPlay, onChanged }: {
 }) {
   const [cards, setCards] = useState<Card[] | null>(null);
   const [editing, setEditing] = useState<Card | 'new' | null>(null);
+  const [session, setSession] = useState(() => loadDeckSession(deck.id));
+  const [startingOver, setStartingOver] = useState(false);
   const [shuffle, setShuffle] = useState(() => loadPrefs<boolean>(SHUFFLE_KEY, true));
   useEffect(() => { savePrefs(SHUFFLE_KEY, shuffle); }, [shuffle]);
 
@@ -33,6 +36,13 @@ export function DeckView({ deck, notebookId, onBack, onPlay, onChanged }: {
 
   const play = (list: Card[], practice = false) => onPlay(shuffle ? [...list].sort(() => Math.random() - 0.5) : list, deck.title, practice);
   const hard = (cards ?? []).filter((c) => c.lastCorrect === false);
+
+  // How far the saved run got, once the deck's cards have loaded and we know it still fits them.
+  const seen = useMemo(() => {
+    if (!session || !cards) return 0;
+    const ids = cards.map((c) => c.id);
+    return deckSessionFits(session, ids) ? pruneDeckSession(session, ids).pos : 0;
+  }, [session, cards]);
 
   return (
     <SetPage
@@ -47,7 +57,15 @@ export function DeckView({ deck, notebookId, onBack, onPlay, onChanged }: {
       actions={<>
         <label className="toggle small"><input type="checkbox" checked={shuffle} onChange={(e) => setShuffle(e.target.checked)} /><Shuffle />Shuffle</label>
         {!!hard.length && <button type="button" className="btn" onClick={() => play(hard, true)}>Practise {hard.length} missed</button>}
-        <button type="button" className="btn primary" disabled={!cards?.length} onClick={() => cards && play(cards)}><Play />Play deck</button>
+        {!!seen && (
+          <button type="button" className="btn" onClick={() => setStartingOver(true)}
+            title="Throw away where the saved run got to and play the deck from the first card">
+            <RotateCcw />Start over
+          </button>
+        )}
+        <button type="button" className="btn primary" disabled={!cards?.length} onClick={() => cards && play(cards)}>
+          <Play />{seen ? `Carry on (${seen} seen)` : 'Play deck'}
+        </button>
       </>}
       listAside={<button type="button" className="btn ghost" onClick={() => setEditing('new')}><Plus />Add card</button>}
       onBack={onBack}
@@ -55,7 +73,24 @@ export function DeckView({ deck, notebookId, onBack, onPlay, onChanged }: {
       onDelete={async () => { clearDeckSession(deck.id); await studyApi.deleteDeck(deck.id); onChanged(); onBack(); }}
       deleteText={<>Delete <b>{deck.title}</b> with its {deck.cardCount} cards and saved scores?</>}
       empty={cards && !cards.length ? <p className="muted pane-note">This deck is empty. Add cards by hand, or generate a new deck.</p> : undefined}
-      dialogs={editing && <CardEditor card={editing === 'new' ? null : editing} deckId={deck.id} onClose={() => setEditing(null)} onSaved={changed} />}
+      dialogs={<>
+        {editing && <CardEditor card={editing === 'new' ? null : editing} deckId={deck.id} onClose={() => setEditing(null)} onSaved={changed} />}
+        {startingOver && (
+          <ConfirmDialog
+            title="Start over"
+            confirmLabel="Start over"
+            onClose={() => setStartingOver(false)}
+            onConfirm={async () => {
+              clearDeckSession(deck.id);
+              setSession(null);
+              if (cards) play(cards);
+            }}
+          >
+            Throw away the saved run through <b>{deck.title}</b>, {seen} card{seen === 1 ? '' : 's'} in, and play it again from
+            the first card? Your finished plays and scores stay as they are.
+          </ConfirmDialog>
+        )}
+      </>}
     >
       {(cards ?? []).map((c, i) => (
         <SetItem key={c.id} n={i + 1} index={i} result={c.lastCorrect} onOpen={() => setEditing(c)}>

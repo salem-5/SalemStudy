@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { canCheck, checkAgrees, fillsTheGap, gradeLocal, labelAnswers, labelMatches, labelResults, parseNumber, picked, shuffleChoices, unpick, usableHint, verdictOf } from './quizRules.ts';
+import { canCheck, checkAgrees, fillsTheGap, gradeLocal, labelAnswers, labelMatches, labelResults, labelVerdicts, parseNumber, picked, shuffleChoices, unpick, usableHint, verdictOf } from './quizRules.ts';
 
 const mcq = { type: 'mcq', prompt: 'p', choices: ['3x^2', 'x^2', '3x'], answer: 0, explanation: '', topic: 't' } as const;
 const multi = { type: 'multi', prompt: 'p', choices: ['A', 'B', 'C', 'D'], answers: [0, 2], answer: '0,2', explanation: '', topic: 't' } as const;
@@ -213,5 +213,22 @@ describe('marking a labelled diagram', () => {
   it('treats missing boxes as unanswered', () => {
     assert.deepEqual(labelAnswers('["a"]', 3), ['a', '', '']);
     assert.deepEqual(labelAnswers('not json', 2), ['', '']);
+  });
+
+  it('keeps the verdicts the answer was marked with, AI passes included', () => {
+    const given = JSON.stringify(['medullary cavity', 'endosteum', 'sequestrum']);
+    // The AI let box 2 through as a synonym; re-matching locally would take that back.
+    assert.deepEqual(labelVerdicts(diagram as never, { given, labels: [true, true, true] }), [true, true, true]);
+  });
+
+  it('falls back to a local match when no verdicts were saved', () => {
+    const given = JSON.stringify(['medullary cavity', 'endosteum', 'sequestrum']);
+    assert.deepEqual(labelVerdicts(diagram as never, { given }), [true, false, true]);
+    assert.deepEqual(labelVerdicts(diagram as never, undefined), [false, false, false]);
+  });
+
+  it('ignores saved verdicts that no longer cover every box', () => {
+    const given = JSON.stringify(['medullary cavity', 'endosteum', 'sequestrum']);
+    assert.deepEqual(labelVerdicts(diagram as never, { given, labels: [true, true] }), [true, false, true]);
   });
 });

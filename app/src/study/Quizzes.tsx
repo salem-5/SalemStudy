@@ -2,13 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Select } from '../components/Select';
 import { ArrowLeft, Check, ChevronLeft, ChevronRight, Flag, Lightbulb, MessageCircleQuestion, Play, RotateCcw, ShieldCheck, Sparkles, X } from 'lucide-react';
 import { asMath, Markdown } from '../lib/markdown';
-import { cardsFromMistakes, gradeLocal, gradeShort, picked, rewriteQuestion, unpick, type GenSource, type StudyContext } from '../lib/studyGen';
-import { labelAnswers, labelResults } from '../lib/quizRules';
+import { cardsFromMistakes, gradeLabels, gradeLocal, gradeShort, picked, rewriteQuestion, unpick, type GenSource, type StudyContext } from '../lib/studyGen';
+import { labelAnswers, labelResults, labelVerdicts } from '../lib/quizRules';
 import {
   clearQuizSession, loadQuizSession, quizSessionFits, saveQuizSession,
   type QuizAnswer,
 } from '../lib/studySession';
 import { Modal } from '../components/Dialogs';
+import { ConfirmDialog } from './dialogs';
 import { SetItem, SetPage } from './StudySets';
 import { GapPrompt, hasGap } from './GapPrompt';
 import { AskableArea, AskAboutQuestion, ChatButton, quizBriefing } from './StudyChat';
@@ -27,13 +28,14 @@ function answerText(q: QuizQuestion): string {
   return `${asMath(String(q.answer))}${q.unit ? ` ${q.unit}` : ''}`;
 }
 
-function givenText(q: QuizQuestion, given: string): string {
+function givenText(q: QuizQuestion, answer: QuizAnswer): string {
+  const given = answer.given;
   if (!given) return 'nothing';
   if (q.type === 'mcq') return q.choices?.[Number(given)] ?? given;
   if (q.type === 'multi') return picked(given).map((i) => q.choices?.[i] ?? '').filter(Boolean).join(' · ') || 'nothing';
   if (q.type === 'tf') return given === 'true' ? 'True' : 'False';
   if (q.type === 'label') {
-    const results = labelResults(q, given);
+    const results = labelVerdicts(q, answer);
     return labelAnswers(given, results.length).map((v, i) => `${i + 1}. ${v.trim() || '-'} ${results[i] ? '✓' : '✗'}`).join(' · ');
   }
   return given;
@@ -117,19 +119,21 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
     setChecking(true);
     let correct = false;
     let feedback: string | undefined;
+    let labels: boolean[] | undefined;
     try {
       if (q.type === 'short') ({ correct, feedback } = await gradeShort(q, value));
       else if (q.type === 'label') {
-        const results = labelResults(q, value);
-        correct = results.length > 0 && results.every(Boolean);
-        feedback = `${results.filter(Boolean).length} of ${results.length} labels right.`;
+        const graded = await gradeLabels(q, value);
+        labels = graded.results;
+        feedback = graded.feedback;
+        correct = graded.results.length > 0 && graded.results.every(Boolean);
       } else correct = gradeLocal(q, value);
     } catch (e) {
       feedback = `Could not mark this automatically (${String(e)}). Compare with the answer below.`;
     }
     setAnswers((a) => ({
       ...a,
-      [index]: { given: value, correct, ms: Date.now() - shownAt.current, hinted: hintFor === index || a[index]?.hinted, feedback },
+      [index]: { given: value, correct, ms: Date.now() - shownAt.current, hinted: hintFor === index || a[index]?.hinted, feedback, labels },
     }));
     setFlash((f) => ({ kind: correct ? 'good' : 'bad', n: (f?.n ?? 0) + 1 }));
     setChecking(false);
@@ -286,6 +290,7 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
             given={given}
             locked={showAnswer}
             reviewing={reviewing}
+            verdicts={current && q.type === 'label' ? labelVerdicts(q, current) : undefined}
             onChange={setGiven}
           />
 
@@ -362,16 +367,17 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
 
 const PROOF = /\b(prove|proof|disprove|justify|counter-?example|show that)\b/i;
 
-function DiagramInput({ q, given, locked, autoFocus, onChange }: {
+function DiagramInput({ q, given, locked, verdicts, autoFocus, onChange }: {
   q: QuizQuestion;
   given: string;
   locked: boolean;
+  verdicts?: boolean[];
   autoFocus: boolean;
   onChange: (value: string) => void;
 }) {
   const labels = q.diagram?.labels ?? [];
   const values = labelAnswers(given, labels.length);
-  const results = locked ? labelResults(q, given) : null;
+  const results = locked ? verdicts ?? labelResults(q, given) : null;
   const [src, setSrc] = useState<string | null>(null);
   const [original, setOriginal] = useState<string | null>(null);
   const [showOriginal, setShowOriginal] = useState(false);
@@ -438,17 +444,18 @@ function DiagramInput({ q, given, locked, autoFocus, onChange }: {
   );
 }
 
-function AnswerInput({ q, given, locked, reviewing, onChange }: {
+function AnswerInput({ q, given, locked, reviewing, verdicts, onChange }: {
   q: QuizQuestion;
   given: string;
   locked: boolean;
   reviewing: boolean;
+  verdicts?: boolean[];
   onChange: (value: string) => void;
 }) {
   const chosen = picked(given);
   const correctSet = new Set(q.answers ?? []);
 
-  if (q.type === 'label') return <DiagramInput q={q} given={given} locked={locked} autoFocus={!reviewing} onChange={onChange} />;
+  if (q.type === 'label') return <DiagramInput q={q} given={given} locked={locked} verdicts={verdicts} autoFocus={!reviewing} onChange={onChange} />;
 
   if (q.type === 'mcq' || q.type === 'multi') {
     const multi = q.type === 'multi';
@@ -552,8 +559,12 @@ export function QuizView({ quiz, summary, notebookId, ctx, onBack, onPlay, onCha
 }) {
   const [editing, setEditing] = useState<number | null>(null);
   const [questions, setQuestions] = useState<QuizQuestion[]>(quiz.questions);
-  const session = loadQuizSession(quiz.id);
-  const answered = session && !session.reviewing ? Object.keys(session.answers).length : 0;
+  const [session, setSession] = useState(() => loadQuizSession(quiz.id));
+  const [startingOver, setStartingOver] = useState(false);
+  // A saved session is either a run part-way through, or a finished one still open for review.
+  const saved = session ? Object.keys(session.answers).length : 0;
+  const answered = session?.reviewing ? 0 : saved;
+  const rereading = !!session?.reviewing && saved > 0;
 
   const save = async (next: QuizQuestion[]) => {
     setQuestions(next);
@@ -593,8 +604,14 @@ export function QuizView({ quiz, summary, notebookId, ctx, onBack, onPlay, onCha
       chat={<ChatButton notebookId={notebookId} where={quiz.title} tag={quiz.title} briefing={quizBriefing(quiz, undefined)} />}
       actions={<>
         {!!missed.length && <button type="button" className="btn" onClick={() => onPlay(missed)}>Retry {missed.length} missed</button>}
+        {!!saved && (
+          <button type="button" className="btn" onClick={() => setStartingOver(true)}
+            title="Throw away the saved answers and take it from question 1">
+            <RotateCcw />Start over
+          </button>
+        )}
         <button type="button" className="btn primary" disabled={!questions.length} onClick={() => onPlay()}>
-          <Play />{answered ? `Carry on (${answered} answered)` : 'Start quiz'}
+          <Play />{answered ? `Carry on (${answered} answered)` : rereading ? 'Review answers' : 'Start quiz'}
         </button>
       </>}
       listAside={<span className="muted small">Click a question to edit it, or go straight to it.</span>}
@@ -602,25 +619,42 @@ export function QuizView({ quiz, summary, notebookId, ctx, onBack, onPlay, onCha
       onRename={async (title) => { await studyApi.renameQuiz(quiz.id, title); onChanged(); }}
       onDelete={async () => { clearQuizSession(quiz.id); await studyApi.deleteQuiz(quiz.id); onChanged(); onBack(); }}
       deleteText={<>Delete <b>{quiz.title}</b> and its {questions.length} questions? Past attempts go too.</>}
-      dialogs={editing !== null && questions[editing] && (
-        <QuestionEditor
-          question={questions[editing]}
-          index={editing}
-          onClose={() => setEditing(null)}
-          onSave={async (next) => {
-            await save(questions.map((q, i) => (i === editing ? next : q)));
-            setEditing(null);
-          }}
-          onDelete={questions.length > 1 ? async () => {
-            await save(questions.filter((_, i) => i !== editing));
-            setEditing(null);
-          } : undefined}
-          onRewrite={async (progress) => {
-            const q = questions[editing];
-            return rewriteQuestion(ctx, q, notebookId, await materialFor(q), progress);
-          }}
-        />
-      )}
+      dialogs={<>
+        {editing !== null && questions[editing] && (
+          <QuestionEditor
+            question={questions[editing]}
+            index={editing}
+            onClose={() => setEditing(null)}
+            onSave={async (next) => {
+              await save(questions.map((q, i) => (i === editing ? next : q)));
+              setEditing(null);
+            }}
+            onDelete={questions.length > 1 ? async () => {
+              await save(questions.filter((_, i) => i !== editing));
+              setEditing(null);
+            } : undefined}
+            onRewrite={async (progress) => {
+              const q = questions[editing];
+              return rewriteQuestion(ctx, q, notebookId, await materialFor(q), progress);
+            }}
+          />
+        )}
+        {startingOver && (
+          <ConfirmDialog
+            title="Start over"
+            confirmLabel="Start over"
+            onClose={() => setStartingOver(false)}
+            onConfirm={async () => {
+              clearQuizSession(quiz.id);
+              setSession(null);
+              onPlay();
+            }}
+          >
+            Throw away the {saved} answer{saved === 1 ? '' : 's'} saved in <b>{quiz.title}</b> and take it again from
+            question 1? Your finished attempts and scores stay as they are.
+          </ConfirmDialog>
+        )}
+      </>}
     >
       {questions.map((q, i) => (
         <SetItem key={i} n={i + 1} index={i} result={session?.answers[i]?.correct} onOpen={() => setEditing(i)}
@@ -818,7 +852,7 @@ function Feedback({ q, answer, reviewing, onAsk, onChange, onNext, last }: {
         <span className="feedback-icon">{correct ? <Check /> : <X />}</span>
         <b>{!answer ? 'Not answered' : correct ? 'Correct' : 'Not quite'}</b>
         {answer && (
-          <span className="muted feedback-said">· you said: <Markdown text={givenText(q, answer.given)} className="tight inline" /></span>
+          <span className="muted feedback-said">· you said: <Markdown text={givenText(q, answer)} className="tight inline" /></span>
         )}
         {!correct && (
           <span className="muted feedback-said">· answer: <Markdown text={answerText(q)} className="tight inline" /></span>

@@ -8,8 +8,8 @@ import { generate, generateQuick } from './salem/generate';
 import { diagramQuestions } from './diagrams';
 import type { Meter } from './meter';
 import { isStop, type Stop } from './cancel.ts';
-import { CARDS_DIRECT_SYSTEM, CARDS_SYSTEM, GRADE_SYSTEM, QUIZ_DIRECT_SYSTEM, QUIZ_SYSTEM } from './prompts';
-import { canCheck, checkAgrees, defaultTolerance, parseNumber, shuffleChoices, usableHint } from './quizRules';
+import { CARDS_DIRECT_SYSTEM, CARDS_SYSTEM, GRADE_SYSTEM, LABELS_GRADE_SYSTEM, QUIZ_DIRECT_SYSTEM, QUIZ_SYSTEM } from './prompts';
+import { canCheck, checkAgrees, defaultTolerance, labelAnswers, labelResults, parseNumber, shuffleChoices, usableHint } from './quizRules';
 import { describeChoice, INSTRUCTIONS_SCHEMA, INSTRUCTIONS_SYSTEM, narrowWalk, outlineForInstructions, plainBrief, toBrief, type Brief } from './instructions';
 import { studyApi, type NewCard, type Difficulty, type QuestionType, type QuizQuestion, type SourceHit } from '../study/api';
 
@@ -509,7 +509,7 @@ export async function generateTitle(question: string, answer: string): Promise<s
 export const cardsFromMistakes = (items: { prompt: string; answer: string; explanation: string; topic: string }[]): NewCard[] =>
   items.map((m) => ({ front: m.prompt, back: `**${m.answer}**${m.explanation ? `\n\n${m.explanation}` : ''}`, topic: m.topic }));
 
-export { checkAgrees, defaultTolerance, fillsTheGap, gradeLocal, parseNumber, picked, shuffleChoices, unpick, usableHint } from './quizRules';
+export { checkAgrees, defaultTolerance, fillsTheGap, gradeLocal, labelAnswers, labelResults, parseNumber, picked, shuffleChoices, unpick, usableHint } from './quizRules';
 
 const QUIZ_TOOL = {
   type: 'function',
@@ -969,4 +969,89 @@ export async function gradeShort(q: QuizQuestion, given: string): Promise<{ corr
     GRADE_TOOL,
   );
   return { correct: args.correct === true, feedback: String(args.feedback ?? '') };
+}
+
+const LABELS_TOOL = {
+  type: 'function',
+  function: {
+    name: 'grade_labels',
+    description: 'Mark each label the strict comparison rejected.',
+    parameters: {
+      type: 'object',
+      properties: {
+        labels: {
+          type: 'array',
+          description: 'One entry per label you were given, in the same order.',
+          items: {
+            type: 'object',
+            properties: {
+              n: { type: 'number', description: 'The label number exactly as it was given to you.' },
+              correct: { type: 'boolean', description: 'True if what the student typed names the same thing as the reference label.' },
+              why: { type: 'string', description: 'When correct, the few words that say why it counts, e.g. "synonym", "abbreviation", "typo". Leave empty when incorrect.' },
+            },
+            required: ['n', 'correct'],
+          },
+        },
+      },
+      required: ['labels'],
+    },
+  },
+};
+
+export type LabelGrade = { results: boolean[]; feedback: string };
+
+const labelSummary = (results: boolean[], accepted: { n: number; why: string }[], failed: boolean): string => {
+  const right = results.filter(Boolean).length;
+  const parts = [`${right} of ${results.length} labels right.`];
+  if (accepted.length) {
+    const which = accepted.map((a) => `box ${a.n}${a.why ? ` (${a.why})` : ''}`).join(', ');
+    parts.push(`What you typed in ${which} was taken as the same answer.`);
+  }
+  if (failed) parts.push('The near misses could not be double-checked by the AI, so they were marked on their wording alone.');
+  return parts.join(' ');
+};
+
+/**
+ * Marks a labelled diagram. Every label is matched locally first; only the ones that
+ * miss - and that the student actually typed something into - go to the AI, which says
+ * whether each is the same answer under another name. The AI can only turn a local miss
+ * into a pass, never the other way round.
+ */
+export async function gradeLabels(q: QuizQuestion, given: string): Promise<LabelGrade> {
+  const results = labelResults(q, given);
+  const labels = q.diagram?.labels ?? [];
+  const typed = labelAnswers(given, results.length);
+  const doubtful = results
+    .map((_ok, i) => i)
+    .filter((i) => !results[i] && typed[i].trim() && labels[i]?.answer.trim());
+  if (!doubtful.length) return { results, feedback: labelSummary(results, [], false) };
+
+  const asked = doubtful.map((i) => {
+    const accept = labels[i].accept?.filter((a) => a.trim()) ?? [];
+    return [
+      `Label ${i + 1}`,
+      `  reference: ${labels[i].answer}`,
+      accept.length ? `  also accepted: ${accept.join(', ')}` : '',
+      `  student typed: ${typed[i].trim()}`,
+    ].filter(Boolean).join('\n');
+  });
+
+  try {
+    const args = await generated(
+      LABELS_GRADE_SYSTEM,
+      `The diagram is labelled for this question, on ${q.topic || 'this topic'}:\n${q.prompt}\n\nMark these labels:\n\n${asked.join('\n\n')}`,
+      LABELS_TOOL,
+    );
+    const passed = new Map<number, string>();
+    for (const entry of Array.isArray(args.labels) ? args.labels : []) {
+      const row = entry as { n?: unknown; correct?: unknown; why?: unknown };
+      const n = Number(row.n) - 1;
+      if (row.correct === true && doubtful.includes(n)) passed.set(n, String(row.why ?? '').trim().slice(0, 40));
+    }
+    const merged = results.map((ok, i) => ok || passed.has(i));
+    const accepted = [...passed.keys()].sort((a, b) => a - b).map((i) => ({ n: i + 1, why: passed.get(i)! }));
+    return { results: merged, feedback: labelSummary(merged, accepted, false) };
+  } catch {
+    return { results, feedback: labelSummary(results, [], true) };
+  }
 }

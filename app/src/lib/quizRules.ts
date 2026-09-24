@@ -109,6 +109,17 @@ export function labelResults(q: QuizQuestion, given: string): boolean[] {
   return labels.map((l, i) => labelMatches(answers[i], l.answer, l.accept));
 }
 
+/**
+ * How the labels of a marked answer stand: the verdicts saved when it was marked - which
+ * include the ones the AI let through as the same answer worded differently - falling back
+ * to a fresh local match for answers saved before that, or never marked at all.
+ */
+export function labelVerdicts(q: QuizQuestion, answer: { given: string; labels?: boolean[] } | undefined): boolean[] {
+  const saved = answer?.labels;
+  const count = q.diagram?.labels.length ?? 0;
+  return saved && saved.length === count ? saved : labelResults(q, answer?.given ?? '');
+}
+
 export function gradeLocal(q: QuizQuestion, given: string): boolean {
   if (q.type === 'label') {
     const results = labelResults(q, given);

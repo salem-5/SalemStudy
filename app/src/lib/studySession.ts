@@ -4,6 +4,8 @@ export type QuizAnswer = {
   ms: number;
   hinted?: boolean;
   feedback?: string;
+  /** Diagram questions only: the per-label verdicts as they were marked, AI passes included. */
+  labels?: boolean[];
 };
 
 export type QuizSession = {
