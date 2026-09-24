@@ -35,12 +35,12 @@ export const APP_TOOL_DEFS = [
   fn('save_note', 'Save a note you wrote yourself (Markdown with LaTeX maths) into a notebook, e.g. a summary of this conversation.', {
     notebook: NOTEBOOK, title: { type: 'string' }, content: { type: 'string', description: 'The note in Markdown.' },
   }, ['notebook', 'title', 'content']),
-  fn('make_flashcards', 'Generate a flashcard deck in a notebook. From its sources (the default) it walks every page in reading order and writes as many cards as the material needs; or from a topic.', {
+  fn('make_flashcards', 'Generate a flashcard deck in a notebook, from its sources (the default) or from a topic. Pass the student\'s own instructions when they gave any.', {
     notebook: NOTEBOOK, topic: { type: 'string', description: 'Leave empty to use the notebook sources.' },
     count: { type: 'number', description: 'Only when the student asked for a particular number; it caps the deck. Leave it out otherwise.' },
     instructions: { type: 'string', description: "The student's own instructions, in their words: which sources or pages to use, what kind of cards, what the backs must contain. They are followed exactly." },
   }, ['notebook']),
-  fn('make_quiz', 'Generate a checked practice quiz in a notebook. From its sources (the default) it walks every page in reading order and writes as many questions as the material needs; or from a topic.', {
+  fn('make_quiz', 'Generate a checked practice quiz in a notebook, from its sources (the default) or from a topic. Answers that can be computed are verified in Python. Pass the student\'s own instructions when they gave any.', {
     notebook: NOTEBOOK, topic: { type: 'string', description: 'Leave empty to use the notebook sources.' },
     count: { type: 'number', description: 'Only when the student asked for a particular number; it caps the quiz. Leave it out otherwise.' },
     instructions: { type: 'string', description: "The student's own instructions, in their words: which sources or pages to use, what kind of questions, what the explanations must contain. They are followed exactly." },

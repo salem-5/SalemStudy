@@ -1,12 +1,10 @@
-## SalemStudy 0.1.0
-
-The first release with automatic updates.
+## SalemStudy 0.1.1
 
 ### New
-- **Automatic updates.** SalemStudy now checks for new versions, downloads them in the background and installs them. After an update, this window shows what changed.
-- **Updates in Settings.** See the version you are on, check for updates, turn automatic updates off, and read what's new.
-- **Instructions for decks and quizzes.** Tell it which sources and pages to use and what kind of questions you want, like "only the true/false questions on the last page of each past paper, with the full proofs". It reads only those pages and follows the instructions.
+- **Page by page: Auto, On or Off.** Decks and quizzes can go through your material in one pass, or page by page in several passes. On Auto, the AI picks from the subject: page by page for memorisation-heavy subjects like biology, medicine and pharmacy, one pass for STEM and business. The choice is shown while it works, and remembered for each notebook.
 
 ### Improved
-- Each quiz question gets the type that fits how you would answer it. A true/false that needs a proof is a written answer, and it is marked on the proof as well as the verdict.
-- Uploading sources works in tab mode, and a file that fails to upload says why.
+- **One pass is back as the default.** With page by page off, decks and quizzes work the way they did before: one pass over all of your material, written for STEM, with each question checked in Python as you watch.
+- **Instructions come first.** What you write in the instructions box now overrides every default, whichever way the deck or quiz is written.
+- **Proofs are checked.** A true/false that has to be proved gets a Python check that tests the claim, and the question is only kept when the check agrees with its verdict.
+- **Question types you pick are kept to.** A question of a type you didn't tick is thrown out and replaced, and so is an incomplete one.

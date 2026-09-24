@@ -3,7 +3,7 @@ import { Select } from '../components/Select';
 import { ArrowLeft, Check, Zap, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, FileText, MessageCircleQuestion, Play, Plus, RotateCcw, Shuffle, Sparkles, Trash, X } from 'lucide-react';
 import { Modal } from '../components/Dialogs';
 import { Markdown } from '../lib/markdown';
-import { type CardOptions, type CardSize, type GenSource, type QuizOptions } from '../lib/studyGen';
+import { DIRECT_CARD_COUNT, type CardOptions, type CardSize, type GenSource, type QuizOptions } from '../lib/studyGen';
 import { AskableArea, AskAboutCard, ChatButton, deckBriefing } from './StudyChat';
 import { clearDeckSession, deckSessionFits, loadDeckSession, pruneDeckSession, saveDeckSession } from '../lib/studySession';
 import {studyApi, type Card, type CardResult, type ChatThread, type Deck, type Source, type Difficulty, type QuestionType, type Note } from './api';
@@ -126,7 +126,10 @@ type GenPrefs = {
   types?: QuestionType[];
   notesOff?: number[];
   fast?: boolean;
+  walkMode?: WalkMode;
 };
+
+type WalkMode = 'auto' | 'on' | 'off';
 
 const QUIZ_TYPES: { type: QuestionType; label: string }[] = [
   { type: 'mcq', label: 'Multiple choice' },
@@ -161,7 +164,11 @@ export function savePrefs(key: string, value: unknown) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch { }
 }
 
-const sizeNote = (size: CardSize, one: 'card' | 'question') => {
+const sizeNote = (size: CardSize, one: 'card' | 'question', walk: boolean) => {
+  if (!walk) {
+    const n = one === 'card' ? `About ${DIRECT_CARD_COUNT[size]} cards` : `Exactly ${QUIZ_COUNT[size]} questions`;
+    return `${n} from your material, unless your instructions ask for a number.`;
+  }
   const [lo, hi] = CARD_BANDS[size];
   const range = one === 'card' ? `${size === 'fewer' ? `up to ${hi}` : `${lo}–${hi}`} cards, by how long your material is` : `exactly ${QUIZ_COUNT[size]} questions`;
   return size === 'fewer'
@@ -204,6 +211,8 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
   const [difficulty, setDifficulty] = useState<Difficulty | 'mixed'>(prefs.difficulty ?? 'mixed');
   const [types, setTypes] = useState<QuestionType[]>(prefs.types?.length ? prefs.types : QUIZ_TYPES.map((t) => t.type));
   const [fast, setFast] = useState(prefs.fast ?? true);
+  const [walkMode, setWalkMode] = useState<WalkMode>(prefs.walkMode ?? 'auto');
+  const walk = walkMode === 'on' && mode === 'sources';
   const [size, setSize] = useState<CardSize>(prefs.size ?? 'standard');
   const [notes, setNotes] = useState<Note[]>([]);
   const [pickedNotes, setPickedNotes] = useState<Set<number>>(new Set());
@@ -212,10 +221,10 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
     if (initialThread) return;
     savePrefs(key, {
       mode, off: ready.filter((s) => !picked.has(s.id)).map((s) => s.id),
-      focus: mode === 'sources' ? prompt : prefs.focus, instructions, difficulty, types, size, order, fast,
+      focus: mode === 'sources' ? prompt : prefs.focus, instructions, difficulty, types, size, order, fast, walkMode,
       notesOff: notes.filter((n) => !pickedNotes.has(n.id)).map((n) => n.id),
     });
-  }, [key, mode, picked, prompt, instructions, difficulty, types, size, order, fast, notes, pickedNotes]);
+  }, [key, mode, picked, prompt, instructions, difficulty, types, size, order, fast, walkMode, notes, pickedNotes]);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -260,7 +269,7 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
         if (!thread) throw new Error('Pick a chat.');
         src = { kind: 'chat', messages: await studyApi.chatMessages(thread) };
       }
-      await run(src, setStatus, instructions, { difficulty, types, size, fast });
+      await run(src, setStatus, instructions, { difficulty, types, size, fast, walk: mode !== 'sources' ? false : walkMode === 'auto' ? 'auto' : walkMode === 'on' });
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -379,11 +388,31 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
               <span className="seg-glider" style={{ transform: `translateX(${['fewer', 'standard', 'more'].indexOf(size) * 100}%)` }} />
             </div>
             <span className="muted small">
-              {sizeNote(size, kind === 'cards' ? 'card' : 'question')}
+              {sizeNote(size, kind === 'cards' ? 'card' : 'question', walk)}
             </span>
           </div>
         )}
-        {kind !== 'notes' && (
+        {kind !== 'notes' && mode === 'sources' && (
+          <div className="field">
+            <span className="field-label">Page by page</span>
+            <div className="seg" style={{ '--n': 3 } as React.CSSProperties}>
+              {(['auto', 'on', 'off'] as WalkMode[]).map((v) => (
+                <button type="button" key={v} className={`seg-item${walkMode === v ? ' on' : ''}`} onClick={() => setWalkMode(v)} disabled={busy}>
+                  {v === 'auto' ? 'Auto' : v === 'on' ? 'On' : 'Off'}
+                </button>
+              ))}
+              <span className="seg-glider" style={{ transform: `translateX(${['auto', 'on', 'off'].indexOf(walkMode) * 100}%)` }} />
+            </div>
+            <span className="muted small">
+              {walkMode === 'auto'
+                ? 'The AI decides from the subject: on for memorisation-heavy subjects like biology, medicine and pharmacy, off for STEM and business.'
+                : walkMode === 'on'
+                  ? 'Reads your instructions first, then goes through the pages in several passes. Covers long material evenly; slower and more tokens.'
+                  : 'One pass over your material, the way it used to work. Best for STEM problem sets.'}
+            </span>
+          </div>
+        )}
+        {kind !== 'notes' && mode === 'sources' && walkMode !== 'off' && (
           <label className="toggle gen-fast">
             <input type="checkbox" checked={fast} disabled={busy} onChange={(e) => setFast(e.target.checked)} />
             <Zap />

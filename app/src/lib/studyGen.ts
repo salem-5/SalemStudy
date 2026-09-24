@@ -1,14 +1,14 @@
 import { pythonStatus, runPython } from './python';
-import { cardGuidance, courseFlavour, guidance } from './subjects';
+import { cardGuidance, courseFlavour, guidance, pageByPageFor, WALK_SCHEMA, WALK_SYSTEM } from './subjects';
 import {
-  balancedTrim, budgetFor, CEILING, QUIZ_COUNT, expectedItems, FAST_WINDOW_CHARS, fastMaterialFor, WINDOW_CHARS, coreOnly, isShrunk, MAX_ITEMS, pageId, uncovered, materialFor, pagesLabel, planWalk, sizeRule,
+  balancedTrim, budgetFor, fitHits, CEILING, QUIZ_COUNT, expectedItems, FAST_WINDOW_CHARS, fastMaterialFor, WINDOW_CHARS, coreOnly, isShrunk, MAX_ITEMS, pageId, uncovered, materialFor, pagesLabel, planWalk, sizeRule,
   type CardOptions, type CardSize, type GenSource, type Page, type WalkSource, type Window,
 } from './deckPlan';
 import { generate, generateQuick } from './salem/generate';
 import type { Meter } from './meter';
 import { isStop, type Stop } from './cancel.ts';
-import { CARDS_SYSTEM, GRADE_SYSTEM, QUIZ_SYSTEM } from './prompts';
-import { checkAgrees, defaultTolerance, parseNumber, shuffleChoices, usableHint } from './quizRules';
+import { CARDS_DIRECT_SYSTEM, CARDS_SYSTEM, GRADE_SYSTEM, QUIZ_DIRECT_SYSTEM, QUIZ_SYSTEM } from './prompts';
+import { canCheck, checkAgrees, defaultTolerance, parseNumber, shuffleChoices, usableHint } from './quizRules';
 import { describeChoice, INSTRUCTIONS_SCHEMA, INSTRUCTIONS_SYSTEM, narrowWalk, outlineForInstructions, plainBrief, toBrief, type Brief } from './instructions';
 import { studyApi, type NewCard, type Difficulty, type QuestionType, type QuizQuestion, type SourceHit } from '../study/api';
 
@@ -21,8 +21,11 @@ export type QuizOptions = {
   limit?: number;
 } & RunOptions;
 
+export type WalkChoice = boolean | 'auto';
+
 export type RunOptions = {
   fast?: boolean;
+  walk?: WalkChoice;
   meter?: Meter;
   stop?: Stop;
 };
@@ -191,6 +194,72 @@ const unlessStopped = (e: unknown): null => {
 
 const PARALLEL_PASSES = 3;
 
+export const DIRECT_CARD_COUNT: Record<CardSize, number> = { fewer: 15, standard: 30, more: 50 };
+
+const WALK_CACHE = 'wa.walk.auto.';
+
+const walkKey = (ctx: StudyContext) => `${WALK_CACHE}${ctx.subject.trim().toLowerCase()}|${ctx.notebook.trim().toLowerCase()}`;
+
+async function resolveWalk(
+  ctx: StudyContext,
+  src: GenSource,
+  choice: WalkChoice | undefined,
+  what: 'cards' | 'questions',
+  progress: (text: string) => void,
+  meter?: Meter,
+  stop?: Stop,
+): Promise<boolean> {
+  if (src.kind !== 'sources' || !src.hits.length) return false;
+  if (choice === true || choice === false) return choice;
+  try {
+    const kept = JSON.parse(localStorage.getItem(walkKey(ctx)) || 'null') as { walk?: unknown } | null;
+    if (typeof kept?.walk === 'boolean') return kept.walk;
+  } catch { }
+  progress('Choosing how to go through this subject…');
+  const titles = [...new Set(src.hits.map((h) => h.sourceTitle))].slice(0, 30);
+  const raw = await generateQuick<{ page_by_page?: unknown; reason?: unknown }>({
+    feature: what === 'cards' ? 'flashcards' : 'quiz',
+    system: WALK_SYSTEM,
+    instruction: `Course: ${ctx.subject}\nNotebook: ${ctx.notebook}${ctx.courseContext.trim() ? `\nCourse notes: ${ctx.courseContext.trim().slice(0, 1500)}` : ''}\nSources:\n${titles.map((t) => `- ${t}`).join('\n')}`,
+    schema: WALK_SCHEMA,
+    meter,
+    stop,
+  }).catch(unlessStopped);
+  const walk = typeof raw?.page_by_page === 'boolean' ? raw.page_by_page : pageByPageFor(courseFlavour(ctx));
+  const reason = String(raw?.reason ?? '').trim();
+  if (raw) {
+    try { localStorage.setItem(walkKey(ctx), JSON.stringify({ walk, reason })); } catch { }
+  }
+  progress(`Page by page ${walk ? 'on' : 'off'} for ${ctx.subject}${reason ? `: ${reason}` : ''}`);
+  return walk;
+}
+
+const instructionsOf = (src: GenSource) => (src.kind === 'sources' ? src.focus.trim() : '');
+
+const directSource = (src: GenSource): GenSource => (src.kind === 'sources' ? { ...src, hits: fitHits(src.hits) } : src);
+
+function withInstructions(system: string, text: string, what: 'cards' | 'questions'): string {
+  if (!text.trim()) return system;
+  const one = what === 'cards' ? 'card' : 'question';
+  return `# The student's instructions come first
+The student gave these instructions for this ${what === 'cards' ? 'deck' : 'quiz'}. Follow them exactly: which parts of the material to use, how many ${what}, what kind, and what each ${one} and its answer must contain. They override every default below; where a default disagrees with them, the instructions win.
+"""
+${text.trim()}
+"""
+
+${system}`;
+}
+
+const reminderOf = (text: string, what: 'cards' | 'questions') => (text
+  ? `\n\nBefore you answer, check every ${what === 'cards' ? 'card' : 'question'} against the student's instructions: anything they did not ask for goes, and anything they asked for is there.`
+  : '');
+
+function allowedTypes(options: QuizOptions, brief: Brief | null): QuestionType[] | null {
+  if (brief?.types?.length) return brief.types;
+  if (options.types?.length && options.types.length < TYPES.length) return options.types;
+  return null;
+}
+
 function walkPlan(walk: WalkSource[], fast: boolean) {
   const windows = planWalk(walk, fast ? FAST_WINDOW_CHARS : WINDOW_CHARS);
   return {
@@ -265,8 +334,8 @@ function passPrompt(
     brief ? '' : 'No single page needs more than about eight. If one seems to - a diagram with many labels, a long table - you are splitting one idea into many: ask for the list as a list, or keep to the labels that are worth learning.',
     fast && what === 'questions'
       ? brief
-        ? "Keep every hint to one short line. Explanations are as long as the student's instructions need - a complete proof or worked solution when they ask for one; otherwise one or two sentences. Write check_code only where there is something to compute."
-        : 'Keep every explanation to one or two sentences and every hint to one short line. Write check_code only where there is something to compute.'
+        ? "Keep every hint to one short line. Explanations are as long as the student's instructions need - a complete proof or worked solution when they ask for one; otherwise one or two sentences. Write check_code for every question whose answer can be computed or tested, including true/false and prove-or-disprove claims."
+        : 'Keep every explanation to one or two sentences and every hint to one short line. Write check_code for every question whose answer can be computed or tested, including true/false and prove-or-disprove claims.'
       : '',
     extra,
     brief ? instructionsBlock(brief, what) : '',
@@ -350,9 +419,11 @@ export async function generateCards(
     into.push({ item: { front, back, topic: String(raw.topic ?? '').trim(), ...(ref ? { sourceRefs: ref } : {}) }, core: isCoreTag(raw) });
   };
 
-  const { walk, brief } = await prepareWalk('cards', src, progress, options.meter, options.stop);
+  const walking = await resolveWalk(ctx, src, options.walk ?? 'auto', 'cards', progress, options.meter, options.stop);
+  const { walk, brief } = walking ? await prepareWalk('cards', src, progress, options.meter, options.stop) : { walk: [] as WalkSource[], brief: null };
   const limit = options.limit ?? brief?.count;
   const collect = !!brief?.everyItem && !limit;
+  const cardsSystem = withInstructions(CARDS_SYSTEM, brief?.text ?? '', 'cards');
   if (walk.length) {
     const plan = walkPlan(walk, options.fast ?? true);
     const { windows } = plan;
@@ -366,7 +437,7 @@ export async function generateCards(
         windows, limit, plan.fast,
       );
       let why = '';
-      const args = await gen(CARDS_SYSTEM, prompt(window), CARDS_TOOL).catch((e) => { unlessStopped(e); why = errorText(e); return null; });
+      const args = await gen(cardsSystem, prompt(window), CARDS_TOOL).catch((e) => { unlessStopped(e); why = errorText(e); return null; });
       if (!args) {
         done += 1;
         progress(`${window.sourceTitle}, ${pagesLabel(window)}: could not be written - ${why} (${done} of ${windows.length} passes)`);
@@ -377,7 +448,7 @@ export async function generateCards(
       const gap = chaseGaps(brief) ? uncovered(window, new Set(group.map((t) => pageKey(t.item)))) : null;
       if (gap) {
         progress(`${window.sourceTitle}, ${pagesLabel(gap)}: not covered yet, writing them now…`);
-        const more = await gen(CARDS_SYSTEM, prompt(gap, MISSED_NOTE), CARDS_TOOL).catch(unlessStopped);
+        const more = await gen(cardsSystem, prompt(gap, MISSED_NOTE), CARDS_TOOL).catch(unlessStopped);
         for (const r of (more?.cards as RawQuestion[] | undefined) ?? []) keep(group, r, pageRef(r, gap));
       }
       done += 1;
@@ -390,10 +461,16 @@ export async function generateCards(
       groups.push(group);
     }
   } else {
-    progress('Writing the cards…');
+    const text = instructionsOf(src);
+    const count = options.limit ?? DIRECT_CARD_COUNT[size];
+    max = text && !options.limit ? MAX_ITEMS : Math.min(MAX_ITEMS, count);
+    progress(text ? 'Writing the cards…' : `Writing ${count} cards…`);
+    const fronts = options.existingFronts ?? [];
+    const avoid = fronts.length ? `\n\nThe notebook already has cards with these fronts; do not repeat them:\n${fronts.slice(-150).map((f) => `- ${f}`).join('\n')}` : '';
+    const ask = `Write ${count} flashcards${text && !options.limit ? " - or, where the student's instructions call for a particular number or for every item of some kind, exactly what they call for" : ''}.`;
     const args = await gen(
-      CARDS_SYSTEM,
-      `${contextBlock(ctx)}\n\n${describeSource(src)}\n\n${sizeRule(size, 'cards')}\n\nKeep them in the order the material goes. Write as many as it needs, at most ${max}.\n\n${cardStyle(ctx, options)}`,
+      withInstructions(CARDS_DIRECT_SYSTEM, text, 'cards'),
+      `${contextBlock(ctx)}\n\n${describeSource(directSource(src))}\n\n${ask}${avoid}\n\n${cardStyle(ctx, options)}${reminderOf(text, 'cards')}`,
       CARDS_TOOL,
     );
     title = String(args.title ?? '').trim();
@@ -403,7 +480,7 @@ export async function generateCards(
   }
 
   if (!groups.some((g) => g.length)) throw new Error(skipped.length ? 'None of the passes over the material could be written. Try again.' : 'No new cards came back. Try a different prompt.');
-  const all = size === 'fewer' && !collect ? coreOnly(groups.flat(), (t) => pageKey(t.item), (t) => t.core) : groups.flat();
+  const all = walking && size === 'fewer' && !collect ? coreOnly(groups.flat(), (t) => pageKey(t.item), (t) => t.core) : groups.flat();
   const kept = balancedTrim(all, (t) => pageKey(t.item), max, (t) => t.core).map((t) => t.item);
   if (walk.length) {
     options.stop?.throwIfStopped();
@@ -458,7 +535,7 @@ const QUIZ_TOOL = {
               importance: { type: 'string', enum: ['core', 'detail'], description: 'core: needed to pass the exam on this material. detail: worth knowing, but supporting.' },
               check_code: {
                 type: 'string',
-                description: 'Python that derives the correct answer independently and prints it as the LAST line: mcq → the 0-based index, multi → the indexes separated by commas, tf → True/False, numeric → the number in the stated unit, blank → the word or phrase. sympy (sp), numpy (np), scipy, pint (ureg, Q_) are available. Omit only for purely conceptual questions.',
+                description: 'Python that derives the correct answer independently and prints it as the LAST line: mcq → the 0-based index, multi → the indexes separated by commas, tf → True/False, numeric → the number in the stated unit, blank → the word or phrase, short → only for a prove-or-disprove statement: True if the statement holds, False if not (test it: search for a counterexample, or verify it symbolically). sympy (sp), numpy (np), scipy, pint (ureg, Q_) are available. Omit only for purely conceptual questions.',
               },
               figure_code: { type: 'string', description: 'Optional matplotlib code drawing a figure the question needs (graph, diagram). Leave the figure open; it is captured.' },
               from_source: { type: 'string', description: 'When the question came from a given excerpt or note, the exact source title it was taken from, so the student can trace it back. Leave it out for a question written from general knowledge.' },
@@ -567,7 +644,7 @@ async function verify(
   why: (reason: string) => void = () => {},
 ): Promise<QuizQuestion | null> {
   const { check, figureCode, ...question } = q;
-  if (python && check) {
+  if (python && check && canCheck(question)) {
     progress('Checking question %n in Python…');
     const res = await runPython(check, 30).catch(unlessStopped);
     if (!res) { why('the check could not be run at all'); return null; }
@@ -610,8 +687,8 @@ export async function rewriteQuestion(
   for (let attempt = 0; attempt < 3; attempt++) {
     progress(attempt === 0 ? 'Rewriting the question…' : 'That rewrite failed its check - trying again…');
     const args = await generated(
-      QUIZ_SYSTEM,
-      `${contextBlock(ctx)}\n\n${describeSource(src)}\n\nWrite exactly 1 question to replace this one:\n\n` +
+      QUIZ_DIRECT_SYSTEM,
+      `${contextBlock(ctx)}\n\n${describeSource(directSource(src))}\n\nWrite exactly 1 question to replace this one:\n\n` +
       `<replacing type="${previous.type}" topic="${previous.topic}">\n${previous.prompt}\n</replacing>\n\n` +
       'Cover the same idea, but do not write the same question again - ask it a different way, or from a different angle.\n' +
       `${describeOptions({ difficulty: previous.difficulty ?? options.difficulty, types: options.types?.length ? options.types : [previous.type] })}`,
@@ -645,6 +722,9 @@ export async function generateQuiz(
   let title = '';
   let dropped = 0;
 
+  let allowed = allowedTypes(options, null);
+  let checks = 0;
+
   const settle = async (raw: RawQuestion[], ref: (r: RawQuestion) => QuizQuestion['sources'] | null, cap: number) => {
     const kept: Tagged<QuizQuestion>[] = [];
     const failed: string[] = [];
@@ -654,11 +734,21 @@ export async function generateQuiz(
       const from = ref(r);
       if (from === null) continue;
       const q = normalise(r);
-      if (!q) { dropped++; continue; }
+      if (!q) {
+        dropped++;
+        failed.push(`- ${String(r.prompt ?? '').slice(0, 200)}\n  (it was incomplete: its answer, choices or gap were missing or did not fit its type)`);
+        continue;
+      }
       const key = sameCard(q.prompt);
       if (seen.has(key)) continue;
+      if (allowed && !allowed.includes(q.type)) {
+        dropped++;
+        failed.push(`- ${q.prompt.slice(0, 200)}\n  (it is ${TYPE_LABEL[q.type]}, but only ${allowed.map((t) => TYPE_LABEL[t]).join(', ')} were asked for)`);
+        continue;
+      }
       let reason = 'it did not pass its check';
-      const checked = await verify(q, python, notebookId, () => {}, (why) => { reason = why; });
+      const n = ++checks;
+      const checked = await verify(q, python, notebookId, (t) => progress(t.replace('%n', String(n))), (why) => { reason = why; });
       if (!checked) {
         dropped++;
         failed.push(`- ${q.prompt.slice(0, 200)}\n  (${reason})`);
@@ -672,13 +762,16 @@ export async function generateQuiz(
   };
 
   const retryNote = (failed: string[]) => failed.length
-    ? '\n\nSome questions you wrote for these pages were thrown away because running their own check_code did not reproduce the answer key. Write replacements for them - different questions on the same material - and make sure each check_code really computes the answer you mark as correct:\n' + failed.join('\n')
+    ? '\n\nSome questions you wrote were thrown away, for the reason given after each. Write replacements - different questions on the same material - that fix those reasons; where the reason is the check, make sure each check_code really works out the answer you mark as correct:\n' + failed.join('\n')
     : '';
 
-  const { walk, brief } = await prepareWalk('questions', src, progress, options.meter, options.stop);
+  const walking = await resolveWalk(ctx, src, options.walk ?? 'auto', 'questions', progress, options.meter, options.stop);
+  const { walk, brief } = walking ? await prepareWalk('questions', src, progress, options.meter, options.stop) : { walk: [] as WalkSource[], brief: null };
+  allowed = allowedTypes(options, brief);
   const limit = options.limit ?? brief?.count;
   const collect = !!brief?.everyItem && !limit;
   if (limit) max = Math.min(MAX_ITEMS, limit);
+  const quizSystem = withInstructions(QUIZ_SYSTEM, brief?.text ?? '', 'questions');
   const groups: Tagged<QuizQuestion>[][] = [];
 
   if (walk.length) {
@@ -695,7 +788,7 @@ export async function generateQuiz(
       );
       const ref = (r: RawQuestion) => pageRef(r, window);
       let why = '';
-      const args = await gen(QUIZ_SYSTEM, base, QUIZ_TOOL).catch((e) => { unlessStopped(e); why = errorText(e); return null; });
+      const args = await gen(quizSystem, base, QUIZ_TOOL).catch((e) => { unlessStopped(e); why = errorText(e); return null; });
       if (!args) {
         done += 1;
         progress(`${window.sourceTitle}, ${pagesLabel(window)}: could not be written - ${why} (${done} of ${windows.length} passes)`);
@@ -705,7 +798,7 @@ export async function generateQuiz(
       const first = await settle((args.questions as RawQuestion[] | undefined) ?? [], ref, room);
       let kept = first.kept;
       if (first.failed.length && kept.length < room) {
-        const again = await gen(QUIZ_SYSTEM, base + retryNote(first.failed), QUIZ_TOOL).catch(unlessStopped);
+        const again = await gen(quizSystem, base + retryNote(first.failed), QUIZ_TOOL).catch(unlessStopped);
         if (again) {
           const second = await settle((again.questions as RawQuestion[] | undefined) ?? [], ref, room - kept.length);
           kept = [...kept, ...second.kept];
@@ -719,7 +812,7 @@ export async function generateQuiz(
           size, describeOptions(options, brief) + MISSED_NOTE, brief,
           windows, limit, plan.fast,
         );
-        const more = await gen(QUIZ_SYSTEM, prompt, QUIZ_TOOL).catch(unlessStopped);
+        const more = await gen(quizSystem, prompt, QUIZ_TOOL).catch(unlessStopped);
         if (more) {
           const room = collect ? MAX_ITEMS : expectedItems(gap, windows, size, limit, plan.fast, 'questions') * 2 + 2;
           kept = [...kept, ...(await settle((more.questions as RawQuestion[] | undefined) ?? [], (r) => pageRef(r, gap), room)).kept];
@@ -735,25 +828,39 @@ export async function generateQuiz(
       groups.push(kept);
     }
   } else {
-    progress('Writing the questions…');
-    const prompt = `${contextBlock(ctx)}\n\n${describeSource(src)}\n\n${sizeRule(size, 'questions')}\n\nKeep them in the order the material goes. Write exactly ${max} questions.\n${describeOptions(options)}`;
-    const args = await gen(QUIZ_SYSTEM, prompt, QUIZ_TOOL);
-    title = String(args.title ?? '').trim();
+    const text = instructionsOf(src);
+    const count = max;
+    if (text && !options.limit) max = MAX_ITEMS;
+    const system = withInstructions(QUIZ_DIRECT_SYSTEM, text, 'questions');
+    const base = `${contextBlock(ctx)}\n\n${describeSource(directSource(src))}\n\n${describeOptions(options)}`;
     const ref = (r: RawQuestion) => provenance(r, src);
-    const first = await settle((args.questions as RawQuestion[] | undefined) ?? [], ref, max);
-    const group = [...first.kept];
-    if (first.failed.length && group.length < max) {
-      progress(`Replacing ${first.failed.length} question${first.failed.length === 1 ? '' : 's'} that failed their check…`);
-      const again = await gen(QUIZ_SYSTEM, prompt + retryNote(first.failed), QUIZ_TOOL).catch(unlessStopped);
-      if (again) group.push(...(await settle((again.questions as RawQuestion[] | undefined) ?? [], ref, max - group.length)).kept);
+    const group: Tagged<QuizQuestion>[] = [];
+    let failed: string[] = [];
+    let need = count;
+    for (let round = 0; round < 3 && need > 0; round++) {
+      options.stop?.throwIfStopped();
+      progress(round === 0
+        ? (text ? 'Writing the questions…' : `Writing ${need} questions…`)
+        : `Replacing ${need} question${need === 1 ? '' : 's'} that failed their check…`);
+      const ask = round === 0
+        ? `Write ${need} questions${text && !options.limit ? " - or, where the student's instructions call for a particular number or for every item of some kind, exactly what they call for" : ''}.`
+        : `Write ${need} question${need === 1 ? '' : 's'}.${retryNote(failed)}\n\nThese are already in the quiz; do not repeat them:\n${group.map((t) => `- ${t.item.prompt.slice(0, 160)}`).join('\n')}`;
+      const args = await gen(system, `${base}\n\n${ask}${reminderOf(text, 'questions')}`, QUIZ_TOOL)
+        .catch((e) => { if (round === 0) throw e; return unlessStopped(e); });
+      if (!args) break;
+      title ||= String(args.title ?? '').trim();
+      const settled = await settle((args.questions as RawQuestion[] | undefined) ?? [], ref, round === 0 ? max : need);
+      group.push(...settled.kept);
+      failed = settled.failed;
+      need = text && !options.limit ? Math.min(failed.length, max - group.length) : Math.min(count - group.length, max - group.length);
     }
     groups.push(group);
   }
 
   if (!groups.some((g) => g.length)) throw new Error('No question passed its check. Try again or narrow the topic.');
-  let all = size === 'fewer' && !collect ? coreOnly(groups.flat(), (t) => pageKey(t.item), (t) => t.core) : groups.flat();
+  let all = walking && size === 'fewer' && !collect ? coreOnly(groups.flat(), (t) => pageKey(t.item), (t) => t.core) : groups.flat();
 
-  for (let attempt = 0; attempt < 2 && !collect && all.length < max; attempt++) {
+  for (let attempt = 0; attempt < 2 && walking && !collect && all.length < max; attempt++) {
     options.stop?.throwIfStopped();
     const need = max - all.length;
     progress(`Writing ${need} more question${need === 1 ? '' : 's'} to make ${max}…`);
@@ -766,7 +873,7 @@ export async function generateQuiz(
       const count = (w: Window) => all.filter((t) => w.pages.some((p) => pageKey(t.item) === pageId(p))).length;
       const target = [...plan.windows].sort((a, b) => count(a) / a.chars - count(b) / b.chars)[0];
       const base = passPrompt(ctx, plan.material(target), target, 'questions', size, describeOptions(options, brief), brief, plan.windows, limit, plan.fast);
-      args = await gen(QUIZ_SYSTEM, base + ask, QUIZ_TOOL).catch(unlessStopped);
+      args = await gen(quizSystem, base + ask, QUIZ_TOOL).catch(unlessStopped);
       ref = (r) => pageRef(r, target);
     } else {
       args = await gen(QUIZ_SYSTEM, `${contextBlock(ctx)}\n\n${describeSource(src)}\n${describeOptions(options, brief)}${ask}`, QUIZ_TOOL).catch(unlessStopped);

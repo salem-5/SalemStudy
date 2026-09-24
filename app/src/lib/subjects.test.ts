@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { computational, courseFlavour, flavourOf, guidance } from './subjects.ts';
+import { computational, courseFlavour, flavourOf, guidance, pageByPageFor } from './subjects.ts';
 
 describe('classifying a course', () => {
   it('recognises the sciences', () => {
@@ -75,5 +75,16 @@ describe('what the classification changes', () => {
     for (const f of ['stem', 'life', 'business', 'general'] as const) {
       assert.ok(guidance(f).length > 200, `${f} needs real guidance`);
     }
+  });
+});
+
+describe('page by page, when the AI cannot be asked', () => {
+  it('is on for memorisation-heavy life sciences and off for the rest', () => {
+    assert.equal(pageByPageFor(flavourOf('Pharmacology 201')), true);
+    assert.equal(pageByPageFor(flavourOf('Human Anatomy')), true);
+    assert.equal(pageByPageFor(flavourOf('Clinical Pharmacy')), true);
+    assert.equal(pageByPageFor(flavourOf('Calculus III')), false);
+    assert.equal(pageByPageFor(flavourOf('Managerial Accounting')), false);
+    assert.equal(pageByPageFor(flavourOf('Intro to Philosophy')), false);
   });
 });

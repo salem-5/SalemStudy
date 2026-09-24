@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { checkAgrees, fillsTheGap, gradeLocal, parseNumber, picked, shuffleChoices, unpick, usableHint } from './quizRules.ts';
+import { canCheck, checkAgrees, fillsTheGap, gradeLocal, parseNumber, picked, shuffleChoices, unpick, usableHint, verdictOf } from './quizRules.ts';
 
 const mcq = { type: 'mcq', prompt: 'p', choices: ['3x^2', 'x^2', '3x'], answer: 0, explanation: '', topic: 't' } as const;
 const multi = { type: 'multi', prompt: 'p', choices: ['A', 'B', 'C', 'D'], answers: [0, 2], answer: '0,2', explanation: '', topic: 't' } as const;
@@ -157,5 +157,26 @@ describe('shuffling the choices', () => {
     const seen = new Set<number>();
     for (let i = 0; i < 200; i++) seen.add(Number(shuffleChoices(q).answer));
     assert.ok(seen.size > 1, 'the right answer must not always land in the same place');
+  });
+});
+
+describe('checking a prove-or-disprove answer', () => {
+  const claim = (answer: string) => ({ type: 'short', prompt: 'True or false? Every bounded sequence converges. Prove it or give a counterexample.', answer, explanation: '', topic: 't' } as const);
+
+  it('reads the verdict at the start of the model answer', () => {
+    assert.equal(verdictOf('False. Take $a_n = (-1)^n$.'), 'false');
+    assert.equal(verdictOf('**True.** By the monotone convergence theorem…'), 'true');
+    assert.equal(verdictOf('The limit is 2 because…'), null);
+  });
+
+  it('agrees only when the check prints the same verdict', () => {
+    assert.equal(checkAgrees(claim('False. Take $a_n = (-1)^n$.'), 'searching\nFalse'), true);
+    assert.equal(checkAgrees(claim('False. Take $a_n = (-1)^n$.'), 'True'), false);
+  });
+
+  it('does not count a written answer with no verdict as checked', () => {
+    assert.equal(canCheck(claim('Because the terms oscillate.')), false);
+    assert.equal(canCheck(claim('False. Take $a_n = (-1)^n$.')), true);
+    assert.equal(checkAgrees(claim('Because the terms oscillate.'), 'True'), false);
   });
 });

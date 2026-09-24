@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  applyOrder, balancedTrim, budgets, CEILING, expectedItems, FULL_CONTEXT_CHARS, isShrunk, coreOnly, materialFor, pageId, uncovered, FAST_WINDOW_CHARS, fastMaterialFor, MAX_ITEMS, ordinalOf, pagesLabel, planWalk,
+  applyOrder, balancedTrim, budgets, CEILING, fitHits, expectedItems, FULL_CONTEXT_CHARS, isShrunk, coreOnly, materialFor, pageId, uncovered, FAST_WINDOW_CHARS, fastMaterialFor, MAX_ITEMS, ordinalOf, pagesLabel, planWalk,
   readingOrder, sizeRule, WINDOW_CHARS, type Page, type WalkSource,
 } from './deckPlan.ts';
 
@@ -332,5 +332,23 @@ describe('fast mode', () => {
     assert.ok(fast.length < full.length * 0.8, `${fast.length} vs ${full.length}`);
     assert.match(fast, /--- Page 1 ---/);
     assert.doesNotMatch(fast, /--- Page 20 ---/);
+  });
+});
+
+describe('fitting the material into one call', () => {
+  const hit = (i: number, chars: number) => ({ sourceId: 1, sourceTitle: 'S', kind: 'pdf' as const, unitFrom: i, unitTo: i, label: `Page ${i + 1}`, text: 'x'.repeat(chars), score: 0 });
+
+  it('keeps all of it when it fits', () => {
+    const hits = Array.from({ length: 10 }, (_, i) => hit(i, 1000));
+    assert.equal(fitHits(hits, 50_000).length, 10);
+  });
+
+  it('keeps an even spread, in order and under the cap, when it does not', () => {
+    const hits = Array.from({ length: 100 }, (_, i) => hit(i, 1000));
+    const kept = fitHits(hits, 25_000);
+    assert.ok(kept.reduce((n, h) => n + h.text.length, 0) <= 25_000);
+    assert.ok(kept.length >= 20);
+    assert.ok(kept[kept.length - 1].unitFrom >= 90, 'the last pages are still represented');
+    assert.deepEqual(kept.map((h) => h.unitFrom), [...kept.map((h) => h.unitFrom)].sort((a, b) => a - b));
   });
 });

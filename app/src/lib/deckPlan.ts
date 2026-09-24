@@ -289,3 +289,23 @@ export function balancedTrim<T>(items: T[], pageOf: (item: T) => string, max: nu
   lists.forEach((l, p) => l.slice(0, quota[p]).forEach((i) => keep.add(i)));
   return items.filter((_, i) => keep.has(i));
 }
+
+const DIRECT_CHARS = 150_000;
+
+export function fitHits(hits: SourceHit[], cap = DIRECT_CHARS): SourceHit[] {
+  const total = hits.reduce((n, h) => n + h.text.length, 0);
+  if (total <= cap) return hits;
+  const ratio = cap / total;
+  let acc = 0;
+  let used = 0;
+  const out: SourceHit[] = [];
+  for (const h of hits) {
+    acc += ratio;
+    if (acc < 1) continue;
+    acc -= 1;
+    if (used + h.text.length > cap) break;
+    out.push(h);
+    used += h.text.length;
+  }
+  return out.length ? out : hits.slice(0, 1);
+}

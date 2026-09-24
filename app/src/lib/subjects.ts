@@ -1,7 +1,7 @@
 export type Flavour = 'stem' | 'life' | 'business' | 'general';
 
 const PATTERNS: [Flavour, RegExp][] = [
-  ['life', /\b(biolog|bio\b|anatom|physiolog|genetic|microbiolog|biochem|molecular|ecolog|zoolog|botan|neuroscience|immunolog|pharmacolog|medicine|medical|nursing|histolog|patholog|cell|organic chemistry|biotech)/i],
+  ['life', /\b(biolog|bio\b|anatom|physiolog|genetic|microbiolog|biochem|molecular|ecolog|zoolog|botan|neuroscience|immunolog|pharma|dental|dentist|veterin|medicine|medical|nursing|histolog|patholog|cell|organic chemistry|biotech)/i],
   ['business', /\b(business|accounting|finance|financial|econom|marketing|management|entrepreneur|commerce|investment|macro|micro|mba|supply chain|operations research|hr\b|human resources|strategy|taxation|audit)/i],
   ['stem', /\b(math|calculus|algebra|geometry|trigonometr|statistic|probability|physic|mechanic|thermodynam|electromag|circuit|engineer|computer science|programming|algorithm|data structure|chemistry|chem\b|dynamics|fluid|signal|control system|discrete|differential|linear algebra|numerical)/i],
 ];
@@ -18,6 +18,22 @@ export const courseFlavour = (ctx: { subject: string; notebook: string; courseCo
   flavourOf(`${ctx.subject} ${ctx.subject} ${ctx.notebook} ${ctx.courseContext.slice(0, 2000)}`);
 
 export const computational = (flavour: Flavour): boolean => flavour === 'stem' || flavour === 'business';
+
+export const pageByPageFor = (flavour: Flavour): boolean => flavour === 'life';
+
+export const WALK_SYSTEM = `You decide how flashcards and quizzes are written for a university course. There are two ways:
+- page by page: the material is walked in order and every page is covered in its own pass. Right for memorisation-heavy subjects whose lectures are dense with facts to learn - biology, medicine, pharmacy and pharmacology, anatomy, physiology, pathology, histology, microbiology, nursing, dentistry, veterinary science, and similar.
+- one pass: the whole material in one go, with questions chosen for understanding and problem solving. Right for STEM (mathematics, physics, engineering, computer science, statistics, chemistry problem solving), business, economics, accounting, finance, and similar.
+Decide from the course, the notebook and the titles of its sources. When unsure, choose one pass.`;
+
+export const WALK_SCHEMA = {
+  type: 'object',
+  required: ['page_by_page', 'reason'],
+  properties: {
+    page_by_page: { type: 'boolean' },
+    reason: { type: 'string', description: 'A few words, e.g. "pharmacology is memorisation-heavy".' },
+  },
+};
 
 export function guidance(flavour: Flavour): string {
   switch (flavour) {

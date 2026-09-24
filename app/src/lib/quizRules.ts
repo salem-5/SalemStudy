@@ -35,9 +35,20 @@ export function parseNumber(s: string): number | null {
   return Number.isFinite(v) ? v : null;
 }
 
+export const verdictOf = (answer: unknown): 'true' | 'false' | null => {
+  const m = /^[\s*_"'(]*(true|false)\b/i.exec(String(answer ?? ''));
+  return m ? (m[1].toLowerCase() as 'true' | 'false') : null;
+};
+
+export const canCheck = (q: QuizQuestion): boolean => q.type !== 'short' || verdictOf(q.answer) !== null;
+
 export function checkAgrees(q: QuizQuestion, stdout: string): boolean {
   const last = stdout.trim().split('\n').pop()?.trim() ?? '';
   if (!last) return false;
+  if (q.type === 'short') {
+    const verdict = verdictOf(q.answer);
+    return verdict !== null && last.toLowerCase() === verdict;
+  }
   if (q.type === 'mcq') return Number.parseInt(last, 10) === q.answer;
   if (q.type === 'multi') return sameSet(picked(last.replace(/[[\]\s]/g, '')), q.answers ?? []);
   if (q.type === 'tf') return last.toLowerCase() === String(q.answer);
