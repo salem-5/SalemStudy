@@ -9,6 +9,7 @@ import { onPythonProgress, pythonSetup, pythonStatus, type PythonStatus } from '
 import { fmtCost, fmtInt, type UsageRecord } from '../lib/usage';
 import { refetchesLeft } from '../lib/cache';
 import { MathView } from './MathView';
+import { UpdatesSection } from './Updates';
 import { Modal } from './Dialogs';
 import { invoke } from '@tauri-apps/api/core';
 import { restartRuntime, runtimeStatus, runtimeTelemetry, type RuntimeStatus } from '../lib/salem/runtime';
@@ -499,6 +500,8 @@ export function AiSettingsDialog({ onClose, onSaved, onClearCache, onPythonChang
           <h4>WINDOW</h4>
           <TrayToggle />
         </section>
+
+        <UpdatesSection />
 
         <PersonalSection />
 

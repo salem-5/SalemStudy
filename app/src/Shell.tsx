@@ -4,6 +4,7 @@ import { NotesApp } from './study/NotesApp';
 import App from './App';
 import { AiSettingsDialog } from './components/AiPanel';
 import { TabModeDialog } from './components/TabMode';
+import { UpdateCenter } from './components/Updates';
 import { useChatRunCount } from './lib/chatRuns';
 import { useTasks } from './lib/salem/tasks';
 import { needsOnboarding, Onboarding } from './components/Onboarding';
@@ -287,6 +288,7 @@ export default function Shell() {
       {tabModeOpen && <TabModeDialog onClose={() => setTabModeOpen(false)} />}
       {onboarding && <Onboarding onClose={() => setOnboarding(false)} />}
       <PomodoroAlarm />
+      <UpdateCenter />
       {searching && <SearchPalette tree={tree ?? []} open={open} onClose={() => setSearching(false)} />}
 
       <Toasts items={toasts} onDismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />

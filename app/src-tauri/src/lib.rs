@@ -979,6 +979,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| tray::show_main(app)))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
         .manage(AppState {
             bridge: bridge.clone(),
             http,
@@ -998,6 +999,8 @@ pub fn run() {
             bridge::spawn_logger(bridge.clone());
             python::sweep_sandboxes(&app.handle().clone());
             sweep_exports(&app.handle().clone());
+            #[cfg(desktop)]
+            app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
             if let Err(e) = tray::install(app.handle()) {
                 eprintln!("[tray] could not add the tray icon: {e}");
             }

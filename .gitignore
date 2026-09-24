@@ -1,23 +1,18 @@
-# Dependencies
 node_modules/
 
-# Build output
 app/dist/
 app/src-tauri/target/
 app/src-tauri/gen/
 *.tsbuildinfo
 
-# Editors / OS
 .idea/
 .vscode/
 .DS_Store
 Thumbs.db
 
-# Python
 __pycache__/
 *.pyc
 
-# AI agent files
 .claude/
 CLAUDE.md
 CLAUDE.local.md
@@ -29,3 +24,5 @@ GEMINI.md
 .aider*
 .github/copilot-instructions.md
 docs/
+
+.env
