@@ -374,6 +374,9 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
 
 // ------------------------------------------------------------------ inputs
 
+/** A written question that wants a proof, not a sentence. */
+const PROOF = /\b(prove|proof|disprove|justify|counter-?example|show that)\b/i;
+
 function AnswerInput({ q, given, locked, reviewing, onChange }: {
   q: QuizQuestion;
   given: string;
@@ -436,7 +439,10 @@ function AnswerInput({ q, given, locked, reviewing, onChange }: {
   }
   // The box is in the sentence itself (`GapInput`, placed by `GapPrompt`).
   if (q.type === 'blank') return null;
-  return <textarea className="textarea" rows={4} value={given} onChange={(e) => onChange(e.target.value)} disabled={locked} placeholder="Explain in a sentence or two (Ctrl+Enter to check)" autoFocus={!reviewing} />;
+  // A proof needs room, and saying so tells the student a verdict alone will not do.
+  const proof = PROOF.test(q.prompt);
+  return <textarea className="textarea" rows={proof ? 10 : 4} value={given} onChange={(e) => onChange(e.target.value)} disabled={locked}
+    placeholder={proof ? 'Your answer, then the proof or counterexample (Ctrl+Enter to check)' : 'Explain in a sentence or two (Ctrl+Enter to check)'} autoFocus={!reviewing} />;
 }
 
 

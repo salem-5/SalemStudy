@@ -271,8 +271,8 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
       if (mode === 'sources') {
         setStatus('Reading your material…');
         const chosen = ready.filter((x) => picked.has(x.id));
-        // Decks and quizzes walk every page, in the order above; a focus only
-        // narrows what each pass writes about. Notes are written in one go,
+        // Decks and quizzes walk the pages in the order above — all of them,
+        // unless the instructions point at some — and follow the instructions. Notes are written in one go,
         // from the passages that bear on what was asked.
         const hits = !picked.size
           ? []
@@ -369,8 +369,14 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
               </>
             )}
             <label className="field">
-              <span>Focus on <i className="muted">optional</i></span>
-              <input value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="e.g. vector and symmetric equations of lines" disabled={busy} />
+              <span>{kind === 'notes' ? 'Focus on' : 'Instructions'} <i className="muted">optional</i></span>
+              {kind === 'notes'
+                ? <input value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="e.g. vector and symmetric equations of lines" disabled={busy} />
+                : <textarea className="textarea" rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)} disabled={busy}
+                    placeholder={kind === 'quiz'
+                      ? 'e.g. only the true/false questions on the last page of each past paper, with the full proofs'
+                      : 'e.g. only lecture 3, one card per theorem with its proof'} />}
+              {kind !== 'notes' && <span className="muted small">Followed exactly: which sources and pages to use, what kind of {kind === 'cards' ? 'cards' : 'questions'}, what the answers must include.</span>}
             </label>
           </>
         )}

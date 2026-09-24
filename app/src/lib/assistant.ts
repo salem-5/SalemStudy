@@ -50,10 +50,12 @@ export const APP_TOOL_DEFS = [
   fn('make_flashcards', 'Generate a flashcard deck in a notebook. From its sources (the default) it walks every page in reading order and writes as many cards as the material needs; or from a topic.', {
     notebook: NOTEBOOK, topic: { type: 'string', description: 'Leave empty to use the notebook sources.' },
     count: { type: 'number', description: 'Only when the student asked for a particular number; it caps the deck. Leave it out otherwise.' },
+    instructions: { type: 'string', description: "The student's own instructions, in their words: which sources or pages to use, what kind of cards, what the backs must contain. They are followed exactly." },
   }, ['notebook']),
   fn('make_quiz', 'Generate a checked practice quiz in a notebook. From its sources (the default) it walks every page in reading order and writes as many questions as the material needs; or from a topic.', {
     notebook: NOTEBOOK, topic: { type: 'string', description: 'Leave empty to use the notebook sources.' },
     count: { type: 'number', description: 'Only when the student asked for a particular number; it caps the quiz. Leave it out otherwise.' },
+    instructions: { type: 'string', description: "The student's own instructions, in their words: which sources or pages to use, what kind of questions, what the explanations must contain. They are followed exactly." },
   }, ['notebook']),
   fn('timer', 'Control the focus (Pomodoro) timer.', {
     action: { type: 'string', enum: ['start', 'pause', 'reset', 'skip', 'status'] },
@@ -119,12 +121,12 @@ function findNotebook(tree: SubjectNode[], name: string): { notebook: NotebookSu
  * sources in reading order; notes are written from a sample, since they are
  * written in one go.
  */
-async function sourceMaterial(notebookId: number, topic: string, walk = false): Promise<GenSource> {
+async function sourceMaterial(notebookId: number, topic: string, walk = false, instructions = ''): Promise<GenSource> {
   if (topic.trim()) return { kind: 'topic', prompt: topic };
   const ready = (await studyApi.sources(notebookId)).filter((s) => s.status === 'ready');
   if (!ready.length) throw new Error('That notebook has no sources yet; give a topic instead.');
   const hits = walk ? await notebookMaterial(notebookId) : await studyApi.sampleSources(ready.map((s) => s.id), 50_000);
-  return { kind: 'sources', hits, focus: '' };
+  return { kind: 'sources', hits, focus: instructions };
 }
 
 /** A number of items the assistant was asked for, if it was asked for one. */
@@ -211,7 +213,7 @@ export function appTools(env: Env): AppTools {
         }
         case 'make_flashcards': {
           const { notebook, subject } = findNotebook(tree, str(a.notebook));
-          const src = await sourceMaterial(notebook.id, str(a.topic), true);
+          const src = await sourceMaterial(notebook.id, str(a.topic), true, str(a.instructions));
           const ctx = { subject: subject.name, notebook: notebook.name, courseContext: courseContextOf(subject) };
           const { message } = await makeSet('cards', ctx, notebook.id, src, () => {}, { limit: countOf(a.count) });
           await env.refresh();
@@ -219,7 +221,7 @@ export function appTools(env: Env): AppTools {
         }
         case 'make_quiz': {
           const { notebook, subject } = findNotebook(tree, str(a.notebook));
-          const src = await sourceMaterial(notebook.id, str(a.topic), true);
+          const src = await sourceMaterial(notebook.id, str(a.topic), true, str(a.instructions));
           const ctx = { subject: subject.name, notebook: notebook.name, courseContext: courseContextOf(subject) };
           const q = await makeSet('quiz', ctx, notebook.id, src, () => {}, { limit: countOf(a.count) });
           await env.refresh();

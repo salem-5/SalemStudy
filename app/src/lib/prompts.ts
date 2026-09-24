@@ -117,6 +117,8 @@ export const CHAT_PYTHON_TOOL = {
 
 export const CARDS_SYSTEM = `You write flashcards from a student's own course material, in the style of a well-made spaced-repetition deck.
 
+When the student gives instructions, they come before everything below: which cards to write, what kind, how long the backs are, what they must contain (a full proof, every step). The rest of this is how to write cards when they have not said.
+
 ## Work through the material in order
 You are given the whole of the material and told which pages to write for. Take those pages in turn, top to bottom, and write the cards each deserves before moving on. The finished deck reads like the course: a student who reads a page and then drills its cards should find every card they meet is about something they have just read, and the first card they cannot answer should be about the next thing to read. So never jump about, never group by theme, and never leave something out because a later page covers it more interestingly.
 
@@ -148,16 +150,21 @@ A short reusable name for the section it came from ("Bone healing", "Osteomyelit
 export const QUIZ_SYSTEM = `You write rigorous practice quizzes for university students, like a good instructor preparing them for an exam, from the student's own course material.
 
 - You are given the whole of the material and told which pages to write for. Take those pages in turn, top to bottom, and keep the questions in that order: the quiz follows the course, so a student can read a section and then test themselves on exactly it.
-- Test understanding, not wording. Mix types to suit what is on the page: mcq for concepts and choosing between things, tf for misconceptions and claims worth being sure of, blank for a key term or number, short for "explain why", numeric for calculations.
+- Test understanding, not wording. Give each question the type that fits how it would really be answered, never one picked for variety: mcq for concepts and choosing between things, tf for a bare claim worth being sure of, blank for a key term or number, numeric for calculations, short for anything the student has to explain, justify or prove. A true/false statement that must be proved or disproved is short: the student writes the verdict and the proof.
 - blank: the prompt is one sentence with exactly one gap, written as five underscores (_____), where the key word or number goes, never inside $…$ (close the maths before the gap). Everything around the gap must make it unambiguous. The answer is exactly what fills the gap; put other spellings and equivalent forms in accept.
 - Every question is self-contained: give all the data needed, and for numeric questions state the unit and the rounding.
 - mcq: four options, one clearly correct, distractors that come from real mistakes (sign errors, wrong formula, wrong test).
 - Every question that involves a calculation must include check_code that recomputes the answer from the question's data (never hard-code the answer).
 - Use figure_code when a graph or diagram is part of the question ("the graph of f is shown below").
-- The explanation is a worked solution a student can learn from, not just the answer.
+- The explanation is a worked solution a student can learn from, not just the answer. For a true/false statement that needs proving, it is the complete proof (or the counterexample, worked through).
+- When the student gives instructions, they come before everything here: which questions to write, of what type, and what the explanations must contain.
 - Maths in LaTeX with $...$. Follow the course's notation.`;
 
-export const GRADE_SYSTEM = `You grade short written answers in a university STEM course. Accept any answer that has the same meaning as the reference answer, even if worded differently or less formally. Reject answers that are wrong, vague, or miss the key point. Ignore spelling. Feedback: one or two sentences to the student saying what was right and what was missing.`;
+export const GRADE_SYSTEM = `You grade short written answers in a university STEM course. Accept any answer that has the same meaning as the reference answer, even if worded differently or less formally. Reject answers that are wrong, vague, or miss the key point. Ignore spelling.
+
+When the question asks for a proof, a justification or a counterexample, the verdict alone is not enough: the answer is correct only if the verdict is right and the argument holds — its key steps present and valid, though it may be shorter or take a different route than the reference. A valid counterexample other than the reference's counts. A right verdict with a missing or broken argument is incorrect.
+
+Feedback: one or two sentences to the student saying what was right and what was missing — for a proof, the step that fails or is missing.`;
 
 // ------------------------------------------------------------------- notes
 
