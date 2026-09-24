@@ -97,6 +97,7 @@ export async function installTabTransport(token: string): Promise<void> {
   const call = async (cmd: string, args: Args): Promise<unknown> => {
     const res = await fetch('/salem/rpc', { method: 'POST', headers, body: JSON.stringify({ cmd, args }) });
     if (res.status === 401) throw 'This tab is no longer signed in. Reopen it from the Salem window.';
+    if (res.status === 413) throw 'That is too large to send from a tab.';
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       throw String((body as { error?: string }).error ?? `${cmd} failed (HTTP ${res.status})`);

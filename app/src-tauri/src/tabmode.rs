@@ -28,7 +28,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::body::Body;
-use axum::extract::{Query, State};
+use axum::extract::{DefaultBodyLimit, Query, State};
 use axum::http::{header, HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -50,6 +50,11 @@ const RPC_TIMEOUT: Duration = Duration::from_secs(900);
 const POLL_TIMEOUT: Duration = Duration::from_secs(25);
 /// Events kept for a tab that is briefly between polls.
 const EVENT_BACKLOG: usize = 512;
+/// The largest command a tab may send. Uploading a source sends the file
+/// itself, base64 inside the JSON, so this has to fit the app's 200 MB source
+/// cap plus a third for the encoding — axum's 2 MB default turned away almost
+/// every lecture PDF.
+const RPC_BODY_LIMIT: usize = 300 * 1024 * 1024;
 
 #[derive(Clone)]
 struct Server {
@@ -144,7 +149,7 @@ pub fn notify(app: &AppHandle, event: &str, payload: Value) {
 
 fn router(server: Server) -> Router {
     Router::new()
-        .route("/salem/rpc", post(rpc))
+        .route("/salem/rpc", post(rpc).layer(DefaultBodyLimit::max(RPC_BODY_LIMIT)))
         .route("/salem/events", get(events))
         .route("/salem/ping", get(ping))
         .fallback(asset)

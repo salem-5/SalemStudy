@@ -376,10 +376,17 @@ export async function addFiles(notebookId: number, files: File[], onAdded: () =>
     const k = kindOf(file);
     if (!k) { problems.push(`${file.name}: this file type is not supported (use PDF, PPTX, DOCX, images or text).`); continue; }
     if (file.size > 200 * 1024 * 1024) { problems.push(`${file.name} is larger than 200 MB.`); continue; }
-    const s = await studyApi.addSource({
-      notebookId, kind: k === 'docx' ? 'text' : k, title: stem(file.name), filename: file.name,
-      mime: file.type || 'application/octet-stream', data: await readDataUrl(file),
-    });
+    let s: Source;
+    try {
+      s = await studyApi.addSource({
+        notebookId, kind: k === 'docx' ? 'text' : k, title: stem(file.name), filename: file.name,
+        mime: file.type || 'application/octet-stream', data: await readDataUrl(file),
+      });
+    } catch (e) {
+      // Said on the pane, not lost: one bad file should not stop the rest.
+      problems.push(`${file.name}: ${e instanceof Error ? e.message : String(e)}`);
+      continue;
+    }
     onAdded();
     // .docx is stored as text-kind but read with Python.
     void ingest(s, k === 'docx' ? undefined : file).then(onAdded);
