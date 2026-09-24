@@ -25,6 +25,7 @@ tauri-plugin-dialog = "2"
 flate2 = "1"
 # Tab mode's access token must be unguessable, so it comes from the OS.
 getrandom = "0.3"
+tauri-plugin-single-instance = "2"
 
 [dev-dependencies]
 # `mock_app` gives the export tests an AppHandle without a window.

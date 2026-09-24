@@ -1087,6 +1087,11 @@ pub fn run() {
     let bridge = Bridge::new();
 
     let app = tauri::Builder::default()
+        // One Salem at a time: two would share one database and one tab-mode
+        // port and trip over each other. A second launch exits before any of
+        // its setup runs, and the one already running comes to the front.
+        // First, so no other plugin starts in the copy that is turned away.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| tray::show_main(app)))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
