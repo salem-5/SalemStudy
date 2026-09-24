@@ -498,6 +498,7 @@ export function DeckPlayer({ deckId, cards, title, notebookId, practice: startPr
   const [pos, setPos] = useState(resumed?.pos ?? 0);
   const [flipped, setFlipped] = useState(false);
   const [leaving, setLeaving] = useState<'left' | 'right' | null>(null);
+  const [flash, setFlash] = useState<{ kind: 'good' | 'bad'; n: number } | null>(null);
   const [results, setResults] = useState<CardResult[]>(
     resumed ? Object.entries(resumed.results).map(([id, r]) => ({ cardId: Number(id), correct: r.correct, elapsedMs: r.elapsedMs })) : [],
   );
@@ -531,6 +532,7 @@ export function DeckPlayer({ deckId, cards, title, notebookId, practice: startPr
     if (!card || !flipped || leaving) return;
     setResults((r) => [...r, { cardId: card.id, correct, elapsedMs: Date.now() - shownAt.current }]);
     setLeaving(correct ? 'right' : 'left');
+    setFlash((f) => ({ kind: correct ? 'good' : 'bad', n: (f?.n ?? 0) + 1 }));
     window.setTimeout(() => {
       setLeaving(null);
       setFlipped(false);
@@ -612,6 +614,8 @@ export function DeckPlayer({ deckId, cards, title, notebookId, practice: startPr
         >
         <div className="review">
           {card.topic && <div className="card-topic muted">{card.topic}</div>}
+          <div className="glow-wrap card-glow">
+          <span key={flash?.n ?? 0} className={`study-glow${flash ? ` flash-${flash.kind}` : ''}`} aria-hidden />
           <div
             role="button"
             tabIndex={0}
@@ -624,6 +628,7 @@ export function DeckPlayer({ deckId, cards, title, notebookId, practice: startPr
               <div className="card-face front"><Markdown text={card.front} /><span className="card-hint muted">click or press space to see the answer</span></div>
               <div className="card-face back"><Markdown text={card.back} /></div>
             </div>
+          </div>
           </div>
           <div className={`grade${flipped ? ' show' : ''}`}>
             <button type="button" className="grade-btn bad" onClick={() => grade(false)} disabled={!flipped} title="Missed it (1 or ←)">

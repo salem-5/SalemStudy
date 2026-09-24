@@ -48,6 +48,8 @@ function TabModeLock({ status }: { status: TabModeStatus }) {
 
   return (
     <div className="tab-lock">
+      <div className="glow-wrap lock-glow">
+      <span className="study-glow" aria-hidden />
       <div className="tab-lock-card">
         <span className="tab-lock-icon"><Globe /></span>
         <h1>Tab mode is on</h1>
@@ -76,6 +78,7 @@ function TabModeLock({ status }: { status: TabModeStatus }) {
             <span>Keep running in the tray when this window is closed{tray ? ' - the browser tab keeps working' : ''}</span>
           </label>
         )}
+      </div>
       </div>
     </div>
   );

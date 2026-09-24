@@ -2,6 +2,7 @@
 
 ### New
 - **Page by page: Auto, On or Off.** Decks and quizzes can go through your material in one pass, or page by page in several passes. On Auto, the AI picks from the subject: page by page for memorisation-heavy subjects like biology, medicine and pharmacy, one pass for STEM and business. The choice is shown while it works, and remembered for each notebook.
+- **A glow behind cards and questions.** Flashcards, quiz questions and the "Tab mode is on" screen sit on a soft glow in your theme's accent color. Mark a card or check an answer and it flashes green when you're right and red when you're not, then settles back to your accent.
 
 ### Improved
 - **One pass is back as the default.** With page by page off, decks and quizzes work the way they did before: one pass over all of your material, written for STEM, with each question checked in Python as you watch.

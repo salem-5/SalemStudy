@@ -48,6 +48,7 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
   const [error, setError] = useState<string | null>(null);
   const [pos, setPos] = useState(0);
   const [answers, setAnswers] = useState<Record<number, QuizAnswer>>({});
+  const [flash, setFlash] = useState<{ kind: 'good' | 'bad'; n: number } | null>(null);
   const [drafts, setDrafts] = useState<Record<number, string>>({});
   const [only, setOnly] = useState<number[] | undefined>(onlyIndexes);
   const [reviewing, setReviewing] = useState(false);
@@ -121,6 +122,7 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
       ...a,
       [index]: { given: value, correct, ms: Date.now() - shownAt.current, hinted: hintFor === index || a[index]?.hinted, feedback },
     }));
+    setFlash((f) => ({ kind: correct ? 'good' : 'bad', n: (f?.n ?? 0) + 1 }));
     setChecking(false);
   }, [q, index, given, checking, hintFor]);
 
@@ -244,6 +246,8 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
             locator: { notebookId, quizId: quiz.id, questionIndex: index },
           }}
         >
+        <div className="glow-wrap q-glow">
+        <span key={flash?.n ?? 0} className={`study-glow${flash ? ` flash-${flash.kind}` : ''}`} aria-hidden />
         <div className="question-card" key={index}>
           <div className="q-meta muted">
             <span>{q.topic}{q.difficulty ? ` · ${q.difficulty}` : ''}</span>
@@ -298,6 +302,7 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
               </button>
             </div>
           )}
+        </div>
         </div>
         </AskableArea>
       )}

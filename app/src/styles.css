@@ -3625,3 +3625,50 @@ input[type='date'], input[type='datetime-local'] { color-scheme: dark; }
 .update-card > svg { width: 18px; height: 18px; color: var(--good); flex: none; }
 .update-card-text { display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; }
 @keyframes update-in { from { opacity: 0; transform: translateY(8px); } }
+
+@property --glow {
+  syntax: '<color>';
+  inherits: false;
+  initial-value: transparent;
+}
+.glow-wrap { position: relative; isolation: isolate; }
+.study-glow {
+  --glow: var(--accent);
+  position: absolute;
+  inset: -40% -26%;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(38% 46% at 32% 42%, color-mix(in srgb, var(--glow) 60%, transparent), transparent 72%),
+    radial-gradient(42% 40% at 70% 60%, color-mix(in srgb, var(--glow) 48%, transparent), transparent 72%),
+    radial-gradient(30% 36% at 56% 28%, color-mix(in srgb, var(--glow) 36%, transparent), transparent 72%);
+  filter: blur(64px);
+  --rest: 0.34;
+  opacity: var(--rest);
+  animation: glow-drift 16s ease-in-out infinite alternate;
+}
+.study-glow.flash-good { animation: glow-flash-good 1300ms var(--ease), glow-drift 16s ease-in-out infinite alternate; }
+.study-glow.flash-bad { animation: glow-flash-bad 1300ms var(--ease), glow-drift 16s ease-in-out infinite alternate; }
+@keyframes glow-drift {
+  from { transform: rotate(-5deg) scale(0.98) translateX(-1.5%); }
+  to { transform: rotate(6deg) scale(1.04) translateX(1.5%); }
+}
+@keyframes glow-flash-good {
+  0% { --glow: var(--good); opacity: 0.85; }
+  45% { --glow: var(--good); opacity: 0.6; }
+  100% { --glow: var(--accent); opacity: var(--rest); }
+}
+@keyframes glow-flash-bad {
+  0% { --glow: var(--bad); opacity: 0.85; }
+  45% { --glow: var(--bad); opacity: 0.6; }
+  100% { --glow: var(--accent); opacity: var(--rest); }
+}
+.card-glow { width: min(640px, 100%); }
+.card-glow .flashcard { width: 100%; }
+.q-glow { width: min(760px, 100%); margin: 0 auto; }
+.q-glow .study-glow { inset: -22% -16%; --rest: 0.24; }
+.lock-glow { width: min(520px, 100%); }
+.lock-glow .study-glow { inset: -58% -44%; }
+@media (prefers-reduced-motion: reduce) {
+  .study-glow, .study-glow.flash-good, .study-glow.flash-bad { animation: none; }
+}
