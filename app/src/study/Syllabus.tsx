@@ -2,6 +2,8 @@ import { useRef, useState } from 'react';
 import { Select } from '../components/Select';
 import { CalendarPlus, FileText, RefreshCw, Trash, Upload } from 'lucide-react';
 import { Modal } from '../components/Dialogs';
+import { MoreMenu } from '../components/ContextMenu';
+import { ConfirmDialog } from './dialogs';
 import { Markdown } from '../lib/markdown';
 import { addSyllabusEvents, analyzeSyllabus, readSyllabus, SYLLABUS_ACCEPT, type SyllabusEvent } from '../lib/syllabus';
 import { studyApi, type SubjectNode } from './api';
@@ -195,31 +197,32 @@ export function SyllabusDialog({ subject: initial, tree, rescan, onClose, onDone
 export function SyllabusPanel({ subject, onChanged }: { subject: SubjectNode; onChanged: () => void }) {
   const [dialog, setDialog] = useState<'upload' | 'rescan' | null>(null);
   const [open, setOpen] = useState(false);
-  const [confirm, setConfirm] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const has = !!subject.syllabusName;
   return (
-    <section className="page-section">
-      <h2 className="section-title">Syllabus</h2>
+    <section className="card-panel syllabus-panel">
+      <div className="panel-title-row">
+        <h2 className="panel-title">Syllabus</h2>
+        {has && (
+          <MoreMenu title="Syllabus options" items={[
+            { kind: 'item', label: 'Add its dates to Schedule…', icon: <CalendarPlus />, onClick: () => setDialog('rescan') },
+            { kind: 'item', label: 'Replace with a new file…', icon: <RefreshCw />, onClick: () => setDialog('upload') },
+            { kind: 'sep' },
+            { kind: 'item', label: 'Remove syllabus…', icon: <Trash />, danger: true, onClick: () => setRemoving(true) },
+          ]} />
+        )}
+      </div>
       {!has ? (
         <button type="button" className="syllabus-empty" onClick={() => setDialog('upload')}>
-          <Upload />
-          <span><b>Add the course syllabus</b><span className="muted">The notebooks' AI tutor learns the grading, exam format and topics, and exam and due dates go into Schedule.</span></span>
+          <span className="syllabus-empty-icon"><Upload /></span>
+          <span><b>Add the course syllabus</b><span>The AI tutor learns the grading, exam format and topics, and exam and due dates go into your schedule.</span></span>
         </button>
       ) : (
-        <div className="syllabus-card">
-          <div className="syllabus-head">
+        <>
+          <div className="syllabus-file">
             <FileText />
             <span className="syllabus-name">{subject.syllabusName}</span>
-            <span className="muted small">added {new Date(subject.syllabusAt).toLocaleDateString()}</span>
-            <span className="spacer" />
-            <button type="button" className="btn ghost" onClick={() => setDialog('rescan')} title="Find exam and due dates in it and add them to Schedule"><CalendarPlus /><span className="btn-label">Add dates</span></button>
-            <button type="button" className="icon-btn" onClick={() => setDialog('upload')} title="Replace with a new file"><RefreshCw /></button>
-            {confirm ? (
-              <>
-                <button type="button" className="btn ghost danger" onClick={async () => { await studyApi.clearSyllabus(subject.id); setConfirm(false); onChanged(); }}>Remove</button>
-                <button type="button" className="btn ghost" onClick={() => setConfirm(false)}>Keep</button>
-              </>
-            ) : <button type="button" className="icon-btn" onClick={() => setConfirm(true)} title="Remove the syllabus"><Trash /></button>}
+            <span className="muted small">{new Date(subject.syllabusAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
           </div>
           {subject.syllabusSummary && (
             <div className={`syllabus-summary${open ? ' open' : ''}`}>
@@ -227,10 +230,16 @@ export function SyllabusPanel({ subject, onChanged }: { subject: SubjectNode; on
               {!open && <button type="button" className="syllabus-more" onClick={() => setOpen(true)}>Show all</button>}
             </div>
           )}
-        </div>
+        </>
       )}
       {dialog && (
         <SyllabusDialog subject={subject} tree={[subject]} rescan={dialog === 'rescan'} onClose={() => setDialog(null)} onDone={onChanged} />
+      )}
+      {removing && (
+        <ConfirmDialog title="Remove syllabus" confirmLabel="Remove" onClose={() => setRemoving(false)}
+          onConfirm={async () => { await studyApi.clearSyllabus(subject.id); onChanged(); }}>
+          Remove <b>{subject.syllabusName}</b> from {subject.name}? The tutor stops using it. Dates already added to your schedule stay.
+        </ConfirmDialog>
       )}
     </section>
   );

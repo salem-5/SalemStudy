@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { BellRing, Check, Pause, Play, Plus, RotateCcw, SkipForward, Volume2, X } from 'lucide-react';
+import { BellRing, Check, Pause, Play, Plus, RotateCcw, Settings2, SkipForward, Volume2, X } from 'lucide-react';
 import { fmtClock, PHASE_LABEL, pomodoro, remainingOf, usePomodoro, type Phase } from '../lib/pomodoro';
 import { BarChart, StatTile } from './charts';
 import { Modal } from './Dialogs';
@@ -64,6 +64,7 @@ function Ring({ fraction, phase }: { fraction: number; phase: Phase }) {
 export function FocusPage() {
   const p = usePomodoro();
   const [draft, setDraft] = useState('');
+  const [tuning, setTuning] = useState(false);
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30_000); return () => clearInterval(t); }, []);
   useEffect(() => {
@@ -136,7 +137,7 @@ export function FocusPage() {
             </button>
             <button type="button" className="icon-btn pomo-side" onClick={pomodoro.skip} title="Skip to the next phase"><SkipForward /></button>
           </div>
-          <p className="muted small pomo-hint"><kbd>Space</kbd> starts or pauses</p>
+          <p className="muted small pomo-hint"><kbd>Space</kbd> starts or pauses · <button type="button" className="link" onClick={() => setTuning(true)}><Settings2 />Timer settings</button></p>
         </section>
 
         <section className="focus-tasks card-panel">
@@ -190,31 +191,35 @@ export function FocusPage() {
           <BarChart label="Focus minutes per day, last 7 days" data={stats.days} series={[{ key: 'focus', name: 'Focus minutes', color: 'var(--series-1)' }]} format={(v) => `${Math.round(v)}m`} />
         </section>
 
-        <section className="card-panel focus-settings">
-          <div className="panel-title">Timer</div>
-          <div className="pomo-settings">
-            {([['focus', 'Focus'], ['short', 'Short break'], ['long', 'Long break']] as const).map(([k, label]) => (
-              <label key={k} className="field">
-                <span>{label} <i className="muted">min</i></span>
-                <input type="number" min={1} max={180} value={p.settings[k]} onChange={(e) => pomodoro.updateSettings({ [k]: Math.max(1, Math.min(180, Number(e.target.value) || 1)) })} />
-              </label>
-            ))}
-            <label className="field">
-              <span>Long break every</span>
-              <input type="number" min={2} max={12} value={p.settings.every} onChange={(e) => pomodoro.updateSettings({ every: Math.max(2, Math.min(12, Number(e.target.value) || 4)) })} />
-            </label>
-          </div>
-          <label className="toggle"><input type="checkbox" checked={p.settings.autoStart} onChange={(e) => pomodoro.updateSettings({ autoStart: e.target.checked })} /> Start the next phase automatically</label>
-          <label className="toggle"><input type="checkbox" checked={p.settings.sound} onChange={(e) => pomodoro.updateSettings({ sound: e.target.checked })} /> Chime when a phase ends</label>
-          <div className="pomo-volume">
-            <label className="field range">
-              <span>Volume</span>
-              <input type="range" min={0} max={1} step={0.05} value={p.settings.volume} onChange={(e) => pomodoro.updateSettings({ volume: Number(e.target.value) })} />
-            </label>
-            <button type="button" className="btn ghost" onClick={pomodoro.testSound}><Volume2 />Test</button>
-          </div>
-        </section>
       </div>
+      {tuning && (
+        <Modal title="Timer settings" onClose={() => setTuning(false)}>
+          <div className="form focus-settings">
+            <div className="pomo-settings">
+              {([['focus', 'Focus'], ['short', 'Short break'], ['long', 'Long break']] as const).map(([k, label]) => (
+                <label key={k} className="field">
+                  <span>{label} <i className="muted">min</i></span>
+                  <input type="number" min={1} max={180} value={p.settings[k]} onChange={(e) => pomodoro.updateSettings({ [k]: Math.max(1, Math.min(180, Number(e.target.value) || 1)) })} />
+                </label>
+              ))}
+              <label className="field">
+                <span>Long break every</span>
+                <input type="number" min={2} max={12} value={p.settings.every} onChange={(e) => pomodoro.updateSettings({ every: Math.max(2, Math.min(12, Number(e.target.value) || 4)) })} />
+              </label>
+            </div>
+            <label className="toggle"><input type="checkbox" checked={p.settings.autoStart} onChange={(e) => pomodoro.updateSettings({ autoStart: e.target.checked })} /> Start the next phase automatically</label>
+            <label className="toggle"><input type="checkbox" checked={p.settings.sound} onChange={(e) => pomodoro.updateSettings({ sound: e.target.checked })} /> Chime when a phase ends</label>
+            <div className="pomo-volume">
+              <label className="field range">
+                <span>Volume</span>
+                <input type="range" min={0} max={1} step={0.05} value={p.settings.volume} onChange={(e) => pomodoro.updateSettings({ volume: Number(e.target.value) })} />
+              </label>
+              <button type="button" className="btn ghost" onClick={pomodoro.testSound}><Volume2 />Test</button>
+            </div>
+          </div>
+          <div className="modal-actions"><button type="button" className="btn primary" onClick={() => setTuning(false)}>Done</button></div>
+        </Modal>
+      )}
     </div>
   );
 }

@@ -25,6 +25,14 @@ const startOfDay = (t: number | Date) => { const d = new Date(t); d.setHours(0, 
 const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 const fmtTime = (t: number) => new Date(t).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+/** A date in as few characters as reads clearly: Today, Tomorrow, a weekday this week, else "Oct 12". */
+const shortWhen = (t: number, today: Date) => {
+  const days = Math.round((startOfDay(t).getTime() - today.getTime()) / DAY);
+  if (days === 0) return 'Today';
+  if (days === 1) return 'Tomorrow';
+  if (days > 1 && days < 7) return new Date(t).toLocaleDateString(undefined, { weekday: 'short' });
+  return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+};
 
 type Due = {
   id: number;
@@ -44,6 +52,8 @@ function monthCells(month: Date): (Date | null)[] {
 const monthOf = (base: Date, n: number) => new Date(base.getFullYear(), base.getMonth() + n, 1);
 const monthId = (d: Date) => `cal-${d.getFullYear()}-${d.getMonth()}`;
 const CHUNK = 6;
+/** How long the page's entrance runs (styles/schedule.css). */
+const ENTRANCE_MS = 500;
 
 export function SchedulePage({ tree, open, refreshTree, reload = 0 }: {
   tree: SubjectNode[];
@@ -52,6 +62,10 @@ export function SchedulePage({ tree, open, refreshTree, reload = 0 }: {
   reload?: number;
 }) {
   const [selected, setSelected] = useState(() => startOfDay(new Date()));
+  // While the page is arriving: its pieces move in, and scrollbars stay hidden so the movement
+  // does not flash one up.
+  const [entering, setEntering] = useState(true);
+  useEffect(() => { const t = window.setTimeout(() => setEntering(false), ENTRANCE_MS); return () => window.clearTimeout(t); }, []);
   const [events, setEvents] = useState<StudyEvent[]>([]);
   const [dues, setDues] = useState<Due[]>([]);
   const [dueNote, setDueNote] = useState<string | null>(null);
@@ -152,7 +166,7 @@ export function SchedulePage({ tree, open, refreshTree, reload = 0 }: {
   const upcoming = events.filter((e) => e.startAt >= today.getTime() && !e.done).slice(0, 6);
 
   return (
-    <div className="view schedule">
+    <div className={`view schedule${entering ? ' entering' : ''}`}>
       <ViewBar actions={<>
         <button type="button" className="btn ghost" onClick={() => setImporting(true)} title="Read a course syllabus and add its exam and due dates"><FileUp /><span className="btn-label">Import syllabus</span></button>
         <button type="button" className="btn" onClick={() => setEditing('new')}><Plus /><span className="btn-label">Add event</span></button>
@@ -195,7 +209,7 @@ export function SchedulePage({ tree, open, refreshTree, reload = 0 }: {
                         onDoubleClick={() => { setSelected(d); setEditing('new'); }}
                       >
                         <span className="cal-num">{d.getDate()}</span>
-                        {items.slice(0, 3).map((it) => <span key={it.key} className={`cal-pill ${it.kind}${it.done ? ' done' : ''}`} style={it.style} title={it.course ? `${it.course} · ${it.title}` : it.title}>{it.title}</span>)}
+                        {items.slice(0, 3).map((it) => <span key={it.key} className={`cal-pill ${it.kind}${it.done ? ' done' : ''}`} style={it.style} title={it.course ? `${it.course} · ${it.title}` : it.title}><span className="cal-pill-text">{it.title}</span></span>)}
                         {items.length > 3 && <span className="cal-more">+{items.length - 3} more</span>}
                       </button>
                     );
@@ -207,55 +221,69 @@ export function SchedulePage({ tree, open, refreshTree, reload = 0 }: {
         </section>
 
         <aside className="day-panel">
-          <div className="day-title">
-            <CalendarDays />
-            <span>{selected.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</span>
+          <div className="day-head">
+            <div className="day-title">
+              <span className="eyebrow">{sameDay(selected, today) ? 'Today' : selected.toLocaleDateString(undefined, { weekday: 'long' })}</span>
+              <span className="day-date">{selected.toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}</span>
+            </div>
+            <button type="button" className="btn" onClick={() => setEditing('new')} title="Add an exam, deadline or study session on this day"><Plus />Add</button>
           </div>
-          <button type="button" className="btn primary" onClick={() => setEditing('new')}><Plus />Add to this day</button>
           {dueNote && (
             <p className="muted small due-note">
               WebAssign: {dueNote}
               <button type="button" className="link" onClick={() => setDueNote(null)}>dismiss</button>
             </p>
           )}
-          {!dayEvents.length && !dayDues.length && <p className="muted small">Nothing planned. Double-click a day to add something quickly.</p>}
+          {!dayEvents.length && !dayDues.length && (
+            <div className="day-empty">
+              <CalendarDays />
+              <span>Nothing planned. Double-click a day in the calendar to add something.</span>
+            </div>
+          )}
           <ul className="day-list stagger">
-            {dayEvents.map((e, i) => (
-              <li key={e.id} className={`day-event ${e.kind}${e.done ? ' done' : ''}`} style={{ '--i': i, ...tint(e) } as React.CSSProperties}>
-                <button type="button" className="check-btn" onClick={async () => { await studyApi.updateEvent(e.id, { ...e, done: !e.done }); load(); }} title={e.done ? 'Mark not done' : 'Mark done'}>
-                  {e.done ? <Check /> : null}
-                </button>
-                <div className="day-event-main">
-                  {courseOf(e) ? (
-                    <button type="button" className="event-course" onClick={() => open({ kind: 'subject', id: e.subjectId! })} title={`Open ${courseOf(e)!.name}`}>
-                      <SubjectIcon icon={courseOf(e)!.icon} name={courseOf(e)!.name} />{courseOf(e)!.name}
-                    </button>
-                  ) : <span className="event-course none">No course</span>}
-                  <div className="day-event-title">{e.title}</div>
-                  <div className="day-event-meta">
-                    {KINDS.find((k) => k.kind === e.kind)?.label}
-                    {!e.allDay && ` · ${fmtTime(e.startAt)}${e.endAt ? `–${fmtTime(e.endAt)}` : ''}`}
-                    {e.notebookId && notebooks.find((n) => n.id === e.notebookId) && (
-                      <> · <button type="button" className="link" onClick={() => open({ kind: 'notebook', id: e.notebookId! })}>{notebooks.find((n) => n.id === e.notebookId)!.label.split(' / ').pop()}</button></>
+            {dayEvents.map((e, i) => {
+              const course = courseOf(e);
+              const nb = e.notebookId ? notebooks.find((n) => n.id === e.notebookId) : undefined;
+              return (
+                <li key={e.id} className={`day-event ${e.kind}${e.done ? ' done' : ''}`} style={{ '--i': i, ...tint(e) } as React.CSSProperties}>
+                  <button type="button" className="check-btn" onClick={async () => { await studyApi.updateEvent(e.id, { ...e, done: !e.done }); load(); }} title={e.done ? 'Mark not done' : 'Mark done'}>
+                    {e.done ? <Check /> : null}
+                  </button>
+                  <div className="day-event-main">
+                    <div className="day-event-title">{e.title}</div>
+                    <div className="day-event-meta">
+                      <span className={`kind-tag ${e.kind}`}>{KINDS.find((k) => k.kind === e.kind)?.label}</span>
+                      <span>{e.allDay ? 'All day' : `${fmtTime(e.startAt)}${e.endAt ? `–${fmtTime(e.endAt)}` : ''}`}</span>
+                    </div>
+                    {(course || nb) && (
+                      <div className="day-event-links">
+                        {course && (
+                          <button type="button" className="event-course" onClick={() => open({ kind: 'subject', id: e.subjectId! })} title={`Open ${course.name}`}>
+                            <SubjectIcon icon={course.icon} name={course.name} />{course.name}
+                          </button>
+                        )}
+                        {nb && <button type="button" className="event-notebook" onClick={() => open({ kind: 'notebook', id: nb.id })}>{nb.label.split(' / ').pop()}</button>}
+                      </div>
                     )}
+                    {e.notes && <div className="event-notes">{e.notes}</div>}
                   </div>
-                  {e.notes && <div className="event-notes">{e.notes}</div>}
-                </div>
-                <button type="button" className="icon-btn ghost-icon" onClick={() => setEditing(e)} title="Edit"><Pencil /></button>
-              </li>
-            ))}
+                  <button type="button" className="icon-btn small day-event-edit" onClick={() => setEditing(e)} title="Edit" aria-label={`Edit ${e.title}`}><Pencil /></button>
+                </li>
+              );
+            })}
             {dayDues.map((d) => (
               <li key={`d${d.id}`} className={`day-event webassign${d.stale ? ' stale' : ''}`}>
                 <span className="check-btn static"><ClipboardCheck /></span>
                 <div className="day-event-main">
                   <div className="day-event-title">{d.title}</div>
                   <div className="day-event-meta">
-                    WebAssign · due {fmtTime(d.at)}
-                    {d.moved && <span className="tag moved" title="The due date changed since the last check"> moved</span>}
-                    {d.stale && <span className="tag stale" title="No longer listed in WebAssign - kept in case it comes back"> not listed any more</span>}
+                    <span className="kind-tag webassign">WebAssign</span>
+                    <span>Due {fmtTime(d.at)}</span>
+                    {d.moved && <span className="kind-tag moved" title="The due date changed since the last check">Moved</span>}
+                    {d.stale && <span className="kind-tag" title="No longer listed in WebAssign - kept in case it comes back">Not listed</span>}
                   </div>
                 </div>
-                <button type="button" className="link" onClick={() => open({ kind: 'solver' })}>open</button>
+                <button type="button" className="btn small" onClick={() => open({ kind: 'solver' })}>Open</button>
               </li>
             ))}
           </ul>
@@ -263,10 +291,11 @@ export function SchedulePage({ tree, open, refreshTree, reload = 0 }: {
             <div className="upcoming">
               <div className="panel-title">Coming up</div>
               {upcoming.map((e) => (
-                <button type="button" key={e.id} className="upcoming-row" onClick={() => { jumpTo(startOfDay(e.startAt)); setSelected(startOfDay(e.startAt)); }}>
+                <button type="button" key={e.id} className="upcoming-row" onClick={() => { jumpTo(startOfDay(e.startAt)); setSelected(startOfDay(e.startAt)); }}
+                  title={courseOf(e) ? `${courseOf(e)!.name} · ${e.title}` : e.title}>
                   <span className="kind-dot" style={tint(e)} />
-                  <span className="upcoming-title">{courseOf(e) && <span className="muted">{courseOf(e)!.name} · </span>}{e.title}</span>
-                  <span className="muted">{new Date(e.startAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+                  <span className="upcoming-title">{e.title}</span>
+                  <span className="upcoming-date">{shortWhen(e.startAt, today)}</span>
                 </button>
               ))}
             </div>
@@ -274,8 +303,7 @@ export function SchedulePage({ tree, open, refreshTree, reload = 0 }: {
           <p className="schedule-tip">
             <Bot />
             <span>
-              You can also manage dates from the <button type="button" className="link" onClick={() => open({ kind: 'chat', id: null })}>Chat</button> with
-              app control on, e.g. “move my midterm to Thursday at 2pm” or “add study sessions before each exam”.
+              Or ask in <button type="button" className="link" onClick={() => open({ kind: 'chat', id: null })}>Chat</button>: “move my midterm to Thursday”.
             </span>
           </p>
         </aside>

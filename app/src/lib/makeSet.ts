@@ -1,5 +1,6 @@
 import { generateCards, generateQuiz, type CardOptions, type GenSource, type QuizOptions, type StudyContext } from './studyGen';
 import { studyApi } from '../study/api';
+import { tidyTitle } from './titles';
 
 export type MadeSet = {
   id: number;
@@ -21,6 +22,7 @@ export async function makeSet(
   let title: string;
   let count: number;
   let skipped: string[];
+  const sourceTitles = src.kind === 'sources' ? [...new Set(src.hits.map((h) => h.sourceTitle))] : [];
   if (kind === 'cards') {
     const deck = await generateCards(ctx, src, options, progress);
     const fallback = src.kind === 'sources'
@@ -28,6 +30,7 @@ export async function makeSet(
       : null;
     options.stop?.throwIfStopped();
     progress('Saving the deck…');
+    deck.title = tidyTitle(deck.title, sourceTitles) || 'Flashcards';
     id = await studyApi.createDeck(notebookId, deck.title, deck.cards.map((c) => ({ ...c, sourceRefs: c.sourceRefs ?? fallback })));
     ({ title, skipped } = deck);
     count = deck.cards.length;
@@ -35,6 +38,7 @@ export async function makeSet(
     const quiz = await generateQuiz(ctx, src, notebookId, progress, options);
     options.stop?.throwIfStopped();
     progress('Saving the quiz…');
+    quiz.title = tidyTitle(quiz.title, sourceTitles) || 'Practice quiz';
     id = await studyApi.createQuiz(notebookId, quiz.title, quiz.questions);
     ({ title, skipped } = quiz);
     count = quiz.questions.length;

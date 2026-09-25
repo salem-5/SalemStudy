@@ -573,6 +573,12 @@ fn setup_blocking(app: &AppHandle, configured: &str, repair: bool) -> Result<Val
         emit("log", &format!("Skipped smolagents: {}", ai_help()));
     }
 
+    // Text recognition for label-the-diagram questions is part of every environment. If the download
+    // fails the rest still works; the status reports it missing and setup offers it again.
+    if let Err(e) = install(&OCR_PACKAGES, &format!("text recognition for diagrams (about {OCR_SIZE_MB} MB)")) {
+        emit("log", &format!("Text recognition could not be installed - {e}"));
+    }
+
     emit("stage", "Checking the environment…");
     let status = status_value(app, configured);
     if let Some(salem) = app.try_state::<crate::salem::Salem>() {

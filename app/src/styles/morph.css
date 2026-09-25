@@ -1,0 +1,30 @@
+/*
+ * Going into a deck or quiz, and back out (lib/morph.ts). The page is pictured before and after
+ * and the pictures move: the sidebar slides away as the page opens out to fill the window, and
+ * slides back as it settles into place again. The page's picture keeps its real size and is
+ * uncovered or covered by its growing frame, so nothing is squashed or re-laid out on the way;
+ * the new view rises in as the old one fades.
+ */
+
+.shell > .nav { view-transition-name: nav; }
+.shell-pane.study { view-transition-name: pane; }
+/* Hidden while a deck or quiz is open, so going in it is only leaving and coming back only arriving. */
+:root[data-immersive] .shell > .nav { view-transition-name: none; }
+/* The pictures stand in for the layout while they move; its own transitions must not run under them. */
+:root[data-morphing] :is(.shell, .shell > .nav, .shell-pane) { transition: none !important; }
+
+::view-transition-old(root), ::view-transition-new(root) { animation: none; }
+
+::view-transition-group(pane) { animation-duration: 380ms; animation-timing-function: var(--ease-drawer); }
+::view-transition-image-pair(pane) { overflow: hidden; border-radius: var(--r-lg); }
+::view-transition-old(pane), ::view-transition-new(pane) { width: 100%; height: 100%; object-fit: none; object-position: left top; }
+::view-transition-old(pane) { animation: morph-out 160ms ease-out both; }
+::view-transition-new(pane) { animation: morph-in 380ms var(--ease-drawer) both; }
+
+::view-transition-old(nav):only-child { animation: nav-away 240ms var(--ease-out) both; }
+::view-transition-new(nav):only-child { animation: nav-back 380ms var(--ease-drawer) both; }
+
+@keyframes morph-out { to { opacity: 0; } }
+@keyframes morph-in { from { opacity: 0; transform: translateY(10px) scale(0.985); } }
+@keyframes nav-away { to { opacity: 0; transform: translateX(-28px); } }
+@keyframes nav-back { from { opacity: 0; transform: translateX(-28px); } }

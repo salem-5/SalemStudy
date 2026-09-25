@@ -1,0 +1,162 @@
+/*
+ * Focus: the timer as the centrepiece with what you are working on beside it, and a quiet
+ * record of the week underneath. Also the stat tiles and charts other pages share.
+ */
+
+.focus-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  grid-template-areas: 'timer tasks' 'stats stats' 'chart chart';
+  gap: 18px;
+  align-items: stretch;
+}
+.focus-layout .card-panel { min-width: 0; margin: 0; }
+
+.focus-timer {
+  grid-area: timer;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 26px 24px 20px;
+  border-radius: var(--r-xl);
+  background: var(--panel);
+  box-shadow: var(--shadow-1);
+}
+.focus-timer .seg { width: min(100%, 340px); }
+.pomo-dial { position: relative; width: clamp(200px, 36vh, 300px); height: auto; aspect-ratio: 1; }
+.pomo-dial-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; text-align: center; }
+.pomo-clock { color: var(--text-strong); font: 600 clamp(44px, 8vh, 66px)/1 var(--display); font-variant-numeric: tabular-nums; letter-spacing: -0.035em; }
+.pomo-phase { margin: 0; color: var(--muted); font: 600 12.5px var(--sans); }
+.focus-timer.running .pomo-phase { color: var(--text); }
+.pomo-cycle { display: flex; gap: 6px; margin-top: 6px; }
+.pomo-cycle i { width: 7px; height: 7px; border-radius: 50%; background: var(--fill-3); transition: background-color var(--dur-3) ease; }
+.pomo-cycle i.on { background: var(--text-strong); }
+.pomo-ring { width: 100%; height: 100%; transform: rotate(-90deg); }
+.pomo-ring circle { fill: none; stroke-width: 5; }
+.pomo-ring-track { stroke: var(--fill-2); }
+.pomo-ring-fill { stroke: var(--text-strong); stroke-linecap: round; transition: stroke-dashoffset 400ms linear, stroke var(--dur-3) ease; }
+.pomo-ring.short .pomo-ring-fill, .pomo-ring.long .pomo-ring-fill { stroke: var(--text-2); }
+.pomo-now { display: flex; align-items: baseline; gap: 8px; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--text); font-size: 14px; }
+.pomo-now > .muted:first-child:not(:only-child) { flex: none; font: 600 12.5px var(--sans); }
+.pomo-actions { display: flex; align-items: center; gap: 12px; }
+.pomo-main { min-width: 140px; height: 44px; border-radius: var(--r-full); font-size: 15px; }
+.pomo-side { width: 44px; height: 44px; border-radius: 50%; background: var(--fill-2); }
+.pomo-side .lucide { width: 18px; height: 18px; }
+.pomo-hint { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12.5px; }
+.pomo-hint .link { font-size: 12.5px; }
+
+.focus-tasks { grid-area: tasks; display: flex; flex-direction: column; min-height: 0; padding: 20px; border-radius: var(--r-xl); }
+.task-add { display: flex; gap: 8px; margin-bottom: 12px; }
+.task-scroll { flex: 1; min-height: 120px; max-height: calc(36vh + 160px); padding-right: 2px; overflow-y: auto; overscroll-behavior: contain; }
+.tasks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.task { display: flex; align-items: center; gap: 12px; padding: 9px 10px; border-radius: var(--r); transition: background-color var(--dur-1) ease, opacity var(--dur-2) ease; }
+@media (hover: hover) {
+  .task:hover { background: var(--fill); }
+}
+.task.current { background: var(--fill-2); }
+.task.current .task-text { font-weight: 500; color: var(--text-strong); }
+.task.empty { padding: 14px 12px; border: 1.5px dashed var(--line-2); color: var(--muted); font: 13px/1.5 var(--sans); }
+.task.done .task-text { color: var(--muted); text-decoration: line-through; }
+.task-text { flex: 1; min-width: 0; font-size: 14px; }
+.check { display: grid; place-items: center; flex: none; width: 20px; height: 20px; padding: 0; border: 1.5px solid var(--line-3); border-radius: 50%; background: none; color: transparent; transition: background-color var(--dur-1) ease, border-color var(--dur-1) ease, transform var(--dur-1) var(--ease-out); }
+.check .lucide { width: 12px; height: 12px; stroke-width: 3; }
+.check:active { transform: scale(0.88); }
+@media (hover: hover) {
+  .check:hover:not(.on) { border-color: var(--text-2); }
+}
+.check.on { border-color: var(--accent-fill); background: var(--accent-fill); color: var(--on-accent); animation: pop var(--dur-3) var(--ease-out); }
+.task-x { display: grid; place-items: center; padding: 3px; border: 0; border-radius: var(--r-xs); background: none; color: var(--muted); opacity: 0; transition: opacity var(--dur-1) ease, color var(--dur-1) ease; }
+.task-x .lucide { width: 14px; height: 14px; }
+.task:hover .task-x, .task-x:focus-visible { opacity: 1; }
+@media (hover: hover) {
+  .task-x:hover { color: var(--text); }
+}
+.tasks-done-head { display: flex; align-items: center; justify-content: space-between; margin: 16px 0 6px; }
+
+.focus-stats { grid-area: stats; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.focus-stats > * { margin: 0; }
+.focus-chart { grid-area: chart; }
+.focus-settings { display: flex; flex-direction: column; gap: 14px; }
+.pomo-settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; align-items: end; }
+.pomo-volume { display: flex; align-items: flex-end; gap: 10px; }
+.pomo-volume .field { flex: 1; margin: 0; }
+.field.range input { padding: 0; border: 0; background: none; box-shadow: none; }
+
+.pomo-alarm { text-align: center; }
+.pomo-alarm-bell { display: inline-block; color: var(--text-strong); animation: ring 1.2s var(--ease-out) 2; }
+.pomo-alarm-bell .lucide { width: 36px; height: 36px; }
+.pomo-alarm p { margin: 12px 0 0; color: var(--text-2); line-height: 1.6; }
+
+/* ---------- Stat tiles and charts, shared with Progress ---------- */
+
+.stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 18px; }
+.stat { padding: 16px 18px; border-radius: var(--r-lg); background: var(--panel); box-shadow: var(--shadow-1); }
+.stat-label { color: var(--muted); font: 500 12.5px var(--sans); }
+.stat-value { margin-top: 6px; color: var(--text-strong); font: 650 26px/1.1 var(--display); font-variant-numeric: tabular-nums; letter-spacing: -0.025em; }
+.stat-sub { margin-top: 4px; color: var(--text-2); font-size: 12.5px; }
+
+.viz { position: relative; width: 100%; }
+.viz svg { display: block; overflow: visible; }
+.viz-grid { stroke: var(--line); stroke-width: 1; }
+.viz-base { stroke: var(--line-3); stroke-width: 1; }
+.viz-axis { fill: var(--muted); font: 11px var(--sans); }
+.viz-hit { fill: transparent; }
+@media (hover: hover) {
+  .viz-hit:hover { fill: var(--fill); }
+}
+.viz svg path, .viz svg rect:not(.viz-hit) { transition: d var(--dur-3) var(--ease-out), y var(--dur-3) var(--ease-out), height var(--dur-3) var(--ease-out); }
+.viz-line { fill: none; stroke: var(--series-1); stroke-width: 2.25; stroke-linejoin: round; stroke-linecap: round; }
+.viz-dot { fill: var(--series-1); stroke: var(--panel); stroke-width: 2; transition: r var(--dur-1) var(--ease-out); }
+.viz-cross { stroke: var(--line-3); stroke-dasharray: 2 3; }
+.viz-tip {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 130px;
+  padding: 8px 11px;
+  border-radius: var(--r);
+  background: var(--panel);
+  box-shadow: var(--shadow-pop);
+  color: var(--text-2);
+  font: 12px var(--sans);
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translate(-50%, calc(-100% - 10px));
+  animation: fade-in var(--dur-1) ease;
+}
+:root:not([data-theme='light']) .viz-tip { background: var(--panel-2); }
+.viz-tip b { color: var(--text-strong); font-weight: 600; }
+.viz-tip span { display: flex; align-items: center; gap: 6px; }
+.viz-tip em { margin-left: auto; padding-left: 10px; color: var(--text); font-style: normal; font-variant-numeric: tabular-nums; }
+.viz-tip i, .viz-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+.viz-legend { display: flex; gap: 16px; margin-top: 8px; color: var(--text-2); font-size: 12.5px; }
+.viz-legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+/* ---------- A background job's progress (making a deck or quiz) ---------- */
+
+.task-detail { display: flex; flex-direction: column; gap: 14px; }
+.task-detail-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: var(--r-md); background: var(--fill); }
+.task-detail-head.failed { background: var(--bad-wash); }
+.task-detail-icon { display: grid; place-items: center; flex: none; color: var(--text); }
+.task-detail-icon .lucide { width: 16px; height: 16px; }
+.task-detail-head.completed .task-detail-icon { color: var(--good); }
+.task-detail-head.failed .task-detail-icon { color: var(--bad); }
+.task-detail-head.cancelled .task-detail-icon { color: var(--muted); }
+.task-detail-now { min-width: 0; font-size: 13.5px; }
+.task-detail-time { flex: none; margin-left: auto; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.task-steps { display: flex; flex-direction: column; max-height: 46vh; margin: 0; padding: 0 0 0 2px; overflow: auto; list-style: none; }
+.task-steps li { display: flex; gap: 12px; padding: 8px 4px 8px 16px; box-shadow: inset 2px 0 0 var(--line-2); font-size: 13px; line-height: 1.45; }
+.task-steps li.now { box-shadow: inset 2px 0 0 var(--text-strong); color: var(--text); }
+.task-step-at { flex: none; width: 52px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.task-step-text { min-width: 0; color: var(--text-2); }
+.task-steps li.now .task-step-text { color: var(--text); }
+.task-detail-cost { font-variant-numeric: tabular-nums; }
+
+@media (max-width: 1180px) {
+  .focus-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'timer' 'tasks' 'stats' 'chart'; }
+}

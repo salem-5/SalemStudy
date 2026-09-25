@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, CalendarDays, ChevronRight, Search, ClipboardCheck, Globe, MessageSquare, PanelLeftClose, PanelLeftOpen, Plus, Settings as SettingsIcon, StickyNote, Timer } from 'lucide-react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ArrowUpRight, CalendarDays, ChevronRight, Pencil, Search, Trash, ClipboardCheck, Globe, House, MessageSquare, PanelLeftClose, PanelLeftOpen, Plus, Settings as SettingsIcon, StickyNote, Timer } from 'lucide-react';
 import { NotesApp } from './study/NotesApp';
 import App from './App';
 import { AiSettingsDialog } from './components/AiPanel';
@@ -7,7 +7,7 @@ import { TabModeDialog } from './components/TabMode';
 import { UpdateCenter } from './components/Updates';
 import { useChatRunCount } from './lib/chatRuns';
 import { useTasks } from './lib/salem/tasks';
-import { needsOnboarding, Onboarding } from './components/Onboarding';
+import { needsOnboarding, Onboarding, OPEN_SETUP } from './components/Onboarding';
 import { inTabMode } from './lib/tabClient';
 import { solverEnabled, useSolverEnabled } from './lib/features';
 import { Logo } from './components/Logo';
@@ -22,7 +22,18 @@ import { SearchPalette } from './components/SearchPalette';
 import { SubjectIcon, subjectColor } from './components/subjectIcons';
 import { FocusPage, PomodoroAlarm } from './components/Pomodoro';
 import { OpenFocus, ViewBar } from './components/ViewBar';
+import { WindowBar } from './components/WindowBar';
 import { fmtClock, remainingOf, usePomodoro } from './lib/pomodoro';
+import { keys } from './lib/keys';
+import { morph } from './lib/morph';
+
+/** The window's traffic lights as traffic.rs reports them, in points. */
+type Lights = { button: number; naturalStep: number; tightStep: number; width: number };
+/** As long as the sidebar's own fold (--dur-3), with the same strong ease-out. */
+const LIGHTS_MS = 260;
+const placeLights = (compact: number) => import('@tauri-apps/api/core')
+  .then(({ invoke }) => invoke<Lights | null>('traffic_lights', { compact }))
+  .catch(() => null);
 
 const store = {
   get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } },
@@ -71,7 +82,9 @@ export default function Shell() {
   const [onboarding, setOnboarding] = useState(false);
   useEffect(() => {
     const t = window.setTimeout(() => { void needsOnboarding().then(setOnboarding).catch(() => {}); }, 1200);
-    return () => window.clearTimeout(t);
+    const show = () => setOnboarding(true);
+    window.addEventListener(OPEN_SETUP, show);
+    return () => { window.clearTimeout(t); window.removeEventListener(OPEN_SETUP, show); };
   }, []);
   const canServe = !inTabMode();
   const [searching, setSearching] = useState(false);
@@ -108,6 +121,45 @@ export default function Shell() {
   }, [route]);
   useEffect(() => { store.set('wa.nav.folded', JSON.stringify(folded)); }, [folded]);
   useEffect(() => { store.set('wa.nav.small', navSmall ? '1' : '0'); }, [navSmall]);
+  // On a Mac the window's own lights sit in the sidebar. As it folds they close up, frame by frame
+  // with the sidebar's own animation, and the folded sidebar is sized from their width so they sit
+  // in its middle. AppKit can lay them out again when the window changes size, so they are put
+  // back then too.
+  const lights = useRef<{ metrics: Lights | null; compact: number | null }>({ metrics: null, compact: null });
+  useLayoutEffect(() => {
+    if (document.documentElement.dataset.chrome !== 'mac') return;
+    const target = navSmall ? 1 : 0;
+    const from = lights.current.compact ?? target;
+    let alive = true;
+    let raf = 0;
+    const widthAt = (m: Lights, c: number) => 2 * (m.naturalStep + (m.tightStep - m.naturalStep) * c) + m.button;
+    const setWidth = (m: Lights) => document.documentElement.style.setProperty('--lights-w', `${widthAt(m, target)}px`);
+    // Known from before: set the width now, in the same frame the sidebar starts to move.
+    if (lights.current.metrics) setWidth(lights.current.metrics);
+    void placeLights(from).then((m) => {
+      if (!m || !alive) return;
+      lights.current.metrics = m;
+      setWidth(m);
+      if (from === target) { lights.current.compact = target; return; }
+      const start = performance.now();
+      const tick = (now: number) => {
+        const t = Math.min(1, (now - start) / LIGHTS_MS);
+        const c = from + (target - from) * (1 - (1 - t) ** 5);
+        lights.current.compact = c;
+        void placeLights(c);
+        if (t < 1 && alive) raf = requestAnimationFrame(tick);
+      };
+      raf = requestAnimationFrame(tick);
+    });
+    return () => { alive = false; cancelAnimationFrame(raf); };
+  }, [navSmall]);
+  useEffect(() => {
+    if (document.documentElement.dataset.chrome !== 'mac') return;
+    let t = 0;
+    const onResize = () => { window.clearTimeout(t); t = window.setTimeout(() => void placeLights(lights.current.compact ?? 0), 120); };
+    window.addEventListener('resize', onResize);
+    return () => { window.clearTimeout(t); window.removeEventListener('resize', onResize); };
+  }, []);
 
   const subjectOf = (id: number) => tree?.find((s) => s.id === id);
   const notebookOf = (id: number) => {
@@ -126,7 +178,11 @@ export default function Shell() {
   });
 
   const open = useCallback((r: Route) => {
-    setRoute(r);
+    // Straight into a quiz (Continue on Home) takes over the window: animate that too. A deck gets
+    // there a moment later, once its cards are loaded, and the notebook animates that itself.
+    const takeover = r.kind === 'notebook' && r.open?.type === 'quiz' && !!r.open.run;
+    if (takeover) morph(() => setRoute(r));
+    else setRoute(r);
     if (r.kind === 'notebook') {
       const hit = tree?.find((s) => s.notebooks.some((n) => n.id === r.id));
       if (hit) setFolded((f) => f.filter((x) => x !== hit.id));
@@ -146,17 +202,17 @@ export default function Shell() {
   }), [open, refresh]);
 
   const subjectMenu = (s: SubjectNode): MenuItem[] => [
-    { kind: 'item', label: 'Open', onClick: () => open({ kind: 'subject', id: s.id }) },
-    { kind: 'item', label: 'New notebook…', onClick: () => actions.newNotebook(s.id) },
-    { kind: 'item', label: 'Rename…', onClick: () => actions.renameSubject(s) },
+    { kind: 'item', label: 'Open', icon: <ArrowUpRight />, onClick: () => open({ kind: 'subject', id: s.id }) },
+    { kind: 'item', label: 'New notebook…', icon: <Plus />, onClick: () => actions.newNotebook(s.id) },
+    { kind: 'item', label: 'Rename…', icon: <Pencil />, onClick: () => actions.renameSubject(s) },
     { kind: 'sep' },
-    { kind: 'item', label: 'Delete subject…', danger: true, onClick: () => actions.deleteSubject(s) },
+    { kind: 'item', label: 'Delete subject…', icon: <Trash />, danger: true, onClick: () => actions.deleteSubject(s) },
   ];
   const notebookMenu = (n: NotebookSummary): MenuItem[] => [
-    { kind: 'item', label: 'Open', onClick: () => open({ kind: 'notebook', id: n.id }) },
-    { kind: 'item', label: 'Edit…', onClick: () => actions.editNotebook(n) },
+    { kind: 'item', label: 'Open', icon: <ArrowUpRight />, onClick: () => open({ kind: 'notebook', id: n.id }) },
+    { kind: 'item', label: 'Edit…', icon: <Pencil />, onClick: () => actions.editNotebook(n) },
     { kind: 'sep' },
-    { kind: 'item', label: 'Delete notebook…', danger: true, onClick: () => actions.deleteNotebook(n) },
+    { kind: 'item', label: 'Delete notebook…', icon: <Trash />, danger: true, onClick: () => actions.deleteNotebook(n) },
   ];
 
   const inStudy = route.kind !== 'solver';
@@ -180,98 +236,97 @@ export default function Shell() {
   }
 
   return (
-    <div className={`shell${navSmall ? ' nav-small' : ''}`}>
-      <nav className="nav">
-        <div className="nav-brand">
+    <div className={`shell${navSmall ? ' nav-small' : ''}`} data-tauri-drag-region>
+      <nav className="nav" aria-label="Main">
+        <div className="nav-brand" data-tauri-drag-region="deep">
           <Logo className="nav-logo" />
           {!navSmall && <span className="nav-name">SalemStudy</span>}
           <span className="spacer" />
-          <button type="button" className="nav-fold" onClick={() => setNavSmall((v) => !v)} title={navSmall ? 'Expand sidebar' : 'Collapse sidebar'}>
+          <button type="button" className="icon-btn small nav-fold" onClick={() => setNavSmall((v) => !v)} title={navSmall ? 'Show the sidebar' : 'Hide the sidebar'}>
             {navSmall ? <PanelLeftOpen /> : <PanelLeftClose />}
           </button>
         </div>
 
-        <button type="button" className="nav-search" onClick={() => setSearching(true)} title="Search everything (⌘K)">
-          <Search className="nav-glyph" />{!navSmall && <><span>Search</span><kbd>⌘K</kbd></>}
+        <button type="button" className="nav-search" onClick={() => setSearching(true)} title={`Search everything (${keys('⌘K')})`}>
+          <Search className="nav-glyph" />{!navSmall && <><span>Search</span><kbd>{keys('⌘K')}</kbd></>}
         </button>
+
         <div className="nav-scroll">
-          <button type="button" className={`nav-item${route.kind === 'chat' ? ' on' : ''}`} onClick={() => open({ kind: 'chat', id: route.kind === 'chat' ? route.id : lastChat })} title={chatsRunning ? `${chatsRunning} answer${chatsRunning === 1 ? '' : 's'} being written` : 'Chat'}>
-            <MessageSquare className="nav-glyph" />{!navSmall && <span>Chat</span>}
-            {chatsRunning > 0 && <Busy what={`${chatsRunning} answer${chatsRunning === 1 ? '' : 's'} being written`} />}
-          </button>
-          <FocusNavItem on={route.kind === 'focus'} small={navSmall} onClick={() => open({ kind: 'focus' })} />
-          <button type="button" className={`nav-item${route.kind === 'schedule' ? ' on' : ''}`} onClick={() => open({ kind: 'schedule' })} title="Schedule">
-            <CalendarDays className="nav-glyph" />{!navSmall && <span>Schedule</span>}
-          </button>
-          <button type="button" className={`nav-item${route.kind === 'notes' ? ' on' : ''}`} onClick={() => open({ kind: 'notes' })} title="Notes">
-            <StickyNote className="nav-glyph" />{!navSmall && <span>Notes</span>}
-          </button>
-          <button type="button" className={`nav-item${route.kind === 'study' ? ' on' : ''}`} onClick={() => open({ kind: 'study' })} title={studyRunning ? `${studyRunning} thing${studyRunning === 1 ? '' : 's'} being made` : 'Study'}>
-            <BookOpen className="nav-glyph" />{!navSmall && <span>Study</span>}
-            {studyRunning > 0 && <Busy what={`${studyRunning} thing${studyRunning === 1 ? '' : 's'} being made`} />}
-          </button>
+          <div className="nav-group">
+            <NavItem icon={<House />} label="Home" small={navSmall} on={route.kind === 'study'} onClick={() => open({ kind: 'study' })}
+              busy={studyRunning ? `${studyRunning} thing${studyRunning === 1 ? '' : 's'} being made` : undefined} />
+            <NavItem icon={<MessageSquare />} label="Chat" small={navSmall} on={route.kind === 'chat'} onClick={() => open({ kind: 'chat', id: route.kind === 'chat' ? route.id : lastChat })}
+              busy={chatsRunning ? `${chatsRunning} answer${chatsRunning === 1 ? '' : 's'} being written` : undefined} />
+            <NavItem icon={<CalendarDays />} label="Schedule" small={navSmall} on={route.kind === 'schedule'} onClick={() => open({ kind: 'schedule' })} />
+            <NavItem icon={<StickyNote />} label="Notes" small={navSmall} on={route.kind === 'notes'} onClick={() => open({ kind: 'notes' })} />
+            <FocusNavItem on={route.kind === 'focus'} small={navSmall} onClick={() => open({ kind: 'focus' })} />
+          </div>
 
           {!navSmall && (
-            <div className="nav-tree">
+            <div className="nav-section">
+              <div className="nav-section-head">
+                <span>Subjects</span>
+                <button type="button" className="icon-btn small" onClick={actions.newSubject} title="New subject"><Plus /></button>
+              </div>
+              {tree && tree.length === 0 && (
+                <button type="button" className="nav-empty" onClick={actions.newSubject}>
+                  <Plus />Add your first subject
+                </button>
+              )}
               {tree?.map((s) => {
                 const isFolded = folded.includes(s.id);
                 return (
-                  <div key={s.id} className="nav-subject">
+                  <div key={s.id} className="nav-subject" style={{ '--subject': subjectColor(s) } as React.CSSProperties}>
                     <div
                       className={`nav-row subject${route.kind === 'subject' && route.id === s.id ? ' on' : ''}${activeSubject === s.id ? ' within' : ''}`}
                       onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, items: subjectMenu(s) }); }}
                     >
+                      <button type="button" className="nav-label" onClick={() => open({ kind: 'subject', id: s.id })}>
+                        <span className="nav-subject-badge"><SubjectIcon icon={s.icon} name={s.name} /></span>
+                        <span className="nav-text">{s.name}</span>
+                      </button>
+                      <button type="button" className="nav-add" onClick={() => actions.newNotebook(s.id)} title={`New notebook in ${s.name}`}><Plus /></button>
                       <button
                         type="button"
                         className="nav-caret"
                         onClick={() => setFolded((f) => (isFolded ? f.filter((x) => x !== s.id) : [...f, s.id]))}
-                        title={isFolded ? 'Expand' : 'Collapse'}
+                        title={isFolded ? `Show ${s.name}'s notebooks` : `Hide ${s.name}'s notebooks`}
+                        aria-expanded={!isFolded}
                       >
                         <ChevronRight className={isFolded ? '' : 'open'} />
                       </button>
-                      <button type="button" className="nav-label" onClick={() => open({ kind: 'subject', id: s.id })} style={{ '--subject': subjectColor(s) } as React.CSSProperties}>
-                        <SubjectIcon icon={s.icon} name={s.name} className="nav-subject-icon" />{s.name}
-                      </button>
                     </div>
-                    <div className={`collapse${isFolded ? '' : ' open'}`}><div>
-                    {s.notebooks.map((n) => (
-                      <button
-                        type="button"
-                        key={n.id}
-                        className={`nav-row notebook${route.kind === 'notebook' && route.id === n.id ? ' on' : ''}`}
-                        onClick={() => open({ kind: 'notebook', id: n.id })}
-                        onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, items: notebookMenu(n) }); }}
-                      >
-                        <span className="nav-label">{n.name}</span>
-                        {n.sourceCount > 0 && <span className="nav-count" title={`${n.sourceCount} sources`}>{n.sourceCount}</span>}
-                      </button>
-                    ))}
-                    {s.notebooks.length === 0 && (
-                      <button type="button" className="nav-row notebook ghost" onClick={() => actions.newNotebook(s.id)}><Plus />notebook</button>
-                    )}
+                    <div className={`collapse${isFolded ? '' : ' open'}`}><div className="nav-notebooks">
+                      {s.notebooks.map((n) => (
+                        <button
+                          type="button"
+                          key={n.id}
+                          className={`nav-row notebook${route.kind === 'notebook' && route.id === n.id ? ' on' : ''}`}
+                          onClick={() => open({ kind: 'notebook', id: n.id })}
+                          onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, items: notebookMenu(n) }); }}
+                        >
+                          <span className="nav-text">{n.name}</span>
+                        </button>
+                      ))}
+                      {s.notebooks.length === 0 && (
+                        <button type="button" className="nav-row notebook ghost" onClick={() => actions.newNotebook(s.id)}><Plus />New notebook</button>
+                      )}
                     </div></div>
                   </div>
                 );
               })}
-              <button type="button" className="nav-row add" onClick={actions.newSubject}><Plus />New subject</button>
             </div>
           )}
         </div>
 
         <div className="nav-foot">
           {solverOn && (
-            <button type="button" className={`nav-item${route.kind === 'solver' ? ' on' : ''}`} onClick={() => open({ kind: 'solver' })} title="Assignment Solver">
-              <ClipboardCheck className="nav-glyph" />{!navSmall && <span>Assignment Solver</span>}
-            </button>
+            <NavItem icon={<ClipboardCheck />} label="Assignment Solver" small={navSmall} on={route.kind === 'solver'} onClick={() => open({ kind: 'solver' })} />
           )}
           {canServe && (
-            <button type="button" className="nav-item" onClick={() => setTabModeOpen(true)} title="Open Salem in a browser tab">
-              <Globe className="nav-glyph" />{!navSmall && <span>Open in a tab</span>}
-            </button>
+            <NavItem icon={<Globe />} label="Open in a tab" small={navSmall} onClick={() => setTabModeOpen(true)} title="Open Salem in a browser tab" />
           )}
-          <button type="button" className="nav-item" onClick={() => (solverOn ? setSettingsSignal((n) => n + 1) : setSettingsOpen(true))} title="Settings">
-            <SettingsIcon className="nav-glyph" />{!navSmall && <span>Settings</span>}
-          </button>
+          <NavItem icon={<SettingsIcon />} label="Settings" small={navSmall} onClick={() => (solverOn ? setSettingsSignal((n) => n + 1) : setSettingsOpen(true))} />
         </div>
       </nav>
 
@@ -289,6 +344,7 @@ export default function Shell() {
       {onboarding && <Onboarding onClose={() => setOnboarding(false)} />}
       <PomodoroAlarm />
       <UpdateCenter />
+      {document.documentElement.dataset.chrome === 'win' && <WindowBar />}
       {searching && <SearchPalette tree={tree ?? []} open={open} onClose={() => setSearching(false)} />}
 
       <Toasts items={toasts} onDismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
@@ -351,13 +407,31 @@ function Busy({ what }: { what: string }) {
   return <span className="nav-busy" role="status" aria-label={what} title={what} />;
 }
 
+function NavItem({ icon, label, small, on = false, busy, title, onClick }: {
+  icon: React.ReactNode;
+  label: string;
+  small: boolean;
+  on?: boolean;
+  busy?: string;
+  title?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button type="button" className={`nav-item${on ? ' on' : ''}`} onClick={onClick} title={busy ?? title ?? (small ? label : undefined)} aria-current={on ? 'page' : undefined}>
+      <span className="nav-glyph">{icon}</span>
+      {!small && <span className="nav-text">{label}</span>}
+      {busy && <Busy what={busy} />}
+    </button>
+  );
+}
+
 function FocusNavItem({ on, small, onClick }: { on: boolean; small: boolean; onClick: () => void }) {
   const p = usePomodoro();
   const live = p.status !== 'idle';
   return (
-    <button type="button" className={`nav-item${on ? ' on' : ''}${live ? ` live ${p.phase}` : ''}`} onClick={onClick} title="Focus timer">
-      <Timer className="nav-glyph" />
-      {!small && <span>Focus</span>}
+    <button type="button" className={`nav-item${on ? ' on' : ''}${live ? ` live ${p.phase}` : ''}`} onClick={onClick} title={small ? 'Focus' : 'Focus timer'} aria-current={on ? 'page' : undefined}>
+      <span className="nav-glyph"><Timer /></span>
+      {!small && <span className="nav-text">Focus</span>}
       {!small && live && <span className={`nav-timer${p.status === 'paused' ? ' paused' : ''}`}>{fmtClock(remainingOf(p))}</span>}
     </button>
   );

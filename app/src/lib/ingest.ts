@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { toSupportedImage } from './ai';
-import { generateVision } from './salem/generate';
+import { generateQuick, generateVision } from './salem/generate';
+import { headingOf, TITLE_RULE, tidyTitle } from './titles';
 import { pythonStatus, runPython, sandboxName } from './python';
 import { studyApi, type Source, type SourceKind } from '../study/api';
 
@@ -330,7 +331,7 @@ export async function ingest(s: Source, file?: File): Promise<Source> {
   }
 }
 
-export async function addFiles(notebookId: number, files: File[], onAdded: () => void): Promise<string[]> {
+export async function addFiles(notebookId: number, files: File[], onAdded: () => void, options: { nameFromContent?: boolean } = {}): Promise<string[]> {
   const problems: string[] = [];
   for (const file of files) {
     const k = kindOf(file);
@@ -347,9 +348,70 @@ export async function addFiles(notebookId: number, files: File[], onAdded: () =>
       continue;
     }
     onAdded();
-    void ingest(s, k === 'docx' ? undefined : file).then(onAdded);
+    void ingest(s, k === 'docx' ? undefined : file).then(async (done) => {
+      onAdded();
+      if (!options.nameFromContent || done.status !== 'ready') return;
+      const text = (await studyApi.sampleSources([done.id], 6000).catch(() => [])).map((h) => h.text).join('\n');
+      await renameFromText(done.id, text, onAdded);
+    });
   }
   return problems;
+}
+
+/** A pasted file keeps its own name, unless it is the clipboard's generic one ("image.png"). */
+export function pastedFile(file: File, at = new Date()): { file: File; generic: boolean } {
+  if (!/^(image|clipboard|untitled|pasted)[\s._-]*\d*\.[a-z0-9]+$/i.test(file.name) && file.name) return { file, generic: false };
+  const ext = file.name.match(/\.[a-z0-9]+$/i)?.[0] ?? (file.type.startsWith('image/') ? `.${file.type.slice(6).replace('jpeg', 'jpg')}` : '');
+  const when = at.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const name = `${file.type.startsWith('image/') ? 'Pasted image' : 'Pasted file'} ${when}${ext}`.replace(/[/:]/g, '.');
+  return { file: new File([file], name, { type: file.type, lastModified: file.lastModified }), generic: true };
+}
+
+/** Until the model has named it: the first few words of the text. */
+const firstWords = (text: string) => {
+  const words = text.replace(/[#*_`>|\\$]+/g, ' ').split(/\s+/).filter(Boolean);
+  return words.length ? `${words.slice(0, 6).join(' ')}${words.length > 6 ? '…' : ''}` : 'Pasted text';
+};
+
+/** A short name for a piece of course material, from what it says; null if it cannot be named. */
+export async function nameMaterial(text: string): Promise<string | null> {
+  if (!text.trim()) return null;
+  const args = await generateQuick<{ title?: unknown }>({
+    feature: 'sources',
+    system: `Name this piece of course material for the student's list of sources: ${TITLE_RULE}`,
+    instruction: text.slice(0, 6000),
+    schema: { type: 'object', required: ['title'], properties: { title: { type: 'string' } } },
+  }).catch(() => null);
+  const title = tidyTitle(String(args?.title ?? ''));
+  return title ? title.slice(0, 80) : null;
+}
+
+async function renameFromText(id: number, text: string, onRenamed: () => void) {
+  const title = await nameMaterial(text);
+  if (!title) return;
+  await studyApi.renameSource(id, title).catch(() => {});
+  onRenamed();
+}
+
+/**
+ * Pasted text becomes a Markdown file in the notebook, read like any text file. It is titled by
+ * its own heading when it has one; otherwise it shows its first words at once and is renamed as
+ * soon as the model has named it.
+ */
+export async function addPastedText(notebookId: number, text: string, onAdded: () => void): Promise<string[]> {
+  const heading = headingOf(text);
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[T:]/g, '-');
+  const file = new File([text], `${(heading ?? 'pasted-text').replace(/[^\w\s-]+/g, '').trim().replace(/\s+/g, '-').toLowerCase() || 'pasted-text'}-${stamp}.md`, { type: 'text/markdown' });
+  let s: Source;
+  try {
+    s = await studyApi.addSource({ notebookId, kind: 'text', title: heading ?? firstWords(text), filename: file.name, mime: file.type, data: await readDataUrl(file) });
+  } catch (e) {
+    return [`Pasted text: ${e instanceof Error ? e.message : String(e)}`];
+  }
+  onAdded();
+  void ingest(s, file).then(onAdded);
+  if (!heading) void renameFromText(s.id, text, onAdded);
+  return [];
 }
 
 export async function addYoutube(notebookId: number, url: string, onAdded: () => void): Promise<void> {

@@ -1,15 +1,24 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Check, Loader2, TriangleAlert, X } from 'lucide-react';
 import { Modal } from './Dialogs';
-import { onPythonProgress, pythonSetup, pythonStatus, type PythonStatus } from '../lib/python';
+import { installOcr, onPythonProgress, pythonSetup, pythonStatus, type PythonStatus } from '../lib/python';
+import { readPipLine, type Step } from '../lib/pipProgress';
 import { runtimeStatus, type RuntimeStatus } from '../lib/salem/runtime';
 
 const SKIP_KEY = 'wa.onboarding.skipped';
+/** Bumped when setup gains a requirement, so a "do not ask again" from before still shows it once. */
+const SKIP_VERSION = '2';
 
 export const onboardingSkipped = (): boolean => {
-  try { return localStorage.getItem(SKIP_KEY) === '1'; } catch { return false; }
+  try { return localStorage.getItem(SKIP_KEY) === SKIP_VERSION; } catch { return false; }
 };
+
+/** Anything can ask for setup to be shown, e.g. an option that needs a package that is missing. */
+export const OPEN_SETUP = 'wa:open-setup';
+export const openSetup = () => window.dispatchEvent(new Event(OPEN_SETUP));
+/** Sent after setup has installed something, so anything waiting on a package can look again. */
+export const PYTHON_CHANGED = 'wa:python-changed';
 
 export async function needsOnboarding(): Promise<boolean> {
   if (onboardingSkipped()) return false;
@@ -17,24 +26,35 @@ export async function needsOnboarding(): Promise<boolean> {
     pythonStatus().catch(() => null),
     runtimeStatus().catch(() => null),
   ]);
-  return !python?.ready || !ai?.ready;
+  return !python?.ready || !python.ocrReady || !ai?.ready;
 }
 
 export function Onboarding({ onClose }: { onClose: () => void }) {
   const [python, setPython] = useState<PythonStatus | null>(null);
   const [ai, setAi] = useState<RuntimeStatus | null>(null);
-  const [busy, setBusy] = useState<'python' | null>(null);
+  const [busy, setBusy] = useState<'python' | 'ocr' | null>(null);
   const [log, setLog] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
-    pythonStatus().then(setPython).catch(() => setPython(null));
+    pythonStatus().then((s) => { setPython(s); window.dispatchEvent(new Event(PYTHON_CHANGED)); }).catch(() => setPython(null));
     runtimeStatus().then(setAi).catch(() => setAi(null));
   }, []);
   useEffect(refresh, [refresh]);
 
+  // pip reports a download as "Progress 123 of 456" lines: shown as a percentage, not raw.
+  const step = useRef<Step>({ stage: '', file: null, files: 0, done: 0, total: 0, installing: false });
   useEffect(() => {
-    const un = onPythonProgress((p) => setLog(p.line));
+    const un = onPythonProgress((p) => {
+      if (p.stage !== 'log') { setLog(p.line); return; }
+      const next = readPipLine(step.current, p.line);
+      const changed = next !== step.current;
+      step.current = next;
+      if (!changed) { if (!/^\s*$/.test(p.line)) setLog(p.line); return; }
+      setLog(next.installing ? next.stage
+        : next.file ? `Downloading ${next.file}${next.total ? ` · ${Math.min(100, Math.round((next.done / next.total) * 100))}%` : '…'}`
+          : p.line);
+    });
     return () => { void un.then((f) => f()); };
   }, []);
 
@@ -42,6 +62,7 @@ export function Onboarding({ onClose }: { onClose: () => void }) {
     setBusy('python');
     setError(null);
     setLog('Starting…');
+    step.current = { stage: '', file: null, files: 0, done: 0, total: 0, installing: false };
     try {
       await pythonSetup(false);
       await invoke('salem_restart').catch(() => {});
@@ -53,8 +74,23 @@ export function Onboarding({ onClose }: { onClose: () => void }) {
     refresh();
   };
 
+  const addOcr = async () => {
+    setBusy('ocr');
+    setError(null);
+    setLog('Starting…');
+    step.current = { stage: '', file: null, files: 0, done: 0, total: 0, installing: false };
+    try {
+      await installOcr();
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e));
+    }
+    setLog('');
+    setBusy(null);
+    refresh();
+  };
+
   const rows: {
-    key: 'python' | 'ai';
+    key: 'python' | 'ai' | 'ocr';
     name: string;
     what: string;
     ready: boolean;
@@ -83,6 +119,14 @@ export function Onboarding({ onClose }: { onClose: () => void }) {
         ? { label: 'Repair the environment', run: () => void install() }
         : undefined,
     },
+    {
+      key: 'ocr',
+      name: 'Diagram labelling',
+      what: 'Reads the labels on diagrams in your sources, so quizzes can cover them for you to fill in. About 240 MB, and it runs on your computer.',
+      ready: !!python?.ocrReady,
+      detail: python?.ocrReady ? 'Text recognition is installed.' : python?.ready ? 'Not installed yet.' : 'Installed along with Python.',
+      action: python?.ready && !python.ocrReady ? { label: 'Install', run: () => void addOcr() } : undefined,
+    },
   ];
 
   const allReady = rows.every((r) => r.ready);
@@ -91,8 +135,8 @@ export function Onboarding({ onClose }: { onClose: () => void }) {
     <Modal title="Setting Salem up" onClose={busy ? () => {} : onClose} wide>
       <p className="muted small">
         Salem keeps its own Python, separate from anything else on your machine. It runs the maths,
-        reads your PDFs, checks quiz answers, typesets your exports and hosts the assistant. You can
-        set it up here - the app works without it, it just does a great deal less.
+        reads your PDFs and the labels on diagrams, checks quiz answers, typesets your exports and hosts
+        the assistant. You can set it up here - the app works without it, it just does a great deal less.
       </p>
 
       <div className="onboard-list">
@@ -118,7 +162,7 @@ export function Onboarding({ onClose }: { onClose: () => void }) {
 
       <div className="modal-actions">
         <button type="button" className="btn ghost" disabled={!!busy}
-          onClick={() => { try { localStorage.setItem(SKIP_KEY, '1'); } catch { } onClose(); }}>
+          onClick={() => { try { localStorage.setItem(SKIP_KEY, SKIP_VERSION); } catch { } onClose(); }}>
           Do not ask again
         </button>
         <span className="spacer" />

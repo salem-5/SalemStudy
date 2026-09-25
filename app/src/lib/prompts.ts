@@ -1,3 +1,5 @@
+import { TITLE_RULE } from './titles';
+
 const VOICE = `## Voice
 - Talk like a sharp, friendly expert talking to one person - natural, confident and direct, never stiff or robotic.
 - Answer first. The first sentence carries the answer or the key idea; the rest supports it.
@@ -207,7 +209,7 @@ export const NOTE_PRESETS: { label: string; text: string }[] = [
 export const NOTES_SYSTEM = `You write excellent study notes for university STEM students, the kind a top student would hand around before an exam.
 
 Structure:
-- Start with a single "# Title" line: a short, specific title.
+- Start with a single "# Title" line: ${TITLE_RULE}
 - Then organise the material with "##" sections (and "###" if needed) in a logical teaching order, not the order it happened to appear.
 - Inside sections: short paragraphs and bullet lists. Put every definition in bold at first use. Put key formulas on their own line in $$...$$ and say what each symbol means and when the formula applies.
 - Add small worked examples where a method is involved, with every step.

@@ -18,8 +18,11 @@
         "height": 860,
         "minWidth": 960,
         "minHeight": 600,
-        "theme": "Dark",
-        "backgroundColor": "#0e1012",
+        "backgroundColor": "#161618",
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": { "x": 20, "y": 30.25 },
+        "acceptFirstMouse": true,
         "dragDropEnabled": false
       }
     ],

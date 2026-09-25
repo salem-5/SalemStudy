@@ -6,7 +6,7 @@ export const OpenFocus = createContext<() => void>(() => {});
 export function ViewBar({ children, actions }: { children: React.ReactNode; actions?: React.ReactNode }) {
   const openFocus = useContext(OpenFocus);
   return (
-    <header className="viewbar">
+    <header className="viewbar" data-tauri-drag-region="deep">
       <div className="viewbar-title">{children}</div>
       <span className="spacer" />
       {actions}

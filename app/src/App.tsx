@@ -443,7 +443,7 @@ export default function App({ active = true, settingsSignal = 0 }: { active?: bo
 
   return (
     <div className={`app${aiOpen ? ' ai-open' : ''}`}>
-      <header className="topbar">
+      <header className="topbar" data-tauri-drag-region="deep">
         <div className="logo"><span>Assignment Solver</span></div>
         <div className="crumb">
           {assignment ? (

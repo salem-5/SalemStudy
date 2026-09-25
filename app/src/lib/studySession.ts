@@ -95,3 +95,22 @@ export function pruneDeckSession(session: DeckSession, cardIds: number[]): DeckS
 }
 
 export const answeredCount = (session: QuizSession | null) => (session ? Object.keys(session.answers).length : 0);
+
+/**
+ * Where to pick a quiz back up: the first question in its order that has no answer yet, so
+ * questions skipped with Next are not left behind. With every one answered, where it was left.
+ */
+export function quizResumeAt(session: Pick<QuizSession, 'answers' | 'pos'>, order: number[]): number {
+  const at = order.findIndex((i) => session.answers[i] === undefined);
+  return at >= 0 ? at : Math.max(0, Math.min(session.pos, order.length - 1));
+}
+
+/** The same for a deck: the first card in the saved order not yet marked right or wrong. */
+export function deckResumeAt(session: Pick<DeckSession, 'order' | 'results' | 'pos'>): number {
+  const at = session.order.findIndex((id) => session.results[id] === undefined);
+  return at >= 0 ? at : Math.min(session.pos, session.order.length);
+}
+
+/** How many cards of a saved run have been marked, which is what "seen" means to the student. */
+export const deckMarkedCount = (session: Pick<DeckSession, 'order' | 'results'>) =>
+  session.order.filter((id) => session.results[id] !== undefined).length;

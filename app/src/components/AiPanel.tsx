@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ProviderSettings } from './ProviderSettings';
 import { Select } from './Select';
-import { Download, Monitor, Moon, RectangleHorizontal, Search, Settings as SettingsIcon, Square, Sun, TriangleAlert, Upload, X } from 'lucide-react';
+import { Database, Download, Gauge, Monitor, Moon, Search, Settings as SettingsIcon, SlidersHorizontal, Sparkles, SquareTerminal, Sun, TriangleAlert, Upload, UserRound, X } from 'lucide-react';
 import type { Box, Question } from '../types';
 import type { ChatEntry, useSolver } from '../lib/solver';
 import { deepseekBalance, getAiConfig, setAiConfig, type AiConfig, type Balance, type ConfigPatch, type Effort } from '../lib/ai';
@@ -17,7 +17,7 @@ import { studyApi, type MemoryState, type UsageSummary } from '../study/api';
 import { setSolverEnabled, useSolverEnabled } from '../lib/features';
 import { exportData, fmtBytes, importData, pickImport, resetData, type ExportInfo } from '../lib/dataFile';
 import { TONES, setPersonal, usePersonal } from '../lib/personal';
-import { ACCENTS, PALETTES, paletteOf, setAccentPref, setShapePref, setThemePref, useAccentPref, useShapePref, useThemePref, type Palette, type ShapePref } from '../lib/theme';
+import { ACCENTS, PALETTES, paletteOf, setAccentPref, setThemePref, useAccentPref, useThemePref, type Palette, type ThemePref } from '../lib/theme';
 
 type Solver = ReturnType<typeof useSolver>;
 
@@ -363,7 +363,7 @@ function PythonSection({ cfg, patch, onChanged, solverOn }: {
   const ready = status?.ready === true;
   return (
     <section>
-      <h4>PYTHON</h4>
+      <h4>Python</h4>
       <div className="account-row">
         <span className={`py-badge ${ready ? 'ok' : 'bad'}`}>{ready ? 'READY' : 'NOT SET UP'}</span>
         {status?.version && <span className="muted">Python {status.version} · {status.source === 'venv' ? 'app environment' : 'custom interpreter'}</span>}
@@ -423,6 +423,16 @@ function PythonSection({ cfg, patch, onChanged, solverOn }: {
   );
 }
 
+type PrefPage = 'general' | 'ai' | 'personal' | 'python' | 'usage' | 'data';
+const PREF_PAGES: { id: PrefPage; label: string; icon: React.ReactNode }[] = [
+  { id: 'general', label: 'General', icon: <SlidersHorizontal /> },
+  { id: 'ai', label: 'AI model', icon: <Sparkles /> },
+  { id: 'personal', label: 'About you', icon: <UserRound /> },
+  { id: 'python', label: 'Python', icon: <SquareTerminal /> },
+  { id: 'usage', label: 'Spending', icon: <Gauge /> },
+  { id: 'data', label: 'Your data', icon: <Database /> },
+];
+
 export function AiSettingsDialog({ onClose, onSaved, onClearCache, onPythonChanged }: {
   onClose: () => void;
   onSaved: (c: AiConfig) => void;
@@ -438,6 +448,7 @@ export function AiSettingsDialog({ onClose, onSaved, onClearCache, onPythonChang
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const solverOn = useSolverEnabled();
+  const [page, setPage] = useState<PrefPage>('general');
 
   const apply = (c: AiConfig) => {
     setCfg(c);
@@ -477,100 +488,114 @@ export function AiSettingsDialog({ onClose, onSaved, onClearCache, onPythonChang
   };
 
   return (
-    <Modal title="SETTINGS" onClose={onClose} wide>
-      <div className="ai-settings">
-        <section>
-          <h4>MODEL</h4>
-          <ProviderSettings solverOn={solverOn} onChanged={(c) => { setCfg(c); onSaved(c); }} />
-        </section>
+    <Modal title="Settings" onClose={onClose} wide className="prefs-modal">
+      <div className="prefs">
+        <nav className="prefs-nav" aria-label="Settings sections">
+          {PREF_PAGES.map((p) => (
+            <button key={p.id} type="button" className={`prefs-tab${page === p.id ? ' on' : ''}`} onClick={() => setPage(p.id)} aria-current={page === p.id ? 'page' : undefined}>
+              {p.icon}<span>{p.label}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="prefs-page ai-settings" key={page}>
+          {page === 'general' && <>
+            <section>
+              <h4>Appearance</h4>
+              <ThemePicker />
+            </section>
+            <section>
+              <h4>Window</h4>
+              <TrayToggle />
+            </section>
+            <UpdatesSection />
+            <section>
+              <h4>Features</h4>
+              <label className="feature-row">
+                <span className="feature-text">
+                  <b>Assignment Solver</b>
+                  <span className="muted">Solve WebAssign assignments with the AI, through the userscript in your browser. Adds a sidebar entry and its own settings here.</span>
+                </span>
+                <span className="switch">
+                  <input type="checkbox" checked={solverOn} onChange={(e) => setSolverEnabled(e.target.checked)} />
+                  <span className="switch-track"><span className="switch-thumb" /></span>
+                </span>
+              </label>
+            </section>
+          </>}
 
-        {cfg?.provider === 'deepseek' && (
-          <section>
-            <h4>BALANCE</h4>
-            <BalanceRow />
-          </section>
-        )}
+          {page === 'ai' && <>
+            <section>
+              <h4>Model</h4>
+              <ProviderSettings solverOn={solverOn} onChanged={(c) => { setCfg(c); onSaved(c); }} />
+            </section>
+            {cfg?.provider === 'deepseek' && (
+              <section>
+                <h4>Balance</h4>
+                <BalanceRow />
+              </section>
+            )}
+            <section>
+              <h4>Reasoning</h4>
+              <label>
+                <span>How hard to think</span>
+                <Select className="field-input" value={effort} onChange={(v) => setEffort(v as Effort)}
+                  options={[
+                    { value: 'low', label: 'Fast', hint: 'least reasoning per step' },
+                    { value: 'high', label: 'Balanced' },
+                    { value: 'max', label: 'Thorough', hint: 'slowest' },
+                  ]} />
+                <small>
+                  An agent spends most of its steps choosing a tool, where extra reasoning buys
+                  nothing and costs a second each time. Turn it up for a hard task.
+                </small>
+              </label>
+              {solverOn && <div className="ai-settings-row">
+                <label>
+                  <span>Max attempts per question</span>
+                  <input type="number" min={1} max={10} value={maxA} onChange={(e) => setMaxA(Number(e.target.value))} />
+                </label>
+                <label>
+                  <span>Pause for approval after N misses</span>
+                  <input type="number" min={0} max={10} value={pause} onChange={(e) => setPause(Number(e.target.value))} />
+                </label>
+              </div>}
+            </section>
+          </>}
 
-        <section>
-          <h4>APPEARANCE</h4>
-          <ThemePicker />
-        </section>
+          {page === 'personal' && <>
+            <PersonalSection />
+            <MemorySection />
+          </>}
 
-        <section>
-          <h4>WINDOW</h4>
-          <TrayToggle />
-        </section>
+          {page === 'python' && (
+            <PythonSection cfg={py} patch={(p) => setPy((v) => ({ ...v, ...p }))} onChanged={onPythonChanged} solverOn={solverOn} />
+          )}
 
-        <UpdatesSection />
+          {page === 'usage' && <>
+            <UsageSection />
+            <RuntimeSection />
+          </>}
 
-        <PersonalSection />
-
-        <MemorySection />
-
-        <section>
-          <h4>FEATURES</h4>
-          <label className="feature-row">
-            <span className="feature-text">
-              <b>Assignment Solver</b>
-              <span className="muted">Solve WebAssign assignments with the AI, through the userscript in your browser. Adds a sidebar entry and its own settings here.</span>
-            </span>
-            <span className="switch">
-              <input type="checkbox" checked={solverOn} onChange={(e) => setSolverEnabled(e.target.checked)} />
-              <span className="switch-track"><span className="switch-thumb" /></span>
-            </span>
-          </label>
-        </section>
-
-        <UsageSection />
-
-        <RuntimeSection />
-
-        <DataSection />
-
-        <PythonSection cfg={py} patch={(p) => setPy((v) => ({ ...v, ...p }))} onChanged={onPythonChanged} solverOn={solverOn} />
-
-        {solverOn && <section>
-          <h4>CACHE</h4>
-          <div className="account-row">
-            <button type="button" className="btn ghost" onClick={onClearCache}>Clear question cache</button>
-            <span className="muted">
-              Questions are cached this session. Refetches left: {refetchesLeft()}. Completed assignments are never refetched.
-            </span>
-          </div>
-        </section>}
-
-        <section>
-          <h4>REASONING</h4>
-          <label>
-            <span>How hard to think</span>
-            <Select className="field-input" value={effort} onChange={(v) => setEffort(v as Effort)}
-              options={[
-                { value: 'low', label: 'Fast', hint: 'least reasoning per step' },
-                { value: 'high', label: 'Balanced' },
-                { value: 'max', label: 'Thorough', hint: 'slowest' },
-              ]} />
-            <small>
-              An agent spends most of its steps choosing a tool, where extra reasoning buys
-              nothing and costs a second each time. Turn it up for a hard task.
-            </small>
-          </label>
-          {solverOn && <div className="ai-settings-row">
-            <label>
-              <span>Max attempts per question</span>
-              <input type="number" min={1} max={10} value={maxA} onChange={(e) => setMaxA(Number(e.target.value))} />
-            </label>
-            <label>
-              <span>Pause for approval after N misses</span>
-              <input type="number" min={0} max={10} value={pause} onChange={(e) => setPause(Number(e.target.value))} />
-            </label>
-          </div>}
-        </section>
-
-        {err && <div className="ai-settings-err">{err}</div>}
-        <div className="modal-actions">
-          <button type="button" className="btn ghost" onClick={onClose}>Close</button>
-          <button type="button" className="btn primary" disabled={saving} onClick={save}>{saving ? 'Saving…' : 'Save'}</button>
+          {page === 'data' && <>
+            <DataSection />
+            {solverOn && <section>
+              <h4>Question cache</h4>
+              <div className="account-row">
+                <button type="button" className="btn ghost" onClick={onClearCache}>Clear question cache</button>
+                <span className="muted">
+                  Questions are cached this session. Refetches left: {refetchesLeft()}. Completed assignments are never refetched.
+                </span>
+              </div>
+            </section>}
+          </>}
         </div>
+      </div>
+      {err && <div className="ai-settings-err">{err}</div>}
+      <div className="modal-actions prefs-foot">
+        <span className="muted small">Appearance and most settings apply straight away.</span>
+        <span className="spacer" />
+        <button type="button" className="btn ghost" onClick={onClose}>Close</button>
+        <button type="button" className="btn primary" disabled={saving} onClick={save}>{saving ? 'Saving…' : 'Save'}</button>
       </div>
     </Modal>
   );
@@ -597,49 +622,39 @@ function TrayToggle() {
 function ThemePicker() {
   const pref = useThemePref();
   const accent = useAccentPref();
-  const shape = useShapePref();
   const preset = ACCENTS.some((a) => a.color === accent);
   const showing = paletteOf(pref);
   const swatch = (p: Palette) => (
-    <span className="theme-mini" style={{ '--b': p.swatch[0], '--p': p.swatch[1], '--t': p.swatch[2], '--a': p.swatch[3] } as React.CSSProperties}>
+    <span className="theme-mini" style={{ '--b': p.swatch[0], '--p': p.swatch[1], '--t': p.swatch[2], '--a': accent || p.swatch[3] } as React.CSSProperties}>
       <i className="mini-side" /><i className="mini-card"><b /><b /><em /></i>
     </span>
   );
+  const light = PALETTES.find((p) => p.id === 'light')!;
+  const dark = PALETTES.find((p) => p.id === 'dark')!;
+  const options: { id: ThemePref; name: string; icon: React.ReactNode; preview: React.ReactNode; hint: string }[] = [
+    { id: 'system', name: 'Automatic', icon: <Monitor />, preview: <span className="theme-mini split">{swatch(light)}{swatch(dark)}</span>, hint: 'Light or dark, following your computer' },
+    { id: 'light', name: 'Light', icon: <Sun />, preview: swatch(light), hint: 'Always light' },
+    { id: 'dark', name: 'Dark', icon: <Moon />, preview: swatch(dark), hint: 'Always dark' },
+  ];
   return (
     <>
-      <div className="theme-grid" role="radiogroup" aria-label="Theme">
-        <button type="button" role="radio" aria-checked={pref === 'system'} className={`theme-opt${pref === 'system' ? ' on' : ''}`}
-          onClick={() => setThemePref('system')} title="Graphite or Paper, following your system">
-          <span className="theme-mini split">{swatch(PALETTES.find((p) => p.id === 'dark')!)}{swatch(PALETTES.find((p) => p.id === 'light')!)}</span>
-          <span className="theme-name"><Monitor />System</span>
-        </button>
-        {PALETTES.map((p) => (
-          <button key={p.id} type="button" role="radio" aria-checked={pref === p.id} className={`theme-opt${pref === p.id ? ' on' : ''}`}
-            onClick={() => setThemePref(p.id)} title={`${p.name} (${p.base})`}>
-            {swatch(p)}
-            <span className="theme-name">{p.base === 'dark' ? <Moon /> : <Sun />}{p.name}</span>
+      <div className="theme-grid" role="radiogroup" aria-label="Appearance">
+        {options.map((o) => (
+          <button key={o.id} type="button" role="radio" aria-checked={pref === o.id} className={`theme-opt${pref === o.id ? ' on' : ''}`}
+            onClick={() => setThemePref(o.id)} title={o.hint}>
+            {o.preview}
+            <span className="theme-name">{o.icon}{o.name}</span>
           </button>
         ))}
       </div>
-      <div className="accent-row" role="radiogroup" aria-label="Shape">
-        <span>Shape</span>
-        <div className="seg small shape-seg" style={{ '--n': 2 } as React.CSSProperties}>
-          {(['sharp', 'rounded'] as ShapePref[]).map((v) => (
-            <button key={v} type="button" role="radio" aria-checked={shape === v} className={`seg-item${shape === v ? ' on' : ''}`} onClick={() => setShapePref(v)}>
-              {v === 'sharp' ? <><Square />Sharp</> : <><RectangleHorizontal />Rounded</>}
-            </button>
-          ))}
-          <span className="seg-glider" style={{ transform: `translateX(${shape === 'sharp' ? 0 : 100}%)` }} />
-        </div>
-      </div>
       <div className="accent-row" role="radiogroup" aria-label="Accent colour">
-        <span>Accent</span>
+        <span>Accent colour</span>
         {ACCENTS.map((a) => (
-          <button key={a.name} type="button" role="radio" aria-checked={accent === a.color} title={a.color ? a.name : `${showing.name}'s own`}
+          <button key={a.name} type="button" role="radio" aria-checked={accent === a.color} title={a.name}
             className={`accent-dot${accent === a.color ? ' on' : ''}`} style={{ '--c': a.color || showing.swatch[3] } as React.CSSProperties}
             onClick={() => setAccentPref(a.color)} />
         ))}
-        <label className={`accent-dot accent-custom${preset ? '' : ' on'}`} title="Custom colour">
+        <label className={`accent-dot accent-custom${preset ? '' : ' on'}`} title="Pick your own colour">
           <input type="color" value={accent || showing.swatch[3]} onChange={(e) => setAccentPref(e.target.value)} />
         </label>
       </div>
@@ -664,7 +679,7 @@ function RuntimeSection() {
 
   return (
     <section>
-      <h4>AI RUNTIME</h4>
+      <h4>AI runtime</h4>
       {health ? (
         health.ready ? (
           <p className="muted small">
@@ -760,7 +775,7 @@ function UsageSection() {
   const maxCost = Math.max(1e-9, ...(u?.byFeature ?? []).map((f) => f.cost));
   return (
     <section>
-      <h4>USAGE</h4>
+      <h4>Spending</h4>
       {!u || u.total.calls === 0 ? (
         <p className="muted">No AI calls recorded yet. Everything that uses the AI is counted here.</p>
       ) : (
@@ -802,7 +817,7 @@ function PersonalSection() {
   const p = usePersonal();
   return (
     <section>
-      <h4>PERSONALIZATION</h4>
+      <h4>About you</h4>
       <p className="muted">Used by the assistant and notebook chats, like custom instructions. Stays on this computer.</p>
       <div className="tone-row" role="radiogroup" aria-label="Response style">
         {TONES.map((t) => (
@@ -842,7 +857,7 @@ function MemorySection() {
   const shown = filter.trim() ? items.filter((m) => m.text.toLowerCase().includes(filter.trim().toLowerCase())) : items;
   return (
     <section>
-      <h4>MEMORY</h4>
+      <h4>Memory</h4>
       <label className="feature-row">
         <span className="feature-text">
           <b>Let the AI remember things about you</b>
@@ -920,7 +935,7 @@ function DataSection() {
 
   return (
     <section>
-      <h4>DATA</h4>
+      <h4>Your data</h4>
       <div className="data-row">
         <div className="feature-text">
           <b>Export</b>

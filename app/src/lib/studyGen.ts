@@ -8,6 +8,7 @@ import { generate, generateQuick } from './salem/generate';
 import { diagramQuestions } from './diagrams';
 import type { Meter } from './meter';
 import { isStop, type Stop } from './cancel.ts';
+import { TITLE_RULE, tidyTitle } from './titles';
 import { CARDS_DIRECT_SYSTEM, CARDS_SYSTEM, GRADE_SYSTEM, LABELS_GRADE_SYSTEM, QUIZ_DIRECT_SYSTEM, QUIZ_SYSTEM } from './prompts';
 import { canCheck, checkAgrees, defaultTolerance, labelAnswers, labelResults, parseNumber, shuffleChoices, usableHint } from './quizRules';
 import { describeChoice, INSTRUCTIONS_SCHEMA, INSTRUCTIONS_SYSTEM, narrowWalk, outlineForInstructions, plainBrief, toBrief, type Brief } from './instructions';
@@ -124,7 +125,7 @@ const CARDS_TOOL = {
     parameters: {
       type: 'object',
       properties: {
-        title: { type: 'string', description: 'A short, specific name for the whole deck - all of the material, not only the pages you are writing - 2–5 words, e.g. "Bone healing and osteomyelitis".' },
+        title: { type: 'string', description: `A name for the whole deck - all of the material, not only the pages you are writing: ${TITLE_RULE}` },
         cards: {
           type: 'array',
           items: {
@@ -384,12 +385,12 @@ async function nameIt(what: 'deck' | 'quiz', sources: WalkSource[], topics: stri
   if (!covered.length) return fallback;
   const args = await generateQuick<{ title?: unknown }>({
     feature: what === 'deck' ? 'flashcards' : 'quiz',
-    system: `Name a study ${what} like a good document title: 2 to 6 words, specific to what it covers, no quotes, no final full stop. It covers everything listed, so name all of it, not the first part.`,
-    instruction: `Material: ${sources.map((x) => x.title).join('; ')}\n\nWhat it covers, in order:\n${covered.map((t) => `- ${t}`).join('\n')}`,
+    system: `Name a study ${what} by what it covers: ${TITLE_RULE} It covers everything listed, so name all of it, not the first part.`,
+    instruction: `What it covers, in order:\n${covered.map((t) => `- ${t}`).join('\n')}`,
     schema: { type: 'object', required: ['title'], properties: { title: { type: 'string' } } },
     meter,
   }).catch(unlessStopped);
-  const title = String(args?.title ?? '').trim().replace(/^["'#*\s]+|["'.*\s]+$/g, '');
+  const title = tidyTitle(String(args?.title ?? ''), sources.map((x) => x.title));
   return title ? title.slice(0, 80) : fallback;
 }
 
@@ -519,7 +520,7 @@ const QUIZ_TOOL = {
     parameters: {
       type: 'object',
       properties: {
-        title: { type: 'string', description: 'Short title, e.g. "Convergence tests".' },
+        title: { type: 'string', description: `A name for the quiz: ${TITLE_RULE}` },
         questions: {
           type: 'array',
           items: {

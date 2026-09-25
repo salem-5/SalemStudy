@@ -1,13 +1,17 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  AlertCircle, ExternalLink, File, FileText, Image as ImageIcon, Link2, Loader2, MoreHorizontal, PanelLeftClose, PanelLeftOpen,
-  Plus, Presentation, RotateCw, Upload, MonitorPlay, X,
+  AlertCircle, BookOpen, ChevronDown, ExternalLink, File, FileText, Image as ImageIcon, Library, Loader2, MonitorPlay, Pencil,
+  Plus, Presentation, RotateCw, Trash, Upload, X,
 } from 'lucide-react';
-import { ACCEPT, addFiles, addYoutube, ingest, labelSeconds, useIngestJobs } from '../lib/ingest';
+import { ACCEPT, addFiles, addPastedText, addYoutube, ingest, labelSeconds, pastedFile, useIngestJobs } from '../lib/ingest';
+import { htmlToMarkdown } from '../lib/pad';
 import { Markdown } from '../lib/markdown';
-import { ContextMenu, type MenuItem } from '../components/ContextMenu';
+import { ContextMenu, MoreMenu, type MenuItem } from '../components/ContextMenu';
+import { SectionHead } from '../components/Section';
+import { relTime } from '../lib/format';
 import { studyApi, type Source, type SourceImage, type SourceKind, type SourceUnit } from './api';
 import { NameDialog, ConfirmDialog } from './dialogs';
+import { keys } from '../lib/keys';
 
 export const KindIcon = ({ kind }: { kind: SourceKind }) => {
   const Icon = kind === 'pdf' ? FileText : kind === 'slides' ? Presentation : kind === 'image' ? ImageIcon : kind === 'youtube' ? MonitorPlay : kind === 'text' ? FileText : File;
@@ -29,20 +33,19 @@ function readingTrouble(s: Source): string | null {
   return notes.length ? notes.join(' · ') : null;
 }
 
-export function SourcesPane({ notebookId, sources, selected, onToggle, onToggleAll, collapsed, onCollapse, onOpen, onChanged }: {
+const ago = (t: number) => relTime(new Date(t));
+
+export function SourcesLibrary({ notebookId, sources, selected, onToggle, onToggleAll, onOpen, onChanged }: {
   notebookId: number;
   sources: Source[];
   selected: Set<number>;
   onToggle: (id: number) => void;
   onToggleAll: (on: boolean) => void;
-  collapsed: boolean;
-  onCollapse: (c: boolean) => void;
   onOpen: (s: Source) => void;
   onChanged: () => void;
 }) {
   const jobs = useIngestJobs();
   const fileInput = useRef<HTMLInputElement>(null);
-  const [adding, setAdding] = useState(false);
   const [link, setLink] = useState('');
   const [problems, setProblems] = useState<string[]>([]);
   const [drag, setDrag] = useState(false);
@@ -52,118 +55,147 @@ export function SourcesPane({ notebookId, sources, selected, onToggle, onToggleA
 
   const upload = async (files: File[]) => {
     if (!files.length) return;
-    setAdding(false);
     setProblems(await addFiles(notebookId, files, onChanged));
+  };
+  // Pasting: files and images are added as they are; text becomes a Markdown file of its own,
+  // keeping the headings and lists of whatever it was copied from; a YouTube link is a video.
+  const paste = useCallback(async (files: File[], text: string, html: string) => {
+    if (files.length) {
+      const named = files.map((f) => pastedFile(f));
+      const plain = named.filter((n) => !n.generic).map((n) => n.file);
+      const generic = named.filter((n) => n.generic).map((n) => n.file);
+      const found = [
+        ...(plain.length ? await addFiles(notebookId, plain, onChanged) : []),
+        ...(generic.length ? await addFiles(notebookId, generic, onChanged, { nameFromContent: true }) : []),
+      ];
+      setProblems(found);
+      return;
+    }
+    const t = text.trim();
+    if (/^https?:\/\/\S*youtu\S*$/i.test(t)) { void addYoutube(notebookId, t, onChanged); return; }
+    const rich = html ? htmlToMarkdown(html).replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/\n{3,}/g, '\n\n').trim() : '';
+    const body = rich.length >= t.length * 0.6 ? rich : t;
+    if (body) setProblems(await addPastedText(notebookId, body, onChanged));
+  }, [notebookId, onChanged]);
+
+  useEffect(() => {
+    // Only a paste aimed at the page itself: not one into a field here or in an open dialog.
+    const ours = (e: Event) => !(e.target as HTMLElement | null)?.closest?.('input, textarea, select, [contenteditable="true"]')
+      && !document.querySelector('.modal-backdrop');
+    // WebKit greys out Paste when nothing editable has focus, unless the page says it will take it.
+    const allow = (e: Event) => { if (ours(e)) e.preventDefault(); };
+    const onPaste = (e: ClipboardEvent) => {
+      if (!ours(e) || !e.clipboardData) return;
+      const files = [...e.clipboardData.files];
+      const text = e.clipboardData.getData('text/plain');
+      if (!files.length && !text.trim()) return;
+      e.preventDefault();
+      void paste(files, text, e.clipboardData.getData('text/html'));
+    };
+    document.addEventListener('beforepaste', allow);
+    document.addEventListener('paste', onPaste);
+    return () => { document.removeEventListener('beforepaste', allow); document.removeEventListener('paste', onPaste); };
+  }, [paste]);
+
+  const addLink = () => {
+    if (!/youtu/.test(link)) return;
+    void addYoutube(notebookId, link, onChanged);
+    setLink('');
   };
 
   const menuFor = (s: Source): MenuItem[] => [
-    { kind: 'item', label: 'Open', onClick: () => onOpen(s) },
-    { kind: 'item', label: 'Rename…', onClick: () => setRenaming(s) },
-    ...(!jobs.has(s.id) ? [{ kind: 'item' as const, label: 'Read again', onClick: () => void ingest(s).then(onChanged) }] : []),
+    { kind: 'item', label: 'Open', icon: <BookOpen />, onClick: () => onOpen(s) },
+    { kind: 'item', label: 'Rename…', icon: <Pencil />, onClick: () => setRenaming(s) },
+    ...(!jobs.has(s.id) ? [{ kind: 'item' as const, label: 'Read it again', icon: <RotateCw />, onClick: () => void ingest(s).then(onChanged) }] : []),
     { kind: 'sep' },
-    { kind: 'item', label: 'Delete', danger: true, onClick: () => setRemoving(s) },
+    { kind: 'item', label: 'Delete source…', icon: <Trash />, danger: true, onClick: () => setRemoving(s) },
   ];
 
   const ready = sources.filter((s) => s.status === 'ready');
-  const allOn = ready.length > 0 && ready.every((s) => selected.has(s.id));
-
-  if (collapsed) {
-    return (
-      <aside className="nbw-pane nbw-sources collapsed">
-        <button type="button" className="rail-btn" onClick={() => onCollapse(false)} title="Show sources"><PanelLeftOpen /></button>
-        <button type="button" className="rail-btn" onClick={() => { onCollapse(false); setAdding(true); }} title="Add sources"><Plus /></button>
-        <div className="rail-count" title={`${sources.length} sources`}><FileText />{sources.length}</div>
-      </aside>
-    );
-  }
+  const used = ready.filter((s) => selected.has(s.id)).length;
+  const allOn = ready.length > 0 && used === ready.length;
 
   return (
-    <aside
-      className={`nbw-pane nbw-sources${drag ? ' dragging' : ''}`}
+    <div
+      className={`section-page sources-page${drag ? ' dragging' : ''}`}
       onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDrag(true); } }}
       onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDrag(false); }}
       onDrop={(e) => { e.preventDefault(); setDrag(false); void upload([...e.dataTransfer.files]); }}
     >
-      <div className="pane-head">
-        <span>Sources</span><span className="muted">{sources.length}</span>
-        <span className="spacer" />
-        <button type="button" className="icon-btn" onClick={() => setAdding((a) => !a)} title="Add sources"><Plus /></button>
-        <button type="button" className="icon-btn" onClick={() => onCollapse(true)} title="Hide sources"><PanelLeftClose /></button>
-      </div>
-
-      <div className={`collapse${adding ? ' open' : ''}`}>
-        <div>
-          <div className="add-sources">
-            <button type="button" className="drop-zone" onClick={() => fileInput.current?.click()}>
-              <Upload />
-              <span>Upload files</span>
-              <span className="muted small">PDF, slides (PPTX), Word, images, text - or drop them here</span>
-            </button>
-            <form className="link-row" onSubmit={(e) => { e.preventDefault(); if (link.trim()) { void addYoutube(notebookId, link, onChanged); setLink(''); setAdding(false); } }}>
-              <Link2 />
-              <input className="field-input" value={link} onChange={(e) => setLink(e.target.value)} placeholder="YouTube link" />
-              <button type="submit" className="btn" disabled={!/youtu/.test(link)}>Add</button>
-            </form>
-          </div>
-        </div>
-      </div>
+      <SectionHead
+        title="Sources"
+        blurb="Your course material. Chat, flashcards, quizzes and notes use the ticked sources, and say which page each point came from."
+        actions={<button type="button" className="btn primary" onClick={() => fileInput.current?.click()}><Upload />Add files</button>}
+      />
       <input ref={fileInput} type="file" multiple accept={ACCEPT} hidden onChange={(e) => { void upload([...(e.target.files ?? [])]); e.target.value = ''; }} />
 
+      <div className={`source-drop${sources.length ? '' : ' big'}`}>
+        <button type="button" className="source-drop-main" onClick={() => fileInput.current?.click()}>
+          <span className="source-drop-icon"><Upload /></span>
+          <span className="source-drop-text">
+            <b>{sources.length ? 'Add more material' : 'Add your course material'}</b>
+            <span>Drop lecture PDFs, slides, Word files or photos here, click to choose them, or paste text, images and files with {keys('⌘V')}.</span>
+          </span>
+        </button>
+        <form className="source-link" onSubmit={(e) => { e.preventDefault(); addLink(); }}>
+          <MonitorPlay />
+          <input className="field-input" value={link} onChange={(e) => setLink(e.target.value)} placeholder="Or paste a YouTube lecture link" />
+          <button type="submit" className="btn" disabled={!/youtu/.test(link)}>Add video</button>
+        </form>
+      </div>
+
       {!!problems.length && (
-        <div className="pane-problems">
+        <div className="source-problems">
           {problems.map((p) => <div key={p} className="problem"><AlertCircle />{p}</div>)}
-          <button type="button" className="link" onClick={() => setProblems([])}>dismiss</button>
+          <button type="button" className="link" onClick={() => setProblems([])}>Dismiss</button>
         </div>
       )}
 
       {sources.length > 0 && (
-        <label className="select-all">
-          <input type="checkbox" checked={allOn} onChange={(e) => onToggleAll(e.target.checked)} disabled={!ready.length} />
-          <span>Use all sources</span>
-        </label>
+        <div className="source-table">
+          <label className="source-table-head">
+            <input type="checkbox" checked={allOn} ref={(el) => { if (el) el.indeterminate = used > 0 && !allOn; }}
+              onChange={(e) => onToggleAll(e.target.checked)} disabled={!ready.length} />
+            <span>{used === ready.length ? `Using all ${ready.length}` : `Using ${used} of ${ready.length}`}</span>
+            <span className="muted">in chat, flashcards, quizzes and notes</span>
+          </label>
+          <ul className="source-list stagger">
+            {sources.map((s, i) => {
+              const stage = jobs.get(s.id);
+              const stuck = !stage && s.status === 'processing';
+              const trouble = readingTrouble(s);
+              return (
+                <li key={s.id} style={{ '--i': i } as React.CSSProperties} className={`source-row ${s.status}${selected.has(s.id) ? ' on' : ''}`}
+                  onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, items: menuFor(s) }); }}>
+                  <input type="checkbox" checked={selected.has(s.id)} disabled={s.status !== 'ready'} onChange={() => onToggle(s.id)}
+                    title={selected.has(s.id) ? 'Used - click to leave it out' : 'Left out - click to use it'} aria-label={`Use ${s.title}`} />
+                  <button type="button" className="source-main" onClick={() => onOpen(s)} title={s.error ?? `Open ${s.title}`}>
+                    <span className={`source-kind ${s.kind}`}><KindIcon kind={s.kind} /></span>
+                    <span className="source-text">
+                      <span className="source-title">{s.title}</span>
+                      <span className="source-meta">
+                        {stage ? <span className="source-status"><Loader2 className="spin" />{stage}</span>
+                          : stuck ? <span className="bad-text">Reading was interrupted</span>
+                          : s.status === 'error' ? <span className="bad-text">{s.error ?? 'Could not be read'}</span>
+                            : <>
+                              {`${s.unitCount} ${unitWord(s)}${s.unitCount === 1 ? '' : 's'}`} · added {ago(s.createdAt)}
+                              {trouble && <span className="bad-text"> · {trouble}</span>}
+                            </>}
+                      </span>
+                    </span>
+                  </button>
+                  {(s.status === 'error' || stuck) && !stage && (
+                    <button type="button" className="btn small" onClick={() => void ingest(s).then(onChanged)}><RotateCw />Read again</button>
+                  )}
+                  <MoreMenu items={menuFor(s)} title={`More for ${s.title}`} />
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       )}
 
-      <ul className="source-list stagger">
-        {sources.map((s, i) => {
-          const stage = jobs.get(s.id);
-          const stuck = !stage && s.status === 'processing';
-          return (
-            <li key={s.id} style={{ '--i': i } as React.CSSProperties} className={`source-row ${s.status}`}
-              onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, items: menuFor(s) }); }}>
-              <input type="checkbox" checked={selected.has(s.id)} disabled={s.status !== 'ready'} onChange={() => onToggle(s.id)} title="Use in chat and generation" />
-              <button type="button" className="source-main" onClick={() => onOpen(s)} title={s.error ?? s.title}>
-                <KindIcon kind={s.kind} />
-                <span className="source-text">
-                  <span className="source-title">{s.title}</span>
-                  <span className="source-meta">
-                    {stage ? <><Loader2 className="spin" />{stage}</>
-                      : stuck ? <span className="bad-text">interrupted - read it again</span>
-                      : s.status === 'error' ? <span className="bad-text">{s.error ?? 'could not be read'}</span>
-                        : <>
-                          {`${s.unitCount} ${unitWord(s)}${s.unitCount === 1 ? '' : 's'}`}
-                          {readingTrouble(s) && <span className="bad-text"> · {readingTrouble(s)}</span>}
-                        </>}
-                  </span>
-                </span>
-              </button>
-              {(s.status === 'error' || stuck) && !stage && (
-                <button type="button" className="icon-btn ghost-icon" onClick={() => void ingest(s).then(onChanged)} title="Try again"><RotateCw /></button>
-              )}
-              <button type="button" className="icon-btn ghost-icon row-more" onClick={(e) => setMenu({ x: e.clientX, y: e.clientY, items: menuFor(s) })} title="More"><MoreHorizontal /></button>
-            </li>
-          );
-        })}
-      </ul>
-
-      {!sources.length && !adding && (
-        <button type="button" className="pane-empty sources-empty" onClick={() => setAdding(true)}>
-          <Upload />
-          <p>Add your course material</p>
-          <p className="muted">Lecture PDFs, slides, notes, photos of handwriting, YouTube lectures. Chat, flashcards and quizzes then use them and cite where each answer came from.</p>
-        </button>
-      )}
-
-      {drag && <div className="drop-overlay"><Upload /><span>Drop to add</span></div>}
+      {drag && <div className="drop-overlay"><Upload /><span>Drop to add to this notebook</span></div>}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
       {renaming && (
         <NameDialog title="Rename source" label="Name" initial={renaming.title} submitLabel="Save" onClose={() => setRenaming(null)}
@@ -175,7 +207,69 @@ export function SourcesPane({ notebookId, sources, selected, onToggle, onToggleA
           Delete <b>{removing.title}</b>? The chat and generators stop using it. Flashcards and quizzes already made from it stay.
         </ConfirmDialog>
       )}
-    </aside>
+    </div>
+  );
+}
+
+/**
+ * The chat's own view of the sources: which ones answers are drawn from, changed in place,
+ * without leaving the conversation. Adding and managing sources lives in the Sources section.
+ */
+export function SourcePicker({ sources, selected, onToggle, onToggleAll, onManage }: {
+  sources: Source[];
+  selected: Set<number>;
+  onToggle: (id: number) => void;
+  onToggleAll: (on: boolean) => void;
+  onManage: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => { if (!wrap.current?.contains(e.target as Node)) setOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('mousedown', close);
+    window.addEventListener('keydown', onKey);
+    return () => { window.removeEventListener('mousedown', close); window.removeEventListener('keydown', onKey); };
+  }, [open]);
+
+  const ready = sources.filter((s) => s.status === 'ready');
+  const used = ready.filter((s) => selected.has(s.id)).length;
+  if (!sources.length) {
+    return <button type="button" className="source-chip empty" onClick={onManage}><Plus />Add sources to chat about</button>;
+  }
+  return (
+    <div className="source-picker" ref={wrap}>
+      <button type="button" className={`source-chip${open ? ' open' : ''}`} onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="dialog">
+        <Library />
+        {used === ready.length ? `Using all ${ready.length} source${ready.length === 1 ? '' : 's'}` : `Using ${used} of ${ready.length} sources`}
+        <ChevronDown className="source-chip-caret" />
+      </button>
+      {open && (
+        <div className="source-pop" role="dialog" aria-label="Sources used in this chat">
+          <label className="source-pop-all">
+            <input type="checkbox" checked={used === ready.length && ready.length > 0} ref={(el) => { if (el) el.indeterminate = used > 0 && used < ready.length; }}
+              onChange={(e) => onToggleAll(e.target.checked)} />
+            <span>Use all sources</span>
+          </label>
+          <ul>
+            {sources.map((s) => (
+              <li key={s.id}>
+                <label className={s.status !== 'ready' ? 'off' : ''}>
+                  <input type="checkbox" checked={selected.has(s.id)} disabled={s.status !== 'ready'} onChange={() => onToggle(s.id)} />
+                  <span className={`source-kind ${s.kind}`}><KindIcon kind={s.kind} /></span>
+                  <span className="source-pop-title">{s.title}</span>
+                  {s.status === 'processing' && <Loader2 className="spin" />}
+                </label>
+              </li>
+            ))}
+          </ul>
+          <button type="button" className="source-pop-manage" onClick={() => { setOpen(false); onManage(); }}>
+            <Plus />Add or manage sources
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -208,7 +302,7 @@ export function SourceViewer({ source, unit, onClose }: { source: Source; unit?:
 
   return (
     <div className="stage source-viewer">
-      <div className="stage-head">
+      <div className="stage-head" data-tauri-drag-region="deep">
         <KindIcon kind={source.kind} />
         <span className="stage-title">{source.title}</span>
         <span className="muted small">{source.unitCount} {unitWord(source)}{source.unitCount === 1 ? '' : 's'}</span>

@@ -4,8 +4,22 @@ import Shell from './Shell';
 import { installStudyMock } from './study/mockApi';
 import { api, useHttpTransport } from './api';
 import './wa-base.css';
-import './styles.css';
-import { initTheme } from './lib/theme';
+import './styles/solver.css';
+import './styles/tokens.css';
+import './styles/base.css';
+import './styles/shell.css';
+import './styles/notebook.css';
+import './styles/study.css';
+import './styles/home.css';
+import './styles/chat.css';
+import './styles/schedule.css';
+import './styles/notes.css';
+import './styles/focus.css';
+import './styles/prefs.css';
+import './styles/views.css';
+import './styles/morph.css';
+import './styles/motion.css';
+import { initTheme, resetAccentForNewLook } from './lib/theme';
 import { inTabMode, installTabTransport, tabToken } from './lib/tabClient';
 import { installTabHost } from './lib/tabHost';
 import { TabModeGate } from './components/TabMode';
@@ -27,6 +41,10 @@ function fatal(message: string) {
 async function boot() {
   const isTab = inTabMode();
   const isDesktop = '__TAURI_INTERNALS__' in window && !isTab;
+  // On a Mac the window has no title bar of its own: the sidebar runs to the top with the traffic lights in it.
+  // On Windows it has none either (tauri.windows.conf.json); our own controls show at the top on hover.
+  if (isDesktop && /Mac/.test(navigator.userAgent)) document.documentElement.dataset.chrome = 'mac';
+  else if (isDesktop && /Windows/.test(navigator.userAgent)) document.documentElement.dataset.chrome = 'win';
   if (isTab) {
     try {
       await installTabTransport(tabToken()!);
@@ -38,6 +56,7 @@ async function boot() {
   if (isDesktop || isTab) {
     await startPrefSync(isTab ? 'tab' : 'window').catch(() => {});
   }
+  resetAccentForNewLook();
   document.addEventListener('contextmenu', (e) => {
     const t = e.target as HTMLElement | null;
     if (t?.closest('input, textarea, [contenteditable="true"]')) return;

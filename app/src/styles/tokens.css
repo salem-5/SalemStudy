@@ -1,0 +1,167 @@
+/*
+ * Design tokens. Every colour, radius, shadow and timing in the app comes from here.
+ *
+ * Surfaces, from back to front: --sidebar (the window's own chrome), --bg (the page),
+ * --bg-2 (a recessed pane on the page), --panel (a raised card), --panel-2 (a control or
+ * hover inside a card). --fill/-2/-3 are translucent tints for hover, pressed and selected
+ * states that work on any surface.
+ *
+ * The interface is monochrome by default, like a flagship app: primary buttons are ink
+ * (near-black in light, near-white in dark) and colour is kept for what means something -
+ * right and wrong, deadlines, and each subject's own colour. --accent is for text, icons and
+ * focus rings, --accent-fill is the background of primary buttons, carrying --on-accent.
+ * A picked accent colour overrides these from lib/theme.ts.
+ */
+
+:root {
+  /* Every page keeps the same distance from the sidebar and from the window's right edge: its
+     toolbar, its content and the outer columns of the full-bleed tools all sit on --gutter, and
+     reading pages centre on one shared width. */
+  --gutter: 32px;
+  --page-max: 1120px;
+
+  --sidebar: #161618;
+  --bg: #1c1c1f;
+  --bg-2: #19191c;
+  --panel: #232327;
+  --panel-2: #2b2b30;
+  --fill: rgba(255, 255, 255, 0.05);
+  --fill-2: rgba(255, 255, 255, 0.085);
+  --fill-3: rgba(255, 255, 255, 0.13);
+  --line: rgba(255, 255, 255, 0.065);
+  --line-2: rgba(255, 255, 255, 0.1);
+  --line-3: rgba(255, 255, 255, 0.17);
+
+  --text-strong: #ffffff;
+  --text: #ececef;
+  --text-2: #a3a3ab;
+  --muted: #8a8a93;
+
+  --accent: #f2f2f4;
+  --accent-2: #ffffff;
+  --accent-fill: #f2f2f4;
+  --accent-fill-2: #ffffff;
+  --on-accent: #141416;
+  --accent-wash: rgba(255, 255, 255, 0.045);
+  --accent-soft: rgba(255, 255, 255, 0.09);
+  --accent-dim: rgba(255, 255, 255, 0.32);
+  --accent-ring: rgba(255, 255, 255, 0.24);
+
+  --good: #3ccb7f;
+  --good-dim: rgba(60, 203, 127, 0.4);
+  --good-wash: rgba(60, 203, 127, 0.1);
+  --bad: #ff6b70;
+  --bad-dim: rgba(255, 107, 112, 0.45);
+  --bad-wash: rgba(255, 107, 112, 0.1);
+  --mid: #f0a63a;
+  --mid-wash: rgba(240, 166, 58, 0.1);
+  --info: #b08cff;
+
+  --series-1: var(--accent);
+  --series-2: color-mix(in srgb, var(--text-2) 50%, var(--bg));
+
+  --sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI Variable Text', 'Segoe UI', Inter, system-ui, sans-serif;
+  --display: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI Variable Display', 'Segoe UI', Inter, system-ui, sans-serif;
+  --mono: 'SF Mono', 'JetBrains Mono', 'Cascadia Mono', Menlo, Consolas, ui-monospace, monospace;
+  --math: 'STIX Two Math', 'Cambria Math', 'Latin Modern Math', math;
+
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r: 8px;
+  --r-md: 10px;
+  --r-lg: 12px;
+  --r-xl: 16px;
+  --r-full: 999px;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35), 0 0 0 1px var(--line);
+  --shadow-2: 0 8px 20px -6px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--line-2);
+  --shadow-pop: 0 18px 44px -10px rgba(0, 0, 0, 0.65), 0 0 0 1px var(--line-2), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --shadow-modal: 0 36px 90px -20px rgba(0, 0, 0, 0.75), 0 0 0 1px var(--line-2), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+
+  /* Strong ease-out for anything entering or responding; ease-in-out for things moving on screen. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease: var(--ease-out);
+  --dur-1: 120ms;
+  --dur-2: 180ms;
+  --dur-3: 260ms;
+
+  --scrim: rgba(8, 8, 10, 0.55);
+  --scrim-strong: rgba(28, 28, 31, 0.9);
+
+  --syn-keyword: #c792ea;
+  --syn-string: #a5d6a7;
+  --syn-number: #f5b97c;
+  --syn-comment: #6b7780;
+  --syn-func: #82b1ff;
+  --syn-type: #ffcb6b;
+  --syn-attr: #89ddff;
+  --syn-meta: #ff9e80;
+
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  --sidebar: #efefed;
+  --bg: #fbfbfa;
+  --bg-2: #f5f5f3;
+  --panel: #ffffff;
+  --panel-2: #f4f4f2;
+  --fill: rgba(20, 20, 30, 0.04);
+  --fill-2: rgba(20, 20, 30, 0.07);
+  --fill-3: rgba(20, 20, 30, 0.11);
+  --line: rgba(20, 20, 30, 0.07);
+  --line-2: rgba(20, 20, 30, 0.11);
+  --line-3: rgba(20, 20, 30, 0.19);
+
+  --text-strong: #000000;
+  --text: #1d1d1f;
+  --text-2: #56565c;
+  --muted: #6e6e76;
+
+  --accent: #1d1d1f;
+  --accent-2: #000000;
+  --accent-fill: #1d1d1f;
+  --accent-fill-2: #3a3a3d;
+  --on-accent: #ffffff;
+  --accent-wash: rgba(20, 20, 30, 0.035);
+  --accent-soft: rgba(20, 20, 30, 0.07);
+  --accent-dim: rgba(20, 20, 30, 0.3);
+  --accent-ring: rgba(20, 20, 30, 0.16);
+
+  --good: #15804a;
+  --good-dim: rgba(21, 128, 74, 0.35);
+  --good-wash: rgba(21, 128, 74, 0.08);
+  --bad: #d93036;
+  --bad-dim: rgba(217, 48, 54, 0.35);
+  --bad-wash: rgba(217, 48, 54, 0.07);
+  --mid: #a15a07;
+  --mid-wash: rgba(161, 90, 7, 0.08);
+  --info: #7d4cc4;
+
+  --series-2: color-mix(in srgb, var(--text-2) 45%, var(--bg));
+
+  --shadow-1: 0 1px 2px rgba(20, 20, 30, 0.05), 0 0 0 1px var(--line);
+  --shadow-2: 0 8px 22px -8px rgba(20, 20, 30, 0.16), 0 0 0 1px var(--line);
+  --shadow-pop: 0 16px 40px -10px rgba(20, 20, 30, 0.22), 0 0 0 1px var(--line-2);
+  --shadow-modal: 0 32px 80px -20px rgba(20, 20, 30, 0.32), 0 0 0 1px var(--line-2);
+
+  --scrim: rgba(30, 30, 40, 0.28);
+  --scrim-strong: rgba(251, 251, 250, 0.92);
+
+  --syn-keyword: #8f3fb8;
+  --syn-string: #2f7d32;
+  --syn-number: #b55a00;
+  --syn-comment: #8a9299;
+  --syn-func: #1f5fb0;
+  --syn-type: #9a6a00;
+  --syn-attr: #00788a;
+  --syn-meta: #c2410c;
+
+  color-scheme: light;
+}
+
+@media (max-width: 1100px) {
+  :root { --gutter: 24px; }
+}

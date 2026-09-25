@@ -1,19 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Select } from '../components/Select';
-import { ArrowLeft, Check, ChevronLeft, ChevronRight, Flag, Lightbulb, MessageCircleQuestion, Play, RotateCcw, ShieldCheck, Sparkles, X } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Flag, Lightbulb, MessageCircleQuestion, Play, RotateCcw, ShieldCheck, Sparkles, X } from 'lucide-react';
 import { asMath, Markdown } from '../lib/markdown';
 import { cardsFromMistakes, gradeLabels, gradeLocal, gradeShort, picked, rewriteQuestion, unpick, type GenSource, type StudyContext } from '../lib/studyGen';
 import { labelAnswers, labelResults, labelVerdicts } from '../lib/quizRules';
 import {
-  clearQuizSession, loadQuizSession, quizSessionFits, saveQuizSession,
+  clearQuizSession, loadQuizSession, quizResumeAt, quizSessionFits, saveQuizSession,
   type QuizAnswer,
 } from '../lib/studySession';
 import { Modal } from '../components/Dialogs';
 import { ConfirmDialog } from './dialogs';
-import { SetItem, SetPage } from './StudySets';
+import { PlayerBar, SetItem, SetPage } from './StudySets';
 import { GapPrompt, hasGap } from './GapPrompt';
 import { AskableArea, AskAboutQuestion, ChatButton, quizBriefing } from './StudyChat';
 import { studyApi, type AttemptAnswer, type Note, type Quiz, type QuizQuestion, type QuizSummary } from './api';
+import { keys, MOD } from '../lib/keys';
 
 function FigureImg({ id }: { id: number }) {
   const [src, setSrc] = useState<string | null>(null);
@@ -89,7 +90,7 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
           setResumed(Object.keys(saved.answers).length > 0);
           const order = saved.only ?? q.questions.map((_, i) => i);
           const asked = startAt === undefined ? -1 : order.indexOf(startAt);
-          setPos(asked >= 0 ? asked : Math.min(saved.pos, order.length - 1));
+          setPos(asked >= 0 ? asked : quizResumeAt(saved, order));
         } else if (startAt !== undefined) {
           const order = onlyIndexes ?? q.questions.map((_, i) => i);
           setPos(Math.max(0, order.indexOf(startAt)));
@@ -240,22 +241,32 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
       <span key={flash?.n ?? 0} className={`study-glow${flash ? ` flash-${flash.kind}` : ''}`} />
     </div>
     <div className="stage quiz-stage">
-      <div className="stage-head">
-        <button type="button" className="link" onClick={onClose}><ArrowLeft />back</button>
-        <span className="stage-title">{quiz.title}{only ? ' · retry' : ''}{reviewing ? ' · review' : ''}</span>
-        <span className="spacer" />
-        <span className="stage-count mono">{pos + 1} / {order.length} · {answeredCount} answered · {right} right</span>
+      <PlayerBar
+        title={quiz.title}
+        sub={reviewing ? 'Looking back at your answers' : only ? `Retrying ${order.length} you missed` : `Question ${pos + 1} of ${order.length}`}
+        onClose={onClose}
+      >
+        <span className="player-score">
+          <b>{right}</b> right · {answeredCount} of {order.length} answered
+        </span>
         {resumed && !reviewing && (
           <button type="button" className="btn ghost small" onClick={() => restart(null)} title="Clear your answers and take it from the top">
             <RotateCcw />Start again
           </button>
         )}
         <ChatButton notebookId={notebookId} where={quiz.title} tag={quiz.title} briefing={quizBriefing(quiz, index)} />
-      </div>
+      </PlayerBar>
 
-      <div className="progress" title={`Question ${pos + 1} of ${order.length}`}>
-        <i style={{ width: `${((pos + 1) / Math.max(1, order.length)) * 100}%` }} />
-      </div>
+      <nav className="step-strip" aria-label="Questions">
+        {order.map((qi, i) => {
+          const a = answers[qi];
+          const state = a ? (a.given ? (a.correct ? ' right' : ' wrong') : ' skipped') : '';
+          return (
+            <button key={qi} type="button" className={`step-seg${i === pos ? ' on' : ''}${state}`} onClick={() => goTo(i)}
+              title={`Question ${i + 1}${a ? (a.correct ? ' - right' : a.given ? ' - wrong' : ' - skipped') : ''}`} aria-current={i === pos ? 'step' : undefined} />
+          );
+        })}
+      </nav>
 
       {q && index !== undefined && (
         <AskableArea
@@ -445,7 +456,7 @@ function DiagramInput({ q, given, locked, verdicts, autoFocus, onChange }: {
               {showOriginal ? 'Back to your labels' : 'Show the original diagram'}
             </button>
           )
-          : <>Type each label in its box. <kbd>↵</kbd> next box · <kbd>⌘</kbd>+<kbd>↵</kbd> check</>}
+          : <>Type each label in its box. <kbd>↵</kbd> next box · <kbd>{MOD}</kbd>+<kbd>↵</kbd> check</>}
       </div>
     </div>
   );
@@ -517,7 +528,7 @@ function AnswerInput({ q, given, locked, reviewing, verdicts, onChange }: {
   if (q.type === 'blank') return null;
   const proof = PROOF.test(q.prompt);
   return <textarea className="textarea" rows={proof ? 10 : 4} value={given} onChange={(e) => onChange(e.target.value)} disabled={locked}
-    placeholder={proof ? 'Your answer, then the proof or counterexample (Ctrl+Enter to check)' : 'Explain in a sentence or two (Ctrl+Enter to check)'} autoFocus={!reviewing} />;
+    placeholder={proof ? `Your answer, then the proof or counterexample (${keys('⌘↵')} to check)` : `Explain in a sentence or two (${keys('⌘↵')} to check)`} autoFocus={!reviewing} />;
 }
 
 

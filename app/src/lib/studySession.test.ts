@@ -104,3 +104,26 @@ describe('deck sessions', () => {
     assert.equal(pruned.results[11].correct, false);
   });
 });
+
+describe('picking a run back up', () => {
+  it('reopens a quiz on the first question left unanswered, not where Next got to', () => {
+    const skipped = { pos: 5, answers: { 0: { given: 'a', correct: true, ms: 1 }, 2: { given: 'c', correct: false, ms: 1 } } };
+    assert.equal(sessions.quizResumeAt(skipped, [0, 1, 2, 3, 4, 5]), 1);
+  });
+
+  it('follows the order of a retry of only some questions', () => {
+    const retry = { pos: 1, answers: { 4: { given: 'x', correct: true, ms: 1 } } };
+    assert.equal(sessions.quizResumeAt(retry, [4, 7, 9]), 1);
+  });
+
+  it('stays where it was when every question is answered', () => {
+    const all = { pos: 1, answers: { 0: { given: 'a', correct: true, ms: 1 }, 1: { given: 'b', correct: true, ms: 1 } } };
+    assert.equal(sessions.quizResumeAt(all, [0, 1]), 1);
+  });
+
+  it('reopens a deck on the first card not yet marked, and counts only marked cards as seen', () => {
+    const run = { pos: 4, order: [10, 11, 12, 13, 14], results: { 10: { correct: true, elapsedMs: 1 }, 12: { correct: false, elapsedMs: 1 } } };
+    assert.equal(sessions.deckResumeAt(run), 1);
+    assert.equal(sessions.deckMarkedCount(run), 2);
+  });
+});

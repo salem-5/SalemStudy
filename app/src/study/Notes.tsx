@@ -1,32 +1,28 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  ArrowLeft, Check, FileDown, Loader2, Maximize2, Minimize2, MoreHorizontal, NotebookPen, Pencil, Plus, Sparkles, Square, Trash, Wand2, X,
+  ArrowLeft, ArrowUpRight, Check, FileDown, Loader2, Maximize2, Minimize2, NotebookPen, Pencil, Sparkles, Square, Trash, Wand2, X,
 } from 'lucide-react';
 import { api, errorText } from '../api';
-import { ContextMenu, type MenuItem } from '../components/ContextMenu';
+import { ContextMenu, MoreMenu, type MenuItem } from '../components/ContextMenu';
+import { EmptyState, SectionHead } from '../components/Section';
 import { Markdown } from '../lib/markdown';
 import { markdownToPrintHtml } from '../lib/mdPrint';
 import { refineNote, stopNote, useNoteJobs } from '../lib/notesGen';
 import { formatCost, recalledCost } from '../lib/meter';
 import { relTime } from '../lib/format';
 import { restoreWhenReady, loadPosition, tagAnchors, watch } from '../lib/scrollMemory';
+import { NOTE_PRESETS } from '../lib/prompts';
 import { studyApi, type Note } from './api';
 import { AskableArea, ChatButton, noteBriefing } from './StudyChat';
 import { ConfirmDialog, NameDialog } from './dialogs';
 
-const preview = (md: string) => md
-  .replace(/^#.*$/m, '')
-  .replace(/\$\$[\s\S]*?\$\$|\$[^$\n]*\$/g, ' … ')
-  .replace(/[#*_`>|\\-]/g, ' ')
-  .replace(/\s+/g, ' ')
-  .trim()
-  .slice(0, 90);
+/** The preset a note was written with, as its short name, or nothing for custom instructions. */
+const presetOf = (instructions: string | null | undefined) => NOTE_PRESETS.find((p) => p.text === instructions?.trim())?.label ?? null;
 
-export function NotesPane({ notes, onOpen, onGenerate, onBlank, onChanged }: {
+export function NotesPane({ notes, onOpen, onGenerate, onChanged }: {
   notes: Note[];
   onOpen: (n: Note) => void;
   onGenerate: () => void;
-  onBlank: () => void;
   onChanged: () => void;
 }) {
   const jobs = useNoteJobs();
@@ -34,33 +30,43 @@ export function NotesPane({ notes, onOpen, onGenerate, onBlank, onChanged }: {
   const [renaming, setRenaming] = useState<Note | null>(null);
   const [removing, setRemoving] = useState<Note | null>(null);
   const menuFor = (n: Note): MenuItem[] => [
-    { kind: 'item', label: 'Open', onClick: () => onOpen(n) },
-    { kind: 'item', label: 'Rename…', onClick: () => setRenaming(n) },
+    { kind: 'item', label: 'Open', icon: <ArrowUpRight />, onClick: () => onOpen(n) },
+    { kind: 'item', label: 'Rename…', icon: <Pencil />, onClick: () => setRenaming(n) },
     { kind: 'sep' },
-    { kind: 'item', label: 'Delete note', danger: true, onClick: () => setRemoving(n) },
+    { kind: 'item', label: 'Delete note…', icon: <Trash />, danger: true, onClick: () => setRemoving(n) },
   ];
   return (
-    <div className="pane-body">
-      <div className="pane-actions">
-        <button type="button" className="btn primary" onClick={onGenerate}><Sparkles />New notes</button>
-        <button type="button" className="btn ghost" onClick={onBlank} title="Empty note you write yourself"><Plus />Blank</button>
-      </div>
-      {!notes.length && <p className="muted small pane-note">No notes yet. Have them written from your sources, a topic or a chat, in the style you ask for.</p>}
-      <ul className="set-list stagger">
-        {notes.map((n, i) => (
-          <li key={n.id} className="set-item" style={{ '--i': i } as React.CSSProperties}
-            onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, items: menuFor(n) }); }}>
-            <button type="button" className="set-main" onClick={() => onOpen(n)}>
-              <span className="set-icon">{jobs.has(n.id) ? <Loader2 className="spin" /> : <NotebookPen />}</span>
-              <span className="set-text">
-                <span className="set-title">{n.title}</span>
-                <span className="set-meta">{jobs.has(n.id) ? 'writing…' : `${relTime(new Date(n.updatedAt))} · ${preview(n.content) || 'empty'}`}</span>
-              </span>
-            </button>
-            <button type="button" className="icon-btn ghost-icon" onClick={(e) => setMenu({ x: e.clientX, y: e.clientY, items: menuFor(n) })} title="More"><MoreHorizontal /></button>
-          </li>
-        ))}
-      </ul>
+    <div className="section-page">
+      <SectionHead
+        title="Notes"
+        blurb="Study notes for this notebook - written for you from your sources in the style you ask for, or written yourself."
+        actions={<>
+          <button type="button" className="btn primary" onClick={onGenerate}><Sparkles />Write notes</button>
+        </>}
+      />
+      {!notes.length ? (
+        <EmptyState icon={<NotebookPen />} title="No notes yet"
+          action={<button type="button" className="btn primary large" onClick={onGenerate}><Sparkles />Write notes from my sources</button>}>
+          Have study notes, a summary, a cheat sheet or a formula sheet written from your sources, a topic or one of your chats.
+        </EmptyState>
+      ) : (
+        <ul className="note-grid stagger">
+          {notes.map((n, i) => (
+            <li key={n.id} className="note-card" style={{ '--i': i } as React.CSSProperties}
+              onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, items: menuFor(n) }); }}>
+              <button type="button" className="note-card-main" onClick={() => onOpen(n)}>
+                <span className="note-card-top">
+                  <span className="set-card-icon">{jobs.has(n.id) ? <Loader2 className="spin" /> : <NotebookPen />}</span>
+                  {presetOf(n.instructions) && <span className="note-card-kind">{presetOf(n.instructions)}</span>}
+                </span>
+                <span className="note-card-title">{n.title}</span>
+                <span className="note-card-meta">{jobs.has(n.id) ? 'Writing…' : `Edited ${relTime(new Date(n.updatedAt))}`}</span>
+              </button>
+              <MoreMenu items={menuFor(n)} title={`More for ${n.title}`} className="note-card-more" />
+            </li>
+          ))}
+        </ul>
+      )}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
       {renaming && (
         <NameDialog title="Rename note" label="Title" initial={renaming.title} submitLabel="Save" onClose={() => setRenaming(null)}
@@ -232,8 +238,8 @@ export function NoteView({ noteId, notebookId, onBack, onChanged }: { noteId: nu
   return (
     <>
       <div className="stage note-view">
-        <div className="stage-head">
-          <button type="button" className="link" onClick={onBack}><ArrowLeft />back</button>
+        <div className="stage-head" data-tauri-drag-region="deep">
+          <button type="button" className="btn ghost small" onClick={onBack}><ArrowLeft />All notes</button>
           <button type="button" className="stage-title as-button" onClick={() => setRenaming(true)} title="Rename">{note.title}</button>
           {job && <span className="muted small"><Loader2 className="spin" /> writing{job.cost > 0 ? ` · ${formatCost(job.cost)}` : ''}</span>}
           {!job && written !== null && <span className="note-cost muted small" title="What having this note written cost">{formatCost(written)}</span>}

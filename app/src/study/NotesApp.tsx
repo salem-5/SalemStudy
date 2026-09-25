@@ -11,7 +11,7 @@ import { compactImage } from '../lib/images';
 import katex from 'katex';
 import {
   Bold, Code, FolderClosed, FolderPlus, Highlighter, ImagePlus, Inbox, Italic, Link2, List, ListChecks, ListOrdered,
-  NotebookText, PanelLeft, Pin, PinOff, Quote, RotateCcw, Search, Sigma, SquarePen, Strikethrough, Trash, Trash2, Underline, X,
+  FolderInput, NotebookText, PanelLeft, Pencil, Pin, PinOff, Quote, RotateCcw, Search, Sigma, SquarePen, Strikethrough, Trash, Trash2, Underline, X,
 } from 'lucide-react';
 import {
   htmlToText, onPadChanged, PAD_SOURCE, padApi,
@@ -22,6 +22,7 @@ import { ContextMenu, type MenuItem } from '../components/ContextMenu';
 import { Modal } from '../components/Dialogs';
 import { Select } from '../components/Select';
 import { ConfirmDialog, NameDialog } from './dialogs';
+import { keys } from '../lib/keys';
 
 type View = { scope: PadScope; folder: number | null };
 const VIEW_KEY = 'wa.pad.view';
@@ -121,21 +122,21 @@ export function NotesApp({ initialNote, onNoteChange }: { initialNote?: number |
 
   const noteMenu = (n: PadNoteMeta): MenuItem[] => n.deletedAt
     ? [
-      { kind: 'item', label: 'Recover', onClick: () => void padApi.restore(n.id, PAD_SOURCE).then(reload) },
+      { kind: 'item', label: 'Recover', icon: <RotateCcw />, onClick: () => void padApi.restore(n.id, PAD_SOURCE).then(reload) },
       { kind: 'sep' },
-      { kind: 'item', label: 'Delete now', danger: true, onClick: () => void padApi.remove(n.id, true, PAD_SOURCE).then(() => { if (openId === n.id) setOpenId(null); return reload(); }) },
+      { kind: 'item', label: 'Delete now', icon: <Trash2 />, danger: true, onClick: () => void padApi.remove(n.id, true, PAD_SOURCE).then(() => { if (openId === n.id) setOpenId(null); return reload(); }) },
     ]
     : [
-      { kind: 'item', label: n.pinned ? 'Unpin note' : 'Pin note', onClick: () => void padApi.pin(n.id, !n.pinned, PAD_SOURCE).then(reload) },
-      { kind: 'item', label: 'Move to…', onClick: () => setMoving(n) },
+      { kind: 'item', label: n.pinned ? 'Unpin note' : 'Pin note', icon: n.pinned ? <PinOff /> : <Pin />, onClick: () => void padApi.pin(n.id, !n.pinned, PAD_SOURCE).then(reload) },
+      { kind: 'item', label: 'Move to…', icon: <FolderInput />, onClick: () => setMoving(n) },
       { kind: 'sep' },
-      { kind: 'item', label: 'Delete', danger: true, onClick: () => void padApi.remove(n.id, false, PAD_SOURCE).then(() => { if (openId === n.id) setOpenId(null); return reload(); }) },
+      { kind: 'item', label: 'Delete', icon: <Trash />, danger: true, onClick: () => void padApi.remove(n.id, false, PAD_SOURCE).then(() => { if (openId === n.id) setOpenId(null); return reload(); }) },
     ];
 
   const folderMenu = (id: number, name: string): MenuItem[] => [
-    { kind: 'item', label: 'Rename…', onClick: () => setNaming({ id, name }) },
+    { kind: 'item', label: 'Rename…', icon: <Pencil />, onClick: () => setNaming({ id, name }) },
     { kind: 'sep' },
-    { kind: 'item', label: 'Delete folder', danger: true, onClick: () => setRemovingFolder({ id, name }) },
+    { kind: 'item', label: 'Delete folder', icon: <Trash />, danger: true, onClick: () => setRemovingFolder({ id, name }) },
   ];
 
   const groups = useMemo(() => groupNotes(list), [list]);
@@ -147,7 +148,7 @@ export function NotesApp({ initialNote, onNoteChange }: { initialNote?: number |
   return (
     <div className={`pad${foldersShown ? '' : ' no-folders'}`}>
       <aside className="pad-folders" inert={!foldersShown}>
-        <div className="pad-col-head"><span>Folders</span></div>
+        <div className="pad-col-head" data-tauri-drag-region="deep"><span>Folders</span></div>
         <div className="pad-folder-list">
           <FolderRow icon={<NotebookText />} name="All Notes" count={overview?.all} on={!query && view.scope === 'all'} onClick={() => choose({ scope: 'all', folder: null })} />
           <FolderRow icon={<Inbox />} name="Notes" count={overview?.unfiled} on={!query && view.scope === 'unfiled'} onClick={() => choose({ scope: 'unfiled', folder: null })} />
@@ -166,7 +167,7 @@ export function NotesApp({ initialNote, onNoteChange }: { initialNote?: number |
       </aside>
 
       <section className="pad-list">
-        <div className="pad-col-head">
+        <div className="pad-col-head" data-tauri-drag-region="deep">
           <Tool on={foldersShown} title={foldersShown ? 'Hide folders' : 'Show folders'} onClick={() => setFoldersShown((v) => !v)}><PanelLeft /></Tool>
           <span className="pad-list-title">{viewTitle}<span className="muted">{list.length}</span></span>
           <span className="spacer" />
@@ -433,9 +434,9 @@ function NoteEditor({ id, folders, onChanged, onDeleted, onNew }: {
                 { value: 'body', label: 'Body' }, { value: 'mono', label: 'Monospaced' },
               ]} />
             <span className="pad-tool-sep" />
-            <Tool on={state?.bold} title="Bold (⌘B)" onClick={() => editor.chain().focus().toggleBold().run()}><Bold /></Tool>
-            <Tool on={state?.italic} title="Italic (⌘I)" onClick={() => editor.chain().focus().toggleItalic().run()}><Italic /></Tool>
-            <Tool on={state?.underline} title="Underline (⌘U)" onClick={() => editor.chain().focus().toggleUnderline().run()}><Underline /></Tool>
+            <Tool on={state?.bold} title={`Bold (${keys('⌘B')})`} onClick={() => editor.chain().focus().toggleBold().run()}><Bold /></Tool>
+            <Tool on={state?.italic} title={`Italic (${keys('⌘I')})`} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic /></Tool>
+            <Tool on={state?.underline} title={`Underline (${keys('⌘U')})`} onClick={() => editor.chain().focus().toggleUnderline().run()}><Underline /></Tool>
             <Tool on={state?.strike} title="Strikethrough" onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough /></Tool>
             <Tool on={state?.highlight} title="Highlight" onClick={() => editor.chain().focus().toggleHighlight().run()}><Highlighter /></Tool>
             <span className="pad-tool-sep" />

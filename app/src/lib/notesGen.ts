@@ -3,6 +3,7 @@ import { cancelRun } from './salem/runtime';
 import { generateText } from './salem/generate';
 import { createMeter, recalledCost, rememberCost, type Meter } from './meter';
 import { NOTES_REFINE_SYSTEM, NOTES_SYSTEM } from './prompts';
+import { tidyTitle } from './titles';
 import type { GenSource, StudyContext } from './studyGen';
 import { studyApi, type Note } from '../study/api';
 
@@ -91,7 +92,8 @@ export async function writeNote(ctx: StudyContext, notebookId: number, src: GenS
   onCreated(note);
   const user = `Course: ${ctx.subject}\nNotebook: ${ctx.notebook}${ctx.courseContext.trim() ? `\nCourse notes (follow this notation):\n${ctx.courseContext.trim()}` : ''}\n\n${instructions.trim() ? `The student's instructions for these notes:\n${instructions.trim()}\n\n` : ''}${describe(src)}`;
   try {
-    return await run(note, NOTES_SYSTEM, user, (text) => ({ title: titleOf(text) ?? 'Notes' }));
+    const sourceTitles = src.kind === 'sources' ? [...new Set(src.hits.map((h) => h.sourceTitle))] : [];
+    return await run(note, NOTES_SYSTEM, user, (text) => ({ title: tidyTitle(titleOf(text) ?? '', sourceTitles) || 'Notes' }));
   } catch (e) {
     await studyApi.updateNote(note.id, { title: 'Notes (failed)', content: `_Writing these notes failed: ${e instanceof Error ? e.message : String(e)}_` }).catch(() => {});
     throw e;
@@ -101,7 +103,7 @@ export async function writeNote(ctx: StudyContext, notebookId: number, src: GenS
 export async function refineNote(note: Note, instruction: string): Promise<Note> {
   const user = `The change to make:\n${instruction.trim()}\n\nThe current notes:\n\n${note.content}`;
   return run(note, NOTES_REFINE_SYSTEM, user, (text) => ({
-    title: titleOf(text) ?? note.title,
+    title: tidyTitle(titleOf(text) ?? '') || note.title,
     instructions: [note.instructions, instruction.trim()].filter(Boolean).join('\n'),
   }));
 }

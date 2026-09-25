@@ -6,6 +6,7 @@ mod study;
 mod prefs;
 mod providers;
 mod tabmode;
+mod traffic;
 mod tray;
 mod web;
 
@@ -1016,6 +1017,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             api,
+            traffic::traffic_lights,
             bridge_info,
             restart_bridge,
             fetch_image,

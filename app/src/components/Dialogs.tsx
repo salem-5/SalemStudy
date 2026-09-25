@@ -7,7 +7,7 @@ import { Attempts } from './BoxCard';
 import { matchesServer } from '../lib/drafts';
 import { SNIPPETS } from './MathEditor';
 
-export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
+export function Modal({ title, onClose, children, wide, className }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean; className?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!ref.current?.contains(document.activeElement)) ref.current?.focus();
@@ -19,7 +19,7 @@ export function Modal({ title, onClose, children, wide }: { title: string; onClo
   }, [onClose]);
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <div ref={ref} tabIndex={-1} className={`modal${wide ? ' wide' : ''}`} onMouseDown={(e) => e.stopPropagation()}>
+      <div ref={ref} tabIndex={-1} className={`modal${wide ? ' wide' : ''}${className ? ` ${className}` : ''}`} onMouseDown={(e) => e.stopPropagation()}>
         <header><span>{title}</span><button type="button" className="icon-btn" onClick={onClose} aria-label="Close"><X /></button></header>
         <div className="modal-body">{children}</div>
       </div>
@@ -49,7 +49,7 @@ export function SubmitDialog({ question, draftOf, onConfirm, onClose }: {
   }, [onConfirm]);
 
   return (
-    <Modal title={`SUBMIT Q${question.number}`} onClose={onClose}>
+    <Modal title={`Submit question ${question.number}`} onClose={onClose}>
       <p className="muted">Each part below uses one attempt. Enter to submit, Esc to cancel.</p>
       <table className="confirm-table">
         <tbody>
@@ -110,17 +110,17 @@ export function ShortcutsDialog({ onClose }: { onClose: () => void }) {
     <Modal title="KEYBOARD" onClose={onClose} wide>
       <div className="keys-grid">
         <div>
-          <h4>GLOBAL</h4>
+          <h4>Anywhere</h4>
           {GLOBAL_KEYS.map(([k, v]) => <div key={k} className="keyrow"><kbd>{k}</kbd><span>{v}</span></div>)}
-          <h4>MATH EDITOR</h4>
+          <h4>Maths editor</h4>
           {EDITOR_KEYS.map(([k, v]) => <div key={k} className="keyrow"><kbd>{k}</kbd><span>{v}</span></div>)}
         </div>
         <div>
-          <h4>TEMPLATES (wrap the selection)</h4>
+          <h4>Templates <span className="muted">wrap the selection</span></h4>
           {SNIPPETS.filter((s) => s.keys).map((s) => (
             <div key={s.id} className="keyrow"><kbd>{s.keys}</kbd><span>{s.title} <span className="muted">{s.label}</span></span></div>
           ))}
-          <h4>SYNTAX</h4>
+          <h4>Syntax</h4>
           <div className="syntax">
             {['1/(2x)', 'x^(n+1)', 'x_1', 'sqrt(x)', 'root(3, x)', 'sin^2(x)', 'log_2(8)', '|x - 1|', '<1, -2, 3>', '(0, inf]', 'vec(v)', '2#i - #j', 'theta', 'DNE'].map((s) => (
               <div key={s} className="keyrow"><code>{s}</code><MathView expr={s} /></div>

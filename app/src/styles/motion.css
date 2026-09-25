@@ -1,0 +1,33 @@
+/*
+ * Reduced motion. Loaded last so these win: every animation that moves something is redefined
+ * as a plain fade, and transitions keep only colour and opacity. Feedback stays - it just stops
+ * travelling. Loops that only exist to look alive are switched off.
+ */
+
+@media (prefers-reduced-motion: reduce) {
+  @keyframes rise-in { from { opacity: 0; } }
+  @keyframes slide-in { from { opacity: 0; } }
+  @keyframes card-in { from { opacity: 0; } }
+  @keyframes pop-in { from { opacity: 0; } }
+  @keyframes modal-in { from { opacity: 0; } }
+  @keyframes menu-in { from { opacity: 0; } }
+  @keyframes toast-in { from { opacity: 0; } }
+  @keyframes select-in { from { opacity: 0; } }
+  @keyframes sheet-in { from { opacity: 0; } }
+  @keyframes pop { from { opacity: 0; } }
+  @keyframes tab-in-next { from { opacity: 0; } }
+  @keyframes tab-in-prev { from { opacity: 0; } }
+  @keyframes tab-in-deeper { from { opacity: 0; } }
+  @keyframes grow-x { from { opacity: 0; } }
+  @keyframes leave-right { to { opacity: 0; } }
+  @keyframes leave-left { to { opacity: 0; } }
+  @keyframes shake { to { opacity: 1; } }
+  @keyframes ring { to { opacity: 1; } }
+
+  *, *::before, *::after {
+    transition-property: opacity, color, background-color, border-color, box-shadow, visibility !important;
+  }
+  .stagger > * { animation-delay: 0ms !important; }
+  .study-glow, .nav-busy, .reasoning.live .reasoning-head > span:first-of-type { animation: none !important; }
+  .chat-viewport { scroll-behavior: auto; }
+}

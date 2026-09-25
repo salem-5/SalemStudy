@@ -652,60 +652,64 @@ pub fn activity(app: AppHandle, db: State<'_, StudyDb>, since: i64) -> Result<Ve
 
 #[tauri::command]
 pub fn activity_detail(app: AppHandle, db: State<'_, StudyDb>, from: i64, to: i64) -> Result<Vec<Value>, String> {
-    with_db(&app, &db, |c| {
-        let mut stmt = c.prepare(
-            "SELECT * FROM (
-               SELECT r.reviewed_at AS at, 'card' AS kind, n.id AS notebook_id, n.name AS notebook, s.name AS subject
-                 FROM card_review r
-                 JOIN card cd ON cd.id = r.card_id
-                 JOIN notebook n ON n.id = cd.notebook_id
-                 JOIN subject s ON s.id = n.subject_id
-                WHERE r.reviewed_at >= ?1 AND r.reviewed_at < ?2
-               UNION ALL
-               SELECT a.finished_at, 'quiz', n.id, n.name, s.name
-                 FROM quiz_attempt a
-                 JOIN notebook n ON n.id = a.notebook_id
-                 JOIN subject s ON s.id = n.subject_id
-                WHERE a.finished_at >= ?1 AND a.finished_at < ?2
-               UNION ALL
-               SELECT m.created_at, 'chat', n.id, n.name, s.name
-                 FROM message m
-                 JOIN conversation cv ON cv.id = m.conversation_id
-                 JOIN notebook n ON n.id = cv.notebook_id
-                 JOIN subject s ON s.id = n.subject_id
-                WHERE m.role = 'user' AND m.created_at >= ?1 AND m.created_at < ?2
-               UNION ALL
-               SELECT nt.created_at, 'note', n.id, n.name, s.name
-                 FROM note nt
-                 JOIN notebook n ON n.id = nt.notebook_id
-                 JOIN subject s ON s.id = n.subject_id
-                WHERE nt.created_at >= ?1 AND nt.created_at < ?2
-               UNION ALL
-               SELECT src.created_at, 'source', n.id, n.name, s.name
-                 FROM source src
-                 JOIN notebook n ON n.id = src.notebook_id
-                 JOIN subject s ON s.id = n.subject_id
-                WHERE src.created_at >= ?1 AND src.created_at < ?2
-               UNION ALL
-               -- Focus sessions belong to no notebook; they are the day's own work.
-               SELECT f.finished_at, 'focus', NULL, NULL, NULL
-                 FROM focus_session f
-                WHERE f.finished_at >= ?1 AND f.finished_at < ?2
-             ) ORDER BY at",
-        )?;
-        let rows = stmt
-            .query_map(params![from, to], |r| {
-                Ok(serde_json::json!({
-                    "at": r.get::<_, i64>(0)?,
-                    "kind": r.get::<_, String>(1)?,
-                    "notebookId": r.get::<_, Option<i64>>(2)?,
-                    "notebook": r.get::<_, Option<String>>(3)?,
-                    "subject": r.get::<_, Option<String>>(4)?,
-                }))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
-    })
+    with_db(&app, &db, |c| activity_rows(c, from, to))
+}
+
+/// What happened between two times, one row per action, with where it happened. It counts exactly
+/// what `activity` counts, so a day the heatmap shows is never empty here: rows outside any
+/// notebook (a question in the main chat, a focus session) come back with no notebook.
+fn activity_rows(c: &Connection, from: i64, to: i64) -> rusqlite::Result<Vec<Value>> {
+    let mut stmt = c.prepare(
+        "SELECT * FROM (
+           SELECT r.reviewed_at AS at, 'card' AS kind, n.id AS notebook_id, n.name AS notebook, s.name AS subject
+             FROM card_review r
+             LEFT JOIN notebook n ON n.id = r.notebook_id
+             LEFT JOIN subject s ON s.id = n.subject_id
+            WHERE r.reviewed_at >= ?1 AND r.reviewed_at < ?2
+           UNION ALL
+           SELECT a.finished_at, 'quiz', n.id, n.name, s.name
+             FROM quiz_attempt a
+             LEFT JOIN notebook n ON n.id = a.notebook_id
+             LEFT JOIN subject s ON s.id = n.subject_id
+            WHERE a.finished_at >= ?1 AND a.finished_at < ?2
+           UNION ALL
+           SELECT m.created_at, 'chat', n.id, n.name, s.name
+             FROM message m
+             LEFT JOIN conversation cv ON cv.id = m.conversation_id
+             LEFT JOIN notebook n ON n.id = cv.notebook_id
+             LEFT JOIN subject s ON s.id = n.subject_id
+            WHERE m.role = 'user' AND m.created_at >= ?1 AND m.created_at < ?2
+           UNION ALL
+           SELECT nt.created_at, 'note', n.id, n.name, s.name
+             FROM note nt
+             LEFT JOIN notebook n ON n.id = nt.notebook_id
+             LEFT JOIN subject s ON s.id = n.subject_id
+            WHERE nt.created_at >= ?1 AND nt.created_at < ?2
+           UNION ALL
+           SELECT src.created_at, 'source', n.id, n.name, s.name
+             FROM source src
+             LEFT JOIN notebook n ON n.id = src.notebook_id
+             LEFT JOIN subject s ON s.id = n.subject_id
+            WHERE src.created_at >= ?1 AND src.created_at < ?2
+           UNION ALL
+           -- Focus sessions belong to no notebook; they are the day's own work.
+           SELECT f.finished_at, 'focus', NULL, NULL, NULL
+             FROM focus_session f
+            WHERE f.finished_at >= ?1 AND f.finished_at < ?2
+         ) ORDER BY at",
+    )?;
+    let rows = stmt
+        .query_map(params![from, to], |r| {
+            Ok(serde_json::json!({
+                "at": r.get::<_, i64>(0)?,
+                "kind": r.get::<_, String>(1)?,
+                "notebookId": r.get::<_, Option<i64>>(2)?,
+                "notebook": r.get::<_, Option<String>>(3)?,
+                "subject": r.get::<_, Option<String>>(4)?,
+            }))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
 }
 
 #[tauri::command]
@@ -820,6 +824,38 @@ mod tests {
         let notebooks: i64 = c.query_row("SELECT COUNT(*) FROM notebook", [], |r| r.get(0)).unwrap();
         assert_eq!((sources, notebooks), (1, 1));
         assert_eq!(tree(&c).unwrap()[0].notebooks[0].source_count, 1);
+    }
+
+    #[test]
+    fn a_day_lists_every_action_the_heatmap_counts() {
+        let c = mem();
+        let calc = create_subject(&c, "Calculus II").unwrap();
+        let nb = create_notebook(&c, calc, "Series", "").unwrap();
+        let day = 1_000_000;
+        c.execute("INSERT INTO flashcard (notebook_id, front, back) VALUES (?1, 'f', 'b')", [nb]).unwrap();
+        let card = c.last_insert_rowid();
+        c.execute("INSERT INTO card_review (card_id, notebook_id, correct, reviewed_at) VALUES (?1, ?2, 1, ?3)", params![card, nb, day]).unwrap();
+        c.execute("INSERT INTO quiz (notebook_id, title, questions_json, created_at) VALUES (?1, 'q', '[]', 0)", [nb]).unwrap();
+        let quiz = c.last_insert_rowid();
+        c.execute(
+            "INSERT INTO quiz_attempt (quiz_id, notebook_id, started_at, finished_at, score, total, answers_json) VALUES (?1, ?2, 0, ?3, 1, 1, '[]')",
+            params![quiz, nb, day + 1],
+        ).unwrap();
+        c.execute("INSERT INTO conversation (notebook_id, title, created_at, updated_at) VALUES (?1, '', 0, 0)", [nb]).unwrap();
+        let in_notebook = c.last_insert_rowid();
+        c.execute("INSERT INTO conversation (notebook_id, title, created_at, updated_at) VALUES (NULL, '', 0, 0)", []).unwrap();
+        let main_chat = c.last_insert_rowid();
+        for conv in [in_notebook, main_chat] {
+            c.execute("INSERT INTO message (conversation_id, role, content, created_at) VALUES (?1, 'user', 'hi', ?2)", params![conv, day + 2]).unwrap();
+        }
+        c.execute("INSERT INTO focus_session (phase, started_at, finished_at, minutes) VALUES ('focus', 0, ?1, 25)", [day + 3]).unwrap();
+
+        let rows = activity_rows(&c, day, day + 86_400_000).unwrap();
+        let kinds: Vec<_> = rows.iter().map(|r| r["kind"].as_str().unwrap().to_string()).collect();
+        assert_eq!(kinds, ["card", "quiz", "chat", "chat", "focus"]);
+        assert_eq!(rows[0]["notebook"], "Series");
+        assert_eq!(rows[0]["subject"], "Calculus II");
+        assert!(rows[3]["notebookId"].is_null(), "a question in the main chat still counts");
     }
 
     #[test]

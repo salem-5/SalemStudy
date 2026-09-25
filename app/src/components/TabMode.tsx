@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { Check, Copy, ExternalLink, Globe, Loader2, Power } from 'lucide-react';
 import { getAiConfig, setAiConfig } from '../lib/ai';
 import { studyApi } from '../study/api';
+import { Modal } from './Dialogs';
 
 export type TabModeStatus = { running: boolean; port: number | null; url: string | null; origin: string | null };
 
@@ -122,51 +123,47 @@ export function TabModeDialog({ onClose }: { onClose: () => void }) {
     }
   };
 
+  const on = !!(status?.running && status.url);
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal tab-mode" onClick={(e) => e.stopPropagation()}>
-        <div className="panel-title"><Globe /> Salem in a tab</div>
-        <p className="muted small">
-          Serve this window's interface on your own machine, so you can keep Salem in a browser tab
-          next to everything else. It is the same Salem - the same notebooks, chats and settings -
-          and while it is on, Salem works only there. Closing this window keeps it running in the tray.
+    <Modal title="Open Salem in a browser tab" className="tab-mode" onClose={onClose}>
+      <div className="tab-mode-intro">
+        <span className="tab-mode-icon"><Globe /></span>
+        <p>
+          Use Salem in a browser tab instead of this window, with the same notebooks, chats and settings.
+          While it is on, Salem works only in the tab.
         </p>
+      </div>
 
-        {error && <p className="form-err">{error}</p>}
+      {error && <p className="form-err">{error}</p>}
 
-        {status?.running && status.url ? (
-          <>
-            <label className="field">
-              <span className="field-label">Open this address</span>
-              <input className="field-input mono" readOnly value={status.url} onFocus={(e) => e.currentTarget.select()} />
-            </label>
-            <p className="muted small">
-              The address carries a one-off key, so nothing else on this machine can reach your
-              study data. Keep it to yourself, and reopen the tab from here if you lose it - the key
-              changes every time tab mode is restarted.
-            </p>
-            <div className="modal-actions">
-              <button type="button" className="btn ghost" onClick={() => void copy()}>
-                {copied ? <><Check />Copied</> : <><Copy />Copy address</>}
-              </button>
-              <button type="button" className="btn ghost" onClick={() => void studyApi.openUrl(status.url!)}>
-                <ExternalLink />Open in browser
-              </button>
-              <button type="button" className="btn" disabled={busy} onClick={() => void toggle()}>
-                {busy ? <Loader2 className="spin" /> : null}Turn off
-              </button>
-              <button type="button" className="btn primary" onClick={onClose}>Done</button>
-            </div>
-          </>
-        ) : (
+      {on ? (
+        <>
+          <label className="field">
+            <span className="field-label">Address</span>
+            <input className="field-input mono" readOnly value={status!.url!} onFocus={(e) => e.currentTarget.select()} />
+            <span className="gen-hint">It holds a private key, so keep it to yourself. Restarting tab mode changes it.</span>
+          </label>
           <div className="modal-actions">
-            <button type="button" className="btn" onClick={onClose}>Cancel</button>
-            <button type="button" className="btn primary" disabled={busy} onClick={() => void toggle()}>
-              {busy ? <><Loader2 className="spin" />Starting…</> : 'Turn on tab mode'}
+            <button type="button" className="btn danger" disabled={busy} onClick={() => void toggle()}>
+              {busy ? <Loader2 className="spin" /> : <Power />}Turn off
+            </button>
+            <span className="spacer" />
+            <button type="button" className="btn" onClick={() => void copy()}>
+              {copied ? <><Check />Copied</> : <><Copy />Copy</>}
+            </button>
+            <button type="button" className="btn primary" onClick={() => void studyApi.openUrl(status!.url!)}>
+              <ExternalLink />Open tab
             </button>
           </div>
-        )}
-      </div>
-    </div>
+        </>
+      ) : (
+        <div className="modal-actions">
+          <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn primary" disabled={busy} onClick={() => void toggle()}>
+            {busy ? <><Loader2 className="spin" />Starting…</> : 'Turn on tab mode'}
+          </button>
+        </div>
+      )}
+    </Modal>
   );
 }

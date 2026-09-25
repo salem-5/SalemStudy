@@ -7,6 +7,7 @@ import { APP_POLICY, chatPrompt } from '../lib/prompts';
 import { registry, type ToolEnv } from '../lib/salem/tools';
 import { studyApi, type ChatThread, type SubjectNode } from './api';
 import { ConfirmDialog } from './dialogs';
+import { MoreMenu } from '../components/ContextMenu';
 import { dropEmpty } from '../lib/chatThreads';
 import type { Route } from './pages';
 
@@ -68,11 +69,13 @@ export function ChatPage({ threadId, tree, open, refreshTree }: {
   return (
     <div className="chatw">
       <aside className="chatw-list">
-        <div className="pane-head">
-          <span>Chats</span><span className="muted">{threads.length}</span>
+        <div className="chatw-head" data-tauri-drag-region="deep">
+          <span className="chatw-title">Chats</span>
           <span className="spacer" />
+          <MoreMenu title="Chat options" items={[
+            { kind: 'item', label: 'Delete all chats…', icon: <Trash />, danger: true, disabled: !threads.length, onClick: () => setClearing('all') },
+          ]} />
           <button type="button" className="icon-btn" onClick={() => open({ kind: 'chat', id: null })} title="New chat"><SquarePen /></button>
-          <button type="button" className="icon-btn" disabled={!threads.length} onClick={() => setClearing('all')} title="Delete all chats"><Trash /></button>
         </div>
         <div className="thread-search">
           <Search />
@@ -130,7 +133,7 @@ export function ChatPage({ threadId, tree, open, refreshTree }: {
           <label className="switch" title="Let the assistant create notes, decks and quizzes, control the timer and open views when you ask it to">
             <input type="checkbox" checked={control} onChange={(e) => setControl(e.target.checked)} />
             <span className="switch-track"><span className="switch-thumb" /></span>
-            <Bot /><span className="switch-text">App control</span>
+            <Bot /><span className="switch-text">Let it act in the app</span>
           </label>
           <button type="button" className="icon-btn" disabled={!current?.messageCount} onClick={() => setClearing('one')} title="Clear this chat"><Eraser /></button>
         </>}>

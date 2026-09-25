@@ -101,7 +101,7 @@ export function UpdatesSection() {
 
   return (
     <section>
-      <h4>UPDATES</h4>
+      <h4>Updates</h4>
       <div className="update-row">
         <span className="update-version">SalemStudy <b>{version ?? '…'}</b></span>
         {local && (
