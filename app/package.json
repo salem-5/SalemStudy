@@ -1,7 +1,7 @@
 {
   "name": "webassign-desk",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.1",
   "type": "module",
   "scripts": {
     "sync-mathpad": "node scripts/sync-mathpad.mjs",
