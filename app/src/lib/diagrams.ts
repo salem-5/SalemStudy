@@ -49,11 +49,19 @@ def labelled(lines):
     area = sum((l["b"][2] - l["b"][0]) * (l["b"][3] - l["b"][1]) for l in lines)
     return len(short) >= 3 and len(short) >= 0.6 * len(lines) and area <= 0.35
 
+def on_white(img):
+    # A transparent picture is laid on white, as it would sit on a slide or a page. Converting it
+    # straight to RGB keeps whatever colour hides under the transparency, usually black.
+    if img.mode in ("RGBA", "LA", "PA") or (img.mode == "P" and "transparency" in img.info):
+        rgba = img.convert("RGBA")
+        return Image.alpha_composite(Image.new("RGBA", rgba.size, (255, 255, 255, 255)), rgba).convert("RGB")
+    return img.convert("RGB")
+
 def consider(data, where):
     if len(found) >= 24:
         return
     try:
-        img = Image.open(io.BytesIO(data)).convert("RGB")
+        img = on_white(Image.open(io.BytesIO(data)))
     except Exception:
         return
     w, h = img.size
@@ -76,7 +84,7 @@ if KIND == "pdf":
     seen = set()
     for pno, page in enumerate(doc):
         for info in page.get_images(full=True):
-            xref = info[0]
+            xref, smask = info[0], info[1]
             if xref in seen:
                 continue
             seen.add(xref)
@@ -84,8 +92,15 @@ if KIND == "pdf":
                 pix = pymupdf.Pixmap(doc, xref)
                 if pix.n - pix.alpha >= 4:
                     pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
-                if pix.alpha:
-                    pix = pymupdf.Pixmap(pix, 0)
+                # A PDF keeps an image's transparency in a separate soft mask: put it back on, so
+                # consider() can lay the picture on white instead of on the black beneath it.
+                if smask and not pix.alpha:
+                    try:
+                        mask = pymupdf.Pixmap(doc, smask)
+                        if (mask.width, mask.height) == (pix.width, pix.height):
+                            pix = pymupdf.Pixmap(pix, mask)
+                    except Exception:
+                        pass
                 consider(pix.tobytes("png"), pno)
             except Exception:
                 continue

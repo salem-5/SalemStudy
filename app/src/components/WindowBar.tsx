@@ -6,7 +6,8 @@ import type { Window as TauriWindow } from '@tauri-apps/api/window';
 const REVEAL_AT = 14;
 /** How far the page moves down to make room for them (styles/shell.css, [data-titlebar]). */
 const STRIP = 40;
-const HIDE_AFTER = 350;
+/** A beat after the pointer leaves the strip, so brushing past its edge does not flicker it. */
+const HIDE_AFTER = 100;
 
 const win = () => import('@tauri-apps/api/window').then(({ getCurrentWindow }) => getCurrentWindow());
 const act = (fn: (w: TauriWindow) => Promise<void>) => { void win().then(fn).catch(() => {}); };
@@ -33,7 +34,7 @@ export function WindowBar() {
     const later = () => { window.clearTimeout(hide.current); hide.current = window.setTimeout(() => setShown(false), HIDE_AFTER); };
     const onMove = (e: MouseEvent) => {
       if (e.clientY <= REVEAL_AT) { window.clearTimeout(hide.current); setShown(true); }
-      else if (e.clientY <= STRIP + 8) window.clearTimeout(hide.current);
+      else if (e.clientY <= STRIP) window.clearTimeout(hide.current);
       else later();
     };
     const root = document.documentElement;
