@@ -245,11 +245,10 @@ export async function maskLabels(dataUrl: string, boxes: DiagramLabel['box'][]):
   return canvas.toDataURL('image/png');
 }
 
-async function findIn(source: Source, stop?: Stop): Promise<{ found: Found[]; images: Map<string, string> }> {
+async function findIn(source: Source): Promise<{ found: Found[]; images: Map<string, string> }> {
   const kind = KINDS[source.kind];
   const file = source.filename ?? source.title;
   if (!kind || !file) return { found: [], images: new Map() };
-  stop?.throwIfStopped();
   const r = await runPython(script(sandboxName(file), kind), 300, undefined, { sources: [source.id], maxOutput: 3_000_000, maxFigures: 24 });
   if (!r.ok) throw new Error((r.error ?? r.stderr ?? 'Reading the diagrams failed.').split('\n').slice(-2).join(' '));
   const found = JSON.parse((r.stdout || '').trim().split('\n').pop() || '[]') as Found[];
@@ -261,95 +260,143 @@ export const whereLabel = (source: Source, where: number) => (source.kind === 'p
 /** A picture with labels on it, found in a source before any question is written about it. */
 export type FoundDiagram = { key: string; source: Source; found: Found; image: string };
 
+/**
+ * A diagram offered for a quiz. `matches` when the AI found it is about what the lecture teaches,
+ * with `labels` the ones to hide; the rest are only shown when the student asks to see them all.
+ */
+export type DiagramCandidate = FoundDiagram & { matches: boolean; labels: DiagramLabel[]; choice: Picked | null };
+
 export const canHoldDiagrams = (source: Source) => !!KINDS[source.kind];
 
-/** Every labelled picture in a source, for the student to choose from. Runs locally; no AI. */
+// A source's file never changes under the same id, created time and size, so what was found in it
+// - and what the AI made of each picture - is kept for the session instead of worked out again.
+const sourceKey = (s: Source) => `${s.id}:${s.createdAt}:${s.size}`;
+const scans = new Map<string, Promise<FoundDiagram[]>>();
+const choices = new Map<string, Picked>();
+
+/** Every labelled picture in a source. Runs locally, no AI, and only once per source. */
 export async function findDiagrams(source: Source, stop?: Stop): Promise<FoundDiagram[]> {
-  const { found, images } = await findIn(source, stop);
-  return found.flatMap((f) => {
-    const image = images.get(f.name);
-    return image ? [{ key: `${source.id}:${f.name}`, source, found: f, image }] : [];
-  });
+  stop?.throwIfStopped();
+  const key = sourceKey(source);
+  let job = scans.get(key);
+  if (!job) {
+    job = findIn(source).then(({ found, images }) => found.flatMap((f) => {
+      const image = images.get(f.name);
+      return image ? [{ key: `${source.id}:${f.name}`, source, found: f, image }] : [];
+    }));
+    scans.set(key, job);
+    job.catch(() => scans.delete(key));
+  }
+  const list = await job;
+  stop?.throwIfStopped();
+  return list;
+}
+
+/** What the AI makes of each picture: whether to use it, and which labels to hide. Asked once per picture. */
+async function chooseIn(source: Source, found: Found[], lecture: Lecture, chosen: boolean, meter?: Meter, stop?: Stop): Promise<Map<string, Picked>> {
+  const tag = (f: Found) => `${sourceKey(source)}:${f.name}:${chosen ? 'chosen' : 'auto'}`;
+  const ask = found.filter((f) => !choices.has(tag(f)));
+  for (let i = 0; i < ask.length; i += 8) {
+    const batch = ask.slice(i, i + 8);
+    const raw = await generateQuick<{ diagrams?: Picked[] }>({
+      feature: 'quiz',
+      system: DIAGRAM_SYSTEM,
+      instruction: `# What the lecture covers: ${source.title}\n${outline(source, lecture)}\n\n# The pictures\n\n${batch.map((f) => describe(f, source, lecture)).join('\n\n')}${chosen ? `\n\n${CHOSEN_NOTE}` : ''}`,
+      schema: SCHEMA,
+      meter,
+      stop,
+    }).catch(unlessStopped);
+    for (const p of raw?.diagrams ?? []) {
+      const f = batch.find((x) => x.name === p.name);
+      if (f) choices.set(tag(f), p);
+    }
+  }
+  return new Map(found.flatMap((f) => { const p = choices.get(tag(f)); return p ? [[f.name, p] as const] : []; }));
+}
+
+const taughtLabels = (d: FoundDiagram, choice: Picked, lecture: Lecture) =>
+  toLabels(d.found, choice).filter((l) => isTaught(l, evidenceFor(lecture.texts, d.source.id, d.found.where, d.found.lines, lecture.notes))).slice(0, 12);
+
+/** Every labelled diagram in the sources, each marked with whether it matches what they teach. */
+export async function diagramCandidates(
+  sources: Source[],
+  lecture: Lecture,
+  progress: (text: string) => void,
+  meter?: Meter,
+  stop?: Stop,
+): Promise<DiagramCandidate[]> {
+  const out: DiagramCandidate[] = [];
+  const taken: DiagramLabel[][] = [];
+  for (const source of sources) {
+    if (!canHoldDiagrams(source)) continue;
+    progress(`Looking for labelled diagrams in ${source.title}…`);
+    const found = await findDiagrams(source, stop).catch((e) => { unlessStopped(e); return [] as FoundDiagram[]; });
+    if (!found.length) continue;
+    progress(`${source.title}: ${found.length} picture${found.length === 1 ? '' : 's'} with text on them, choosing the diagrams…`);
+    const picked = await chooseIn(source, found.map((d) => d.found), lecture, false, meter, stop);
+    for (const d of found) {
+      const choice = picked.get(d.found.name) ?? null;
+      const labels = choice?.use === true ? taughtLabels(d, choice, lecture) : [];
+      const matches = labels.length > 0 && !repeats(labels, taken);
+      if (matches) taken.push(labels);
+      out.push({ ...d, matches, labels: matches ? labels : [], choice });
+    }
+  }
+  return out;
 }
 
 /**
- * Label questions from a source's diagrams. Without `chosen`, the pictures are found here and the
- * AI keeps only the ones the lecture teaches. With `chosen`, the student picked them: each one
- * becomes a question as long as it has labels to hide.
+ * Label questions from the given diagrams. One the AI passed over (the student chose it from the
+ * full list) has its labels read again, told the student wants it; it keeps them even when the
+ * pages around it never name them.
  */
-export async function diagramQuestions(
-  sources: Source[],
+export async function questionsFromDiagrams(
+  chosen: DiagramCandidate[],
   lecture: Lecture,
   notebookId: number,
   want: number,
   progress: (text: string) => void,
   meter?: Meter,
   stop?: Stop,
-  chosen?: FoundDiagram[],
 ): Promise<QuizQuestion[]> {
   const out: QuizQuestion[] = [];
-  const taken: DiagramLabel[][] = [];
-  for (const source of sources) {
+  const extra = chosen.filter((d) => !d.labels.length);
+  const reread = new Map<string, Picked>();
+  for (const source of [...new Map(extra.map((d) => [d.source.id, d.source])).values()]) {
+    const mine = extra.filter((d) => d.source.id === source.id);
+    progress(`${source.title}: reading the labels on the ${mine.length} diagram${mine.length === 1 ? '' : 's'} you chose…`);
+    const picked = await chooseIn(source, mine.map((d) => d.found), lecture, true, meter, stop);
+    for (const d of mine) { const p = picked.get(d.found.name); if (p) reread.set(d.key, p); }
+  }
+  for (const d of chosen) {
     if (out.length >= want) break;
-    let found: Found[];
-    let images: Map<string, string>;
-    if (chosen) {
-      const mine = chosen.filter((d) => d.source.id === source.id);
-      found = mine.map((d) => d.found);
-      images = new Map(mine.map((d) => [d.found.name, d.image]));
-    } else {
-      progress(`Looking for labelled diagrams in ${source.title}…`);
-      ({ found, images } = await findIn(source, stop).catch((e) => { unlessStopped(e); return { found: [] as Found[], images: new Map<string, string>() }; }));
+    const choice = d.labels.length ? d.choice : reread.get(d.key);
+    if (!choice) continue;
+    let labels = d.labels;
+    if (!labels.length) {
+      labels = taughtLabels(d, choice, lecture);
+      if (!labels.length) labels = toLabels(d.found, choice).slice(0, 12);
     }
-    if (!found.length) continue;
-    progress(chosen
-      ? `${source.title}: reading the labels on the ${found.length} diagram${found.length === 1 ? '' : 's'} you chose…`
-      : `${source.title}: ${found.length} picture${found.length === 1 ? '' : 's'} with text on them, choosing the diagrams…`);
-    const picked: Picked[] = [];
-    for (let i = 0; i < found.length; i += 8) {
-      const batch = found.slice(i, i + 8);
-      const raw = await generateQuick<{ diagrams?: Picked[] }>({
-        feature: 'quiz',
-        system: DIAGRAM_SYSTEM,
-        instruction: `# What the lecture covers: ${source.title}\n${outline(source, lecture)}\n\n# The pictures\n\n${batch.map((f) => describe(f, source, lecture)).join('\n\n')}${chosen ? `\n\n${CHOSEN_NOTE}` : ''}`,
-        schema: SCHEMA,
-        meter,
-        stop,
-      }).catch(unlessStopped);
-      picked.push(...(raw?.diagrams ?? []));
-    }
-    for (const f of found) {
-      if (out.length >= want) break;
-      const choice = picked.find((p) => p.name === f.name);
-      const src = images.get(f.name);
-      if (!choice || !src || (choice.use !== true && !chosen)) continue;
-      const taught = evidenceFor(lecture.texts, source.id, f.where, f.lines, lecture.notes);
-      const all = toLabels(f, choice);
-      let labels = all.filter((l) => isTaught(l, taught)).slice(0, 12);
-      // A diagram the student chose keeps its labels even when the pages around it never name them.
-      if (!labels.length && chosen) labels = all.slice(0, 12);
-      if (!labels.length) continue;
-      if (!chosen && repeats(labels, taken)) continue;
-      taken.push(labels);
-      stop?.throwIfStopped();
-      progress(`Covering the labels on ${whereLabel(source, f.where).toLowerCase()} of ${source.title}…`);
-      const masked = await maskLabels(src, labels.map((l) => l.box)).catch(() => null);
-      if (!masked) continue;
-      const [image, original] = await Promise.all([
-        studyApi.attachmentAdd({ notebookId, kind: 'figure', name: `${f.name.replace(/\.png$/, '')}-blank.png`, mime: 'image/png', data: masked }),
-        studyApi.attachmentAdd({ notebookId, kind: 'figure', name: f.name, mime: 'image/png', data: src }),
-      ]);
-      out.push({
-        type: 'label',
-        prompt: String(choice.prompt ?? '').trim() || 'Label the diagram.',
-        answer: labels.map((l) => l.answer).join(' · '),
-        explanation: labels.map((l, i) => `${i + 1}. ${l.answer}`).join('\n'),
-        topic: String(choice.topic ?? '').trim() || 'Diagrams',
-        diagram: { image: image.id, original: original.id, labels },
-        sources: [{ sourceId: source.id, title: source.title, label: whereLabel(source, f.where), unit: f.where }],
-        verified: false,
-      });
-    }
+    if (!labels.length) continue;
+    const { source, found: f } = d;
+    stop?.throwIfStopped();
+    progress(`Covering the labels on ${whereLabel(source, f.where).toLowerCase()} of ${source.title}…`);
+    const masked = await maskLabels(d.image, labels.map((l) => l.box)).catch(() => null);
+    if (!masked) continue;
+    const [image, original] = await Promise.all([
+      studyApi.attachmentAdd({ notebookId, kind: 'figure', name: `${f.name.replace(/\.png$/, '')}-blank.png`, mime: 'image/png', data: masked }),
+      studyApi.attachmentAdd({ notebookId, kind: 'figure', name: f.name, mime: 'image/png', data: d.image }),
+    ]);
+    out.push({
+      type: 'label',
+      prompt: String(choice.prompt ?? '').trim() || 'Label the diagram.',
+      answer: labels.map((l) => l.answer).join(' · '),
+      explanation: labels.map((l, i) => `${i + 1}. ${l.answer}`).join('\n'),
+      topic: String(choice.topic ?? '').trim() || 'Diagrams',
+      diagram: { image: image.id, original: original.id, labels },
+      sources: [{ sourceId: source.id, title: source.title, label: whereLabel(source, f.where), unit: f.where }],
+      verified: false,
+    });
   }
   return out;
 }

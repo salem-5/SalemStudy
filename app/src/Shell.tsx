@@ -26,6 +26,7 @@ import { WindowBar } from './components/WindowBar';
 import { fmtClock, remainingOf, usePomodoro } from './lib/pomodoro';
 import { keys } from './lib/keys';
 import { morph } from './lib/morph';
+import { DiagramAsk } from './study/DiagramAsk';
 
 /** The window's traffic lights as traffic.rs reports them, in points. */
 type Lights = { button: number; naturalStep: number; tightStep: number; width: number };
@@ -357,6 +358,7 @@ export default function Shell() {
       {onboarding && <Onboarding onClose={() => setOnboarding(false)} />}
       <PomodoroAlarm />
       <UpdateCenter />
+      <DiagramAsk />
       {document.documentElement.dataset.chrome === 'win' && <WindowBar />}
       {searching && <SearchPalette tree={tree ?? []} open={open} onClose={() => setSearching(false)} />}
 

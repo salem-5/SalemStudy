@@ -227,10 +227,19 @@
 .toggle.gen-toggle.off > .lucide, .toggle.gen-toggle.off > span { color: var(--muted); }
 .toggle.gen-toggle .link { display: inline; padding: 0; color: var(--text); font: inherit; text-decoration: underline; text-underline-offset: 2px; }
 
-/* Choosing which diagrams to label, in the quiz maker. */
-.diagram-pick { gap: 10px; }
+/* Choosing which diagrams to label, once a quiz has found them (DiagramAsk). */
+.diagram-ask { width: min(760px, calc(100vw - 48px)); }
+.diagram-ask header span { display: inline-flex; align-items: center; gap: 8px; }
+.diagram-ask header .lucide { width: 16px; height: 16px; color: var(--accent); }
+.diagram-ask .modal-body { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.diagram-ask > .modal-actions { margin: 0; padding: 14px 22px 18px; box-shadow: 0 -1px 0 var(--line); }
+.diagram-ask-lead { margin: 0; font-size: 13.5px; line-height: 1.5; }
+.diagram-ask-lead b { color: var(--text); font-weight: 600; }
+.diagram-ask .diagram-pick-list { max-height: min(52vh, 480px); }
+.diagram-pick-where { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.diagram-pick-tag { position: absolute; top: 5px; left: 5px; padding: 1px 7px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); border-radius: var(--r-full); background: var(--panel); color: var(--text-2); font-size: 11px; }
 .diagram-pick-head { display: flex; align-items: center; gap: 10px; }
-.diagram-pick-head .pick-count { margin-right: auto; }
+.diagram-pick-head .pick-count { margin: 0 auto 0 0; }
 .diagram-pick-list { display: flex; flex-direction: column; gap: 14px; max-height: 360px; overflow-y: auto; padding: 2px; scrollbar-width: thin; }
 .diagram-pick-title { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; color: var(--text-2); font: 500 13px var(--sans); }
 .diagram-pick-title .kind-icon, .diagram-pick-title .lucide { width: 14px; height: 14px; flex: none; }
@@ -255,11 +264,10 @@
   .diagram-pick-item:hover:not(:disabled) { background: var(--fill-2); }
 }
 .diagram-pick-item.on { background: var(--accent-wash, var(--fill)); box-shadow: inset 0 0 0 1.5px var(--accent); color: var(--text); }
-.diagram-pick-img { display: grid; place-items: center; height: 96px; overflow: hidden; border-radius: var(--r-sm); background: #fff; }
+.diagram-pick-img { position: relative; display: grid; place-items: center; height: 96px; overflow: hidden; border-radius: var(--r-sm); background: #fff; }
 .diagram-pick-img img { max-width: 100%; max-height: 100%; object-fit: contain; transition: opacity var(--dur-1) ease; }
 .diagram-pick-item:not(.on) .diagram-pick-img img { opacity: 0.45; }
 .diagram-pick-cap { display: flex; align-items: center; gap: 6px; padding: 0 2px; }
 .diagram-pick-box { display: grid; place-items: center; width: 15px; height: 15px; flex: none; border-radius: 4px; box-shadow: inset 0 0 0 1.5px var(--line-3); }
 .diagram-pick-item.on .diagram-pick-box { background: var(--accent-fill); box-shadow: none; color: var(--on-accent); }
 .diagram-pick-box .lucide { width: 11px; height: 11px; stroke-width: 3; }
-.diagram-pick-note { margin: 0; }

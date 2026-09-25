@@ -13,6 +13,9 @@ import { ContextMenu, MoreMenu } from '../components/ContextMenu';
 import { SubjectIcon, subjectColor } from '../components/subjectIcons';
 import { type GenSource, type StudyContext, type QuizOptions, type CardOptions } from '../lib/studyGen';
 import { makeSet } from '../lib/makeSet';
+import { askForDiagrams } from '../lib/diagramAsk';
+import type { DiagramCandidate } from '../lib/diagrams';
+import type { Stop } from '../lib/cancel.ts';
 import { morph } from '../lib/morph';
 import { clearQuizSession, loadQuizSession } from '../lib/studySession';
 import { notebookPrompt } from '../lib/prompts';
@@ -214,7 +217,8 @@ export function NotebookPage({ notebook, subject, actions, target }: { notebook:
       notebook,
       src.kind === 'sources',
       async (report, meter, stop) => {
-        const made = await makeSet(setKind, ctx, notebook.id, src, report, { ...options, meter, stop });
+        const chooseDiagrams = (found: DiagramCandidate[], halt?: Stop) => askForDiagrams(notebook.name, found, halt);
+        const made = await makeSet(setKind, ctx, notebook.id, src, report, { ...options, meter, stop, chooseDiagrams });
         return { id: made.id, note: made.note };
       },
       (id, note) => {

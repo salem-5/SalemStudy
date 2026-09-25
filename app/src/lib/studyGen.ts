@@ -5,7 +5,7 @@ import {
   type CardOptions, type CardSize, type GenSource, type Page, type WalkSource, type Window,
 } from './deckPlan';
 import { generate, generateQuick } from './salem/generate';
-import { diagramQuestions, type FoundDiagram } from './diagrams';
+import { diagramCandidates, questionsFromDiagrams, type DiagramCandidate } from './diagrams';
 import type { Meter } from './meter';
 import { isStop, type Stop } from './cancel.ts';
 import { TITLE_RULE, tidyTitle } from './titles';
@@ -22,8 +22,11 @@ export type QuizOptions = {
   size?: CardSize;
   limit?: number;
   diagrams?: boolean;
-  /** The diagrams the student ticked. Left out, the AI chooses them from the sources. */
-  diagramPicks?: FoundDiagram[];
+  /**
+   * Asks the student which of the diagrams found to label, once they are found. Left out, the
+   * ones the AI matched to the lecture are used.
+   */
+  chooseDiagrams?: (found: DiagramCandidate[], stop?: Stop) => Promise<DiagramCandidate[]>;
 } & RunOptions;
 
 export type WalkChoice = boolean | 'auto';
@@ -740,13 +743,12 @@ export async function generateQuiz(
   const gen = (system: string, user: string, tool: GenTool) => generated(system, user, tool, options.meter, options.stop);
   const size = options.size ?? 'standard';
   let diagrams: QuizQuestion[] = [];
-  const picks = options.diagramPicks;
-  if (options.diagrams && src.kind === 'sources' && src.hits.length && (!picks || picks.length)) {
+  if (options.diagrams && src.kind === 'sources' && src.hits.length) {
     if (!python || !ocr) {
       progress('Diagram labelling is not installed, so this quiz has no diagram questions.');
     } else {
-      const ids = [...new Set(picks ? picks.map((d) => d.source.id) : src.hits.map((h) => h.sourceId))];
-      const known = picks ? picks.map((d) => d.source) : await studyApi.sources(notebookId).catch(() => []);
+      const ids = [...new Set(src.hits.map((h) => h.sourceId))];
+      const known = await studyApi.sources(notebookId).catch(() => []);
       const chosen = ids.map((id) => known.find((s) => s.id === id)).filter((s): s is NonNullable<typeof s> => !!s);
       const pages = new Map<number, Map<number, string>>();
       for (const h of src.hits) {
@@ -757,10 +759,19 @@ export async function generateQuiz(
       const texts = src.hits.filter((h) => h.kind !== 'image').map((h) => ({ sourceId: h.sourceId, unit: h.unitFrom, text: h.text }));
       const notes = (src.notes ?? []).map((n) => n.content.replace(/data:[^\s)"']+/g, ''));
       const total = options.limit ?? QUIZ_COUNT[size];
-      diagrams = await diagramQuestions(chosen, { texts, notes, pages }, notebookId, MAX_ITEMS, progress, options.meter, options.stop, picks);
+      const lecture = { texts, notes, pages };
+      const found = await diagramCandidates(chosen, lecture, progress, options.meter, options.stop);
+      let use = found.filter((d) => d.matches);
+      if (found.length && options.chooseDiagrams) {
+        progress(`Found ${found.length} diagram${found.length === 1 ? '' : 's'} - waiting for you to choose which to label…`);
+        use = await options.chooseDiagrams(found, options.stop);
+      }
+      diagrams = use.length ? await questionsFromDiagrams(use, lecture, notebookId, MAX_ITEMS, progress, options.meter, options.stop) : [];
       const rest = total - diagrams.length;
       progress(!diagrams.length
-        ? 'No diagrams in these sources are about what they teach; writing the usual questions.'
+        ? found.length && options.chooseDiagrams
+          ? 'No diagrams to label; writing the usual questions.'
+          : 'No diagrams in these sources are about what they teach; writing the usual questions.'
         : rest > 0
           ? `${diagrams.length} diagram question${diagrams.length === 1 ? '' : 's'} ready; writing ${rest} more of the usual kind…`
           : `${diagrams.length} diagram question${diagrams.length === 1 ? '' : 's'} ready.`);

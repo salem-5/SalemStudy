@@ -15,7 +15,6 @@ import { KindIcon, SourceLinks } from './Sources';
 import { NOTE_PRESETS } from '../lib/prompts';
 import { openSetup, PYTHON_CHANGED } from '../components/Onboarding';
 import { pythonStatus } from '../lib/python';
-import { canHoldDiagrams, findDiagrams, whereLabel, type FoundDiagram } from '../lib/diagrams';
 
 /** Where a card came from: a list of sources, or one on its own from before cards kept several. */
 function cardSources(card: Card): QuestionSource[] {
@@ -281,13 +280,6 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
   const [size, setSize] = useState<CardSize>(prefs.size ?? 'standard');
   const [notes, setNotes] = useState<Note[]>([]);
   const [pickedNotes, setPickedNotes] = useState<Set<number>>(new Set());
-  // The labelled diagrams in each ticked source, found one source at a time as soon as diagrams are
-  // on, so the student can choose which become questions. Every one starts ticked.
-  const [found, setFound] = useState<Record<number, FoundDiagram[] | 'scanning' | 'failed'>>({});
-  const [unticked, setUnticked] = useState<Set<string>>(new Set());
-  const scanning = useRef(false);
-  const diagramSources = useMemo(() => ready.filter((s) => picked.has(s.id) && canHoldDiagrams(s)), [ready, picked]);
-  const choosingDiagrams = kind === 'quiz' && mode === 'sources' && diagrams && !!ocrReady;
 
   useEffect(() => {
     if (initialThread) return;
@@ -301,18 +293,6 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [more, setMore] = useState(() => kind === 'notes' && !NOTE_PRESETS.some((p) => p.text === prefs.instructions));
-  useEffect(() => {
-    if (!choosingDiagrams || busy || scanning.current) return;
-    const next = diagramSources.find((s) => !(s.id in found));
-    if (!next) return;
-    scanning.current = true;
-    setFound((f) => ({ ...f, [next.id]: 'scanning' }));
-    findDiagrams(next).then(
-      (list) => { scanning.current = false; setFound((f) => ({ ...f, [next.id]: list })); },
-      () => { scanning.current = false; setFound((f) => ({ ...f, [next.id]: 'failed' })); },
-    );
-  }, [choosingDiagrams, busy, diagramSources, found]);
-  const scanned = diagramSources.every((s) => Array.isArray(found[s.id]));
 
   useEffect(() => {
     studyApi.chatList(notebookId).then((t) => { setThreads(t); setThread((cur) => cur ?? t[0]?.id ?? null); }).catch(() => {});
@@ -354,11 +334,7 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
         if (!thread) throw new Error('Pick a chat.');
         src = { kind: 'chat', messages: await studyApi.chatMessages(thread) };
       }
-      // Still looking when the quiz starts: the diagrams are left to the AI to choose, as before.
-      const diagramPicks = choosingDiagrams && scanned
-        ? diagramSources.flatMap((s) => found[s.id] as FoundDiagram[]).filter((d) => !unticked.has(d.key))
-        : undefined;
-      await run(src, setStatus, instructions, { difficulty, types, size, fast: true, walk: mode !== 'sources' ? false : walkMode === 'auto' ? 'auto' : walkMode === 'on', diagrams: kind === 'quiz' && mode === 'sources' && diagrams, diagramPicks });
+      await run(src, setStatus, instructions, { difficulty, types, size, fast: true, walk: mode !== 'sources' ? false : walkMode === 'auto' ? 'auto' : walkMode === 'on', diagrams: kind === 'quiz' && mode === 'sources' && diagrams });
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -541,14 +517,10 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
                       <span className="gen-hint">
                         {ocrReady === false
                           ? <>Needs text recognition, which is not installed yet. <button type="button" className="link" onClick={openSetup}>Finish setting up</button></>
-                          : `Cover the labels on diagrams from your sources for you to fill in.${diagramSubject ? '' : ' This subject may not have many.'}`}
+                          : `Cover the labels on diagrams from your sources for you to fill in. Once they are found, you choose which ones.${diagramSubject ? '' : ' This subject may not have many.'}`}
                       </span>
                     </span>
                   </label>
-                )}
-                {choosingDiagrams && (
-                  <DiagramChooser sources={diagramSources} found={found} unticked={unticked} disabled={busy}
-                    onToggle={(keys, on) => setUnticked((u) => { const n = new Set(u); keys.forEach((k) => (on ? n.delete(k) : n.add(k))); return n; })} />
                 )}
               </div>
             )}
@@ -562,67 +534,6 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
         <button type="button" className="btn primary" onClick={go} disabled={busy || !can}><Sparkles />{kind === 'notes' ? 'Write notes' : kind === 'quiz' ? 'Make quiz' : 'Make flashcards'}</button>
       </div>
     </Modal>
-  );
-}
-
-/** Every labelled diagram found in the ticked sources, as pictures to tick or untick. */
-function DiagramChooser({ sources, found, unticked, disabled, onToggle }: {
-  sources: Source[];
-  found: Record<number, FoundDiagram[] | 'scanning' | 'failed'>;
-  unticked: Set<string>;
-  disabled: boolean;
-  onToggle: (keys: string[], on: boolean) => void;
-}) {
-  const all = sources.flatMap((s) => (Array.isArray(found[s.id]) ? found[s.id] as FoundDiagram[] : []));
-  const chosen = all.filter((d) => !unticked.has(d.key)).length;
-  const waiting = sources.some((s) => !Array.isArray(found[s.id]) && found[s.id] !== 'failed');
-  if (!sources.length) return <p className="gen-hint diagram-pick-note">None of the ticked sources are PDFs, slides or pictures, so there are no diagrams to label.</p>;
-  return (
-    <div className="field diagram-pick">
-      <div className="diagram-pick-head">
-        <span className="field-label">Diagrams to label</span>
-        <span className="pick-count">{chosen} of {all.length}{waiting ? '…' : ''}</span>
-        {!!all.length && (
-          <button type="button" className="link" disabled={disabled}
-            onClick={() => onToggle(all.map((d) => d.key), chosen < all.length)}>
-            {chosen < all.length ? 'Select all' : 'Select none'}
-          </button>
-        )}
-      </div>
-      <div className="diagram-pick-list">
-        {sources.map((s) => {
-          const f = found[s.id];
-          return (
-            <div key={s.id} className="diagram-pick-source">
-              <div className="diagram-pick-title"><KindIcon kind={s.kind} /><span>{s.title}</span></div>
-              {!Array.isArray(f) ? (
-                <p className="gen-hint">{f === 'failed' ? 'Could not read the pictures in this one.' : <><span className="dots"><i /><i /><i /></span> Looking for labelled diagrams…</>}</p>
-              ) : !f.length ? (
-                <p className="gen-hint">No labelled diagrams in this one.</p>
-              ) : (
-                <div className="diagram-pick-grid">
-                  {f.map((d) => {
-                    const on = !unticked.has(d.key);
-                    return (
-                      <button type="button" key={d.key} className={`diagram-pick-item${on ? ' on' : ''}`} disabled={disabled}
-                        aria-pressed={on} title={on ? 'Leave this diagram out' : 'Make a question from this diagram'}
-                        onClick={() => onToggle([d.key], !on)}>
-                        <span className="diagram-pick-img"><img src={d.image} alt={`Diagram on ${whereLabel(s, d.found.where).toLowerCase()}`} draggable={false} /></span>
-                        <span className="diagram-pick-cap">
-                          <span className="diagram-pick-box">{on && <Check />}</span>
-                          {whereLabel(s, d.found.where)}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-      {waiting && <span className="gen-hint">Make the quiz before this finishes and Salem chooses the diagrams itself.</span>}
-    </div>
   );
 }
 
