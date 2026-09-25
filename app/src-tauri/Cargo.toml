@@ -1,6 +1,6 @@
 [package]
 name = "webassign-desk"
-version = "0.2.3"
+version = "0.3.0"
 description = "Desktop client for WebAssign through the local bridge"
 edition = "2021"
 
