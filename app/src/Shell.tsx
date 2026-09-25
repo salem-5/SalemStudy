@@ -183,11 +183,7 @@ export default function Shell() {
     const takeover = r.kind === 'notebook' && r.open?.type === 'quiz' && !!r.open.run;
     if (takeover) morph(() => setRoute(r));
     else setRoute(r);
-    if (r.kind === 'notebook') {
-      const hit = tree?.find((s) => s.notebooks.some((n) => n.id === r.id));
-      if (hit) setFolded((f) => f.filter((x) => x !== hit.id));
-    }
-  }, [tree]);
+  }, []);
 
   const actions: StudyActions = useMemo(() => ({
     open,
@@ -216,6 +212,7 @@ export default function Shell() {
   ];
 
   const inStudy = route.kind !== 'solver';
+  const isOpenNotebook = (id: number) => route.kind === 'notebook' && route.id === id;
   const viewKey = route.kind === 'chat' ? 'chat' : `${route.kind}:${'id' in route ? route.id : ''}`;
   const openFocus = useCallback(() => setRoute({ kind: 'focus' }), []);
   const activeSubject = route.kind === 'subject' ? route.id : route.kind === 'notebook' ? notebookOf(route.id)?.subject.id : undefined;
@@ -296,22 +293,28 @@ export default function Shell() {
                         <ChevronRight className={isFolded ? '' : 'open'} />
                       </button>
                     </div>
-                    <div className={`collapse${isFolded ? '' : ' open'}`}><div className="nav-notebooks">
+                    {/* Folded, a subject still shows the notebook that is open, until you leave it. Each
+                        row folds on its own, so the others tuck away around the one that stays. */}
+                    <div className={`nav-notebooks${!isFolded || s.notebooks.some((n) => isOpenNotebook(n.id)) ? ' open' : ''}`}>
                       {s.notebooks.map((n) => (
-                        <button
-                          type="button"
-                          key={n.id}
-                          className={`nav-row notebook${route.kind === 'notebook' && route.id === n.id ? ' on' : ''}`}
-                          onClick={() => open({ kind: 'notebook', id: n.id })}
-                          onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, items: notebookMenu(n) }); }}
-                        >
-                          <span className="nav-text">{n.name}</span>
-                        </button>
+                        <div key={n.id} className={`collapse${!isFolded || isOpenNotebook(n.id) ? ' open' : ''}`}><div><div className="nav-slot">
+                          <button
+                            type="button"
+                            className={`nav-row notebook${isOpenNotebook(n.id) ? ' on' : ''}`}
+                            onClick={() => open({ kind: 'notebook', id: n.id })}
+                            onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, items: notebookMenu(n) }); }}
+                            tabIndex={!isFolded || isOpenNotebook(n.id) ? undefined : -1}
+                          >
+                            <span className="nav-text">{n.name}</span>
+                          </button>
+                        </div></div></div>
                       ))}
                       {s.notebooks.length === 0 && (
-                        <button type="button" className="nav-row notebook ghost" onClick={() => actions.newNotebook(s.id)}><Plus />New notebook</button>
+                        <div className={`collapse${isFolded ? '' : ' open'}`}><div><div className="nav-slot">
+                          <button type="button" className="nav-row notebook ghost" onClick={() => actions.newNotebook(s.id)} tabIndex={isFolded ? -1 : undefined}><Plus />New notebook</button>
+                        </div></div></div>
                       )}
-                    </div></div>
+                    </div>
                   </div>
                 );
               })}

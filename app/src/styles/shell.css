@@ -178,7 +178,10 @@
 @media (hover: hover) {
   .nav-caret:hover, .nav-add:hover { background: var(--fill-3); color: var(--text); }
 }
-.nav-notebooks { display: flex; flex-direction: column; gap: 1px; padding: 1px 0 4px; }
+.nav-notebooks { display: flex; flex-direction: column; padding-bottom: 0; transition: padding-bottom var(--dur-3) var(--ease-out); }
+.nav-notebooks.open { padding-bottom: 4px; }
+/* The space above each row folds away with it, so tucked-away rows leave no gaps behind. */
+.nav-slot { padding-top: 1px; }
 .nav-row.notebook { min-height: 30px; padding-left: 41px; font-size: 13px; }
 .nav-row.notebook.ghost { color: var(--muted); gap: 6px; }
 .nav-row.notebook.ghost .lucide { width: 13px; height: 13px; }
