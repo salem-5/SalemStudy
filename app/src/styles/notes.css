@@ -98,8 +98,15 @@
 .pad-blank { display: grid; flex: 1; place-content: center; justify-items: center; gap: 10px; color: var(--muted); animation: fade-in var(--dur-3) ease; }
 .pad-blank > .lucide { width: 36px; height: 36px; opacity: 0.45; }
 .pad-blank p { margin: 0; font-size: 13.5px; }
-.pad-editor { display: flex; flex: 1; flex-direction: column; min-height: 0; animation: fade-in var(--dur-2) ease; }
-.pad-toolbar { display: flex; align-items: center; gap: 2px; height: 48px; flex: none; padding: 0 var(--gutter) 0 12px; box-shadow: 0 1px 0 var(--line); overflow-x: auto; scrollbar-width: none; }
+.pad-editor { display: flex; flex: 1; flex-direction: column; min-height: 0; container-type: inline-size; animation: fade-in var(--dur-2) ease; }
+.pad-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 2px; min-height: 48px; flex: none; padding: 9px var(--gutter) 9px 12px; box-shadow: 0 1px 0 var(--line); }
+.pad-tool-group { display: flex; align-items: center; gap: 2px; flex: none; }
+/* Too narrow for one row: the groups wrap onto more rows, spaced apart instead of divided,
+   so no divider is left hanging at the end of a row. */
+@container (max-width: 880px) {
+  .pad-toolbar { column-gap: 12px; }
+  .pad-toolbar .pad-tool-sep { display: none; }
+}
 .pad-tool { display: grid; place-items: center; flex: none; width: 30px; height: 30px; padding: 0; border: 0; border-radius: var(--r-sm); background: none; color: var(--text-2); transition: background-color var(--dur-1) ease, color var(--dur-1) ease, transform var(--dur-1) var(--ease-out); }
 .pad-tool .lucide { width: 16px; height: 16px; }
 .pad-tool:active { transform: scale(0.92); }

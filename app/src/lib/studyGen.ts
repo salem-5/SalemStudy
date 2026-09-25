@@ -5,12 +5,12 @@ import {
   type CardOptions, type CardSize, type GenSource, type Page, type WalkSource, type Window,
 } from './deckPlan';
 import { generate, generateQuick } from './salem/generate';
-import { diagramQuestions } from './diagrams';
+import { diagramQuestions, type FoundDiagram } from './diagrams';
 import type { Meter } from './meter';
 import { isStop, type Stop } from './cancel.ts';
 import { TITLE_RULE, tidyTitle } from './titles';
-import { CARDS_DIRECT_SYSTEM, CARDS_SYSTEM, GRADE_SYSTEM, LABELS_GRADE_SYSTEM, QUIZ_DIRECT_SYSTEM, QUIZ_SYSTEM } from './prompts';
-import { canCheck, checkAgrees, defaultTolerance, labelAnswers, labelResults, parseNumber, shuffleChoices, usableHint } from './quizRules';
+import { CARDS_DIRECT_SYSTEM, CARDS_SYSTEM, GAP_GRADE_SYSTEM, GRADE_SYSTEM, LABELS_GRADE_SYSTEM, QUIZ_DIRECT_SYSTEM, QUIZ_SYSTEM } from './prompts';
+import { canCheck, checkAgrees, defaultTolerance, fillsTheGap, labelAnswers, labelResults, parseNumber, shuffleChoices, usableHint } from './quizRules';
 import { describeChoice, INSTRUCTIONS_SCHEMA, INSTRUCTIONS_SYSTEM, narrowWalk, outlineForInstructions, plainBrief, toBrief, type Brief } from './instructions';
 import { studyApi, type NewCard, type Difficulty, type QuestionType, type QuizQuestion, type SourceHit } from '../study/api';
 
@@ -22,6 +22,8 @@ export type QuizOptions = {
   size?: CardSize;
   limit?: number;
   diagrams?: boolean;
+  /** The diagrams the student ticked. Left out, the AI chooses them from the sources. */
+  diagramPicks?: FoundDiagram[];
 } & RunOptions;
 
 export type WalkChoice = boolean | 'auto';
@@ -738,12 +740,13 @@ export async function generateQuiz(
   const gen = (system: string, user: string, tool: GenTool) => generated(system, user, tool, options.meter, options.stop);
   const size = options.size ?? 'standard';
   let diagrams: QuizQuestion[] = [];
-  if (options.diagrams && src.kind === 'sources' && src.hits.length) {
+  const picks = options.diagramPicks;
+  if (options.diagrams && src.kind === 'sources' && src.hits.length && (!picks || picks.length)) {
     if (!python || !ocr) {
       progress('Diagram labelling is not installed, so this quiz has no diagram questions.');
     } else {
-      const ids = [...new Set(src.hits.map((h) => h.sourceId))];
-      const known = await studyApi.sources(notebookId).catch(() => []);
+      const ids = [...new Set(picks ? picks.map((d) => d.source.id) : src.hits.map((h) => h.sourceId))];
+      const known = picks ? picks.map((d) => d.source) : await studyApi.sources(notebookId).catch(() => []);
       const chosen = ids.map((id) => known.find((s) => s.id === id)).filter((s): s is NonNullable<typeof s> => !!s);
       const pages = new Map<number, Map<number, string>>();
       for (const h of src.hits) {
@@ -754,7 +757,7 @@ export async function generateQuiz(
       const texts = src.hits.filter((h) => h.kind !== 'image').map((h) => ({ sourceId: h.sourceId, unit: h.unitFrom, text: h.text }));
       const notes = (src.notes ?? []).map((n) => n.content.replace(/data:[^\s)"']+/g, ''));
       const total = options.limit ?? QUIZ_COUNT[size];
-      diagrams = await diagramQuestions(chosen, { texts, notes, pages }, notebookId, MAX_ITEMS, progress, options.meter, options.stop);
+      diagrams = await diagramQuestions(chosen, { texts, notes, pages }, notebookId, MAX_ITEMS, progress, options.meter, options.stop, picks);
       const rest = total - diagrams.length;
       progress(!diagrams.length
         ? 'No diagrams in these sources are about what they teach; writing the usual questions.'
@@ -970,6 +973,49 @@ export async function gradeShort(q: QuizQuestion, given: string): Promise<{ corr
     GRADE_TOOL,
   );
   return { correct: args.correct === true, feedback: String(args.feedback ?? '') };
+}
+
+const GAP_TOOL = {
+  type: 'function',
+  function: {
+    name: 'grade_gap',
+    description: 'Say whether the word the strict comparison rejected is the right answer written differently.',
+    parameters: {
+      type: 'object',
+      properties: {
+        correct: { type: 'boolean', description: 'True if what the student wrote names the same thing as the reference.' },
+        note: { type: 'string', description: 'One sentence to the student, as the instructions describe.' },
+      },
+      required: ['correct', 'note'],
+    },
+  },
+};
+
+/**
+ * Marks a fill-the-gap answer. An exact match (give or take case, accents, articles and plurals)
+ * passes without asking; anything else goes to the AI, which can only turn that miss into a pass,
+ * never the other way round - so a misspelt right answer counts.
+ */
+export async function gradeBlank(q: QuizQuestion, given: string): Promise<{ correct: boolean; feedback?: string }> {
+  if (fillsTheGap(q, given)) return { correct: true };
+  const accept = (q.accept ?? []).filter((a) => a.trim());
+  try {
+    const args = await generated(
+      GAP_GRADE_SYSTEM,
+      [
+        `Topic: ${q.topic || 'this course'}`,
+        `The sentence, with its gap: ${q.prompt}`,
+        `Reference: ${q.answer}`,
+        accept.length ? `Also accepted: ${accept.join(', ')}` : '',
+        `Student wrote: ${given}`,
+      ].filter(Boolean).join('\n'),
+      GAP_TOOL,
+    );
+    const note = String(args.note ?? '').trim();
+    return { correct: args.correct === true, feedback: note || undefined };
+  } catch {
+    return { correct: false, feedback: 'This could not be double-checked by the AI, so it was marked on its spelling alone.' };
+  }
 }
 
 const LABELS_TOOL = {

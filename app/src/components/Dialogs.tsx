@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { POPOVER_OPEN } from './Select';
 import { X } from 'lucide-react';
 import type { Box, Draft, DryRun, Question } from '../types';
@@ -17,13 +18,15 @@ export function Modal({ title, onClose, children, wide, className }: { title: st
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [onClose]);
-  return (
+  // On the body, so a dialog opened from a bar that drags the window is not part of that drag region.
+  return createPortal(
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div ref={ref} tabIndex={-1} className={`modal${wide ? ' wide' : ''}${className ? ` ${className}` : ''}`} onMouseDown={(e) => e.stopPropagation()}>
         <header><span>{title}</span><button type="button" className="icon-btn" onClick={onClose} aria-label="Close"><X /></button></header>
         <div className="modal-body">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

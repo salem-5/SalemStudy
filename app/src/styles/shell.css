@@ -289,10 +289,18 @@
 
 /* ---------- Windows: no title bar, our own controls at the top on hover (WindowBar) ---------- */
 
-/* Out of sight until the pointer reaches the top: then the page slides down 32px and the controls
+/* Windows 11 rounds the window's corners at 8px. The page sits 4px in from the frame with a 4px
+   radius, so its corners run parallel to the window's own (8 - 4). */
+:root[data-chrome='win'] .shell-pane {
+  height: calc(100% - 8px);
+  margin: 4px 4px 4px 0;
+  border-radius: 4px;
+  transition: margin-top var(--dur-2) var(--ease-out), height var(--dur-2) var(--ease-out);
+}
+:root[data-chrome='win'][data-immersive] .shell-pane { margin-left: 4px; }
+/* Out of sight until the pointer reaches the top: then the page slides down 36px and the controls
    appear in the strip it uncovers, which drags the window like the rest of the frame around it. */
-:root[data-chrome='win'] .shell-pane { transition: margin-top var(--dur-2) var(--ease-out), height var(--dur-2) var(--ease-out); }
-:root[data-chrome='win'][data-titlebar] .shell-pane { margin-top: 40px; height: calc(100% - 48px); }
+:root[data-chrome='win'][data-titlebar] .shell-pane { margin-top: 40px; height: calc(100% - 44px); }
 .winbar {
   position: fixed;
   top: 6px;

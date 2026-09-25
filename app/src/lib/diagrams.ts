@@ -168,6 +168,8 @@ const SCHEMA = {
   },
 };
 
+const CHOSEN_NOTE = 'The student picked every one of these pictures themselves to be quizzed on. Set use to true for each and choose its labels as above; set it to false only for a picture with no labels on it at all.';
+
 const unlessStopped = (e: unknown): null => {
   if (isStop(e)) throw e;
   return null;
@@ -254,8 +256,27 @@ async function findIn(source: Source, stop?: Stop): Promise<{ found: Found[]; im
   return { found, images: new Map((r.figures ?? []).map((f) => [f.name, f.dataUrl])) };
 }
 
-const whereLabel = (source: Source, where: number) => (source.kind === 'pdf' ? `Page ${where + 1}` : source.kind === 'slides' ? `Slide ${where + 1}` : source.title);
+export const whereLabel = (source: Source, where: number) => (source.kind === 'pdf' ? `Page ${where + 1}` : source.kind === 'slides' ? `Slide ${where + 1}` : source.title);
 
+/** A picture with labels on it, found in a source before any question is written about it. */
+export type FoundDiagram = { key: string; source: Source; found: Found; image: string };
+
+export const canHoldDiagrams = (source: Source) => !!KINDS[source.kind];
+
+/** Every labelled picture in a source, for the student to choose from. Runs locally; no AI. */
+export async function findDiagrams(source: Source, stop?: Stop): Promise<FoundDiagram[]> {
+  const { found, images } = await findIn(source, stop);
+  return found.flatMap((f) => {
+    const image = images.get(f.name);
+    return image ? [{ key: `${source.id}:${f.name}`, source, found: f, image }] : [];
+  });
+}
+
+/**
+ * Label questions from a source's diagrams. Without `chosen`, the pictures are found here and the
+ * AI keeps only the ones the lecture teaches. With `chosen`, the student picked them: each one
+ * becomes a question as long as it has labels to hide.
+ */
 export async function diagramQuestions(
   sources: Source[],
   lecture: Lecture,
@@ -264,22 +285,33 @@ export async function diagramQuestions(
   progress: (text: string) => void,
   meter?: Meter,
   stop?: Stop,
+  chosen?: FoundDiagram[],
 ): Promise<QuizQuestion[]> {
   const out: QuizQuestion[] = [];
   const taken: DiagramLabel[][] = [];
   for (const source of sources) {
     if (out.length >= want) break;
-    progress(`Looking for labelled diagrams in ${source.title}…`);
-    const { found, images } = await findIn(source, stop).catch((e) => { unlessStopped(e); return { found: [] as Found[], images: new Map<string, string>() }; });
+    let found: Found[];
+    let images: Map<string, string>;
+    if (chosen) {
+      const mine = chosen.filter((d) => d.source.id === source.id);
+      found = mine.map((d) => d.found);
+      images = new Map(mine.map((d) => [d.found.name, d.image]));
+    } else {
+      progress(`Looking for labelled diagrams in ${source.title}…`);
+      ({ found, images } = await findIn(source, stop).catch((e) => { unlessStopped(e); return { found: [] as Found[], images: new Map<string, string>() }; }));
+    }
     if (!found.length) continue;
-    progress(`${source.title}: ${found.length} picture${found.length === 1 ? '' : 's'} with text on them, choosing the diagrams…`);
+    progress(chosen
+      ? `${source.title}: reading the labels on the ${found.length} diagram${found.length === 1 ? '' : 's'} you chose…`
+      : `${source.title}: ${found.length} picture${found.length === 1 ? '' : 's'} with text on them, choosing the diagrams…`);
     const picked: Picked[] = [];
     for (let i = 0; i < found.length; i += 8) {
       const batch = found.slice(i, i + 8);
       const raw = await generateQuick<{ diagrams?: Picked[] }>({
         feature: 'quiz',
         system: DIAGRAM_SYSTEM,
-        instruction: `# What the lecture covers: ${source.title}\n${outline(source, lecture)}\n\n# The pictures\n\n${batch.map((f) => describe(f, source, lecture)).join('\n\n')}`,
+        instruction: `# What the lecture covers: ${source.title}\n${outline(source, lecture)}\n\n# The pictures\n\n${batch.map((f) => describe(f, source, lecture)).join('\n\n')}${chosen ? `\n\n${CHOSEN_NOTE}` : ''}`,
         schema: SCHEMA,
         meter,
         stop,
@@ -290,11 +322,14 @@ export async function diagramQuestions(
       if (out.length >= want) break;
       const choice = picked.find((p) => p.name === f.name);
       const src = images.get(f.name);
-      if (!choice || choice.use !== true || !src) continue;
+      if (!choice || !src || (choice.use !== true && !chosen)) continue;
       const taught = evidenceFor(lecture.texts, source.id, f.where, f.lines, lecture.notes);
-      const labels = toLabels(f, choice).filter((l) => isTaught(l, taught)).slice(0, 12);
+      const all = toLabels(f, choice);
+      let labels = all.filter((l) => isTaught(l, taught)).slice(0, 12);
+      // A diagram the student chose keeps its labels even when the pages around it never name them.
+      if (!labels.length && chosen) labels = all.slice(0, 12);
       if (!labels.length) continue;
-      if (repeats(labels, taken)) continue;
+      if (!chosen && repeats(labels, taken)) continue;
       taken.push(labels);
       stop?.throwIfStopped();
       progress(`Covering the labels on ${whereLabel(source, f.where).toLowerCase()} of ${source.title}…`);

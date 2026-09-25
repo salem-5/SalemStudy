@@ -412,6 +412,8 @@
 .memory-bar > span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width var(--dur-3) var(--ease-out); }
 .memory-bar > span.full { background: var(--mid); }
 .memory-search { margin: 0 0 8px; }
+/* Settings styles every text field as a box of its own; inside this one it would ring twice. */
+.memory-search input { padding: 0 !important; border: 0 !important; background: none !important; box-shadow: none !important; outline: none !important; }
 .memory-list { list-style: none; margin: 0 0 10px; padding: 4px; max-height: 240px; overflow-y: auto; border-radius: var(--r-md); background: var(--fill); }
 .memory-item { position: relative; display: flex; align-items: center; }
 .memory-text { display: flex; flex: 1; flex-direction: column; gap: 2px; padding: 8px 36px 8px 10px; border: 0; border-radius: var(--r-sm); background: none; color: var(--text); font: 13.5px/1.45 var(--sans); text-align: left; cursor: text; }

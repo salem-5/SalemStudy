@@ -22,7 +22,7 @@ import { Analytics } from './Analytics';
 import { DeckPlayer, DeckView, GenerateDialog, playOrder } from './Flashcards';
 import { QuizRunner, QuizView } from './Quizzes';
 import { SetsPane, startSet, useSetBusy, type SetKind } from './StudySets';
-import { SourcePicker, SourcesLibrary, SourceViewer } from './Sources';
+import { OpenSourceContext, SourcePicker, SourcesLibrary, SourceViewer } from './Sources';
 import { NotesPane, NoteView } from './Notes';
 import { writeNote } from '../lib/notesGen';
 import { overviewStale, writeOverview } from '../lib/overview';
@@ -236,6 +236,8 @@ export function NotebookPage({ notebook, subject, actions, target }: { notebook:
   const toggleAll = (on: boolean) => setOff(on ? new Set() : new Set(sources.map((s) => s.id)));
 
   const openCitation = useCallback((sourceId: number, unit: number) => setSheet({ id: sourceId, unit }), []);
+  // The sheet belongs to the view that opened it.
+  useEffect(() => { setSheet(null); }, [center]);
   const deck = center.kind === 'deck' ? decks.find((d) => d.id === center.id) : undefined;
   useEffect(() => {
     if (center.kind === 'deck' || center.kind === 'play') seen('cards', center.kind === 'deck' ? center.id : center.deckId);
@@ -426,11 +428,6 @@ export function NotebookPage({ notebook, subject, actions, target }: { notebook:
             onChanged={reloadThreads}
           />
         ) : null}
-        {sheetSource && (
-          <aside className="source-sheet" aria-label={sheetSource.title}>
-            <SourceViewer key={`${sheetSource.id}-${sheet?.unit ?? ''}`} source={sheetSource} unit={sheet?.unit} onClose={() => setSheet(null)} />
-          </aside>
-        )}
       </div>
     );
   }
@@ -470,7 +467,17 @@ export function NotebookPage({ notebook, subject, actions, target }: { notebook:
           />
         </header>
       )}
-      <main className={`nb-body section-${section}`} data-entry={entry.current} key={immersive ? 'immersive' : `${section}:${center.kind}`}>{body}</main>
+      {/* A source cited in a chat, quiz or deck opens in a sheet over the body, beside what cited it. */}
+      <OpenSourceContext.Provider value={openCitation}>
+        <div className="nb-stage">
+          <main className={`nb-body section-${section}`} data-entry={entry.current} key={immersive ? 'immersive' : `${section}:${center.kind}`}>{body}</main>
+          {sheetSource && (
+            <aside className="source-sheet" aria-label={sheetSource.title}>
+              <SourceViewer key={`${sheetSource.id}-${sheet?.unit ?? ''}`} source={sheetSource} unit={sheet?.unit} onClose={() => setSheet(null)} />
+            </aside>
+          )}
+        </div>
+      </OpenSourceContext.Provider>
 
       {generating && (
         <GenerateDialog

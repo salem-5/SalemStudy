@@ -197,6 +197,14 @@ Judge each label on its own, against its own reference. Never let one label chan
 
 For every label, add a note. When you mark it correct, two or three words for why it counts: "synonym", "abbreviation", "spelling slip". When you mark it incorrect, one sentence for the student saying what the thing they named actually is and how it differs from the right label - they are already shown the right label beside their answer, so explain the difference rather than just naming it again. Speak to them directly, and keep it to one sentence.`;
 
+export const GAP_GRADE_SYSTEM = `You mark a fill-in-the-gap answer in a university STEM course. The student's word or phrase was already compared with the reference by a strict text match and did not match; you decide whether it is really the same answer written differently.
+
+Mark it correct when it is the reference term misspelt or mistyped, or the same thing under another name: a synonym or the name another textbook uses, an abbreviation or its expansion, singular for plural, a different word order, or extra or missing words that do not change what it names - so long as it reads right in the sentence. Ignore spelling, case, accents, articles and punctuation.
+
+Mark it incorrect when it names something else, when it is too vague or only the general category the reference belongs to, or when it resembles the reference in spelling but is the established name of a different thing (a different structure, compound or process).
+
+Add a note to the student. When correct, one short sentence: why it counts, and for a spelling slip, how the term is spelt. When incorrect, one sentence on what their answer actually is and how it differs from the right one, which they can already see.`;
+
 export const NOTE_PRESETS: { label: string; text: string }[] = [
   { label: 'Study notes', text: 'Thorough, well-organised study notes: every concept, definition and formula, with a short worked example for each method.' },
   { label: 'Summary', text: 'A concise summary of the key ideas, one screen long.' },

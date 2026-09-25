@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import {
   AlertCircle, BookOpen, ChevronDown, ExternalLink, File, FileText, Image as ImageIcon, Library, Loader2, MonitorPlay, Pencil,
   Plus, Presentation, RotateCw, Trash, Upload, X,
@@ -9,7 +9,7 @@ import { Markdown } from '../lib/markdown';
 import { ContextMenu, MoreMenu, type MenuItem } from '../components/ContextMenu';
 import { SectionHead } from '../components/Section';
 import { relTime } from '../lib/format';
-import { studyApi, type Source, type SourceImage, type SourceKind, type SourceUnit } from './api';
+import { studyApi, type QuestionSource, type Source, type SourceImage, type SourceKind, type SourceUnit } from './api';
 import { NameDialog, ConfirmDialog } from './dialogs';
 import { keys } from '../lib/keys';
 
@@ -270,6 +270,31 @@ export function SourcePicker({ sources, selected, onToggle, onToggleAll, onManag
         </div>
       )}
     </div>
+  );
+}
+
+/** Opens a source in the notebook's side sheet at a page or section. Absent outside a notebook. */
+export const OpenSourceContext = createContext<((sourceId: number, unit: number) => void) | null>(null);
+
+/** "From <source> (<page>)", each one opening that page beside whatever is on screen. */
+export function SourceLinks({ sources, className = 'muted small source-links' }: { sources: QuestionSource[] | null | undefined; className?: string }) {
+  const open = useContext(OpenSourceContext);
+  if (!sources?.length) return null;
+  return (
+    <p className={className}>
+      From{' '}
+      {sources.map((s, i) => (
+        <span key={`${s.sourceId}-${s.unit}-${i}`}>
+          {i > 0 && '; '}
+          {open ? (
+            <button type="button" className="link source-link" title="Open this page of the source"
+              onClick={(e) => { e.stopPropagation(); open(s.sourceId, s.unit); }} onKeyDown={(e) => e.stopPropagation()}>
+              {s.title} ({s.label})
+            </button>
+          ) : `${s.title} (${s.label})`}
+        </span>
+      ))}
+    </p>
   );
 }
 

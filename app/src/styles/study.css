@@ -142,6 +142,8 @@
 .q-prompt .md p:last-child { margin-bottom: 0; }
 .quiz-figure { display: block; max-width: 100%; max-height: 360px; margin: 0 auto; border-radius: var(--r-lg); background: #fff; box-shadow: var(--shadow-1); }
 .quiz-figure.loading { width: 100%; height: 220px; background: var(--fill-2); animation: skel-pulse 1.4s ease-in-out infinite; }
+.set-figure { display: block; max-width: min(100%, 420px); max-height: 220px; margin: 10px 0 4px; border-radius: var(--r); background: #fff; box-shadow: var(--shadow-1); }
+.set-figure.loading { width: 240px; height: 140px; background: var(--fill-2); animation: skel-pulse 1.4s ease-in-out infinite; }
 
 .choices-list { display: flex; flex-direction: column; gap: 10px; }
 .choices-list.row { flex-direction: row; }
@@ -353,6 +355,7 @@
 .card-face.back { transform: rotateY(180deg); background: color-mix(in srgb, var(--accent) 6%, var(--panel)); box-shadow: 0 20px 50px -18px rgba(0, 0, 0, 0.35), 0 0 0 1.5px var(--accent-dim); }
 .card-face .md { max-width: 100%; }
 .card-hint { position: absolute; bottom: 16px; color: var(--muted); font: 12.5px var(--sans); letter-spacing: 0; }
+.card-source { position: absolute; bottom: 14px; left: 24px; right: 24px; margin: 0; font: 12.5px/1.4 var(--sans); letter-spacing: 0; }
 .flashcard:focus-visible .card-face { box-shadow: 0 20px 50px -18px rgba(0, 0, 0, 0.35), 0 0 0 2px var(--accent); }
 .flashcard.leave-right { animation: leave-right 260ms var(--ease-out) forwards; }
 .flashcard.leave-left { animation: leave-left 260ms var(--ease-out) forwards; }
@@ -389,6 +392,10 @@
   .grade-btn.bad:hover { background: var(--bad-wash); box-shadow: 0 0 0 1.5px var(--bad); }
   .grade-btn.good:hover { background: var(--good-wash); box-shadow: 0 0 0 1.5px var(--good); }
 }
+.grade-btn.bad.chosen { background: var(--bad-wash); box-shadow: 0 0 0 1.5px var(--bad); }
+.grade-btn.good.chosen { background: var(--good-wash); box-shadow: 0 0 0 1.5px var(--good); }
+.grade-was { margin: -4px 0 0; text-align: center; }
+.grade-was b { color: var(--text); font-weight: 600; }
 .card-actions { display: flex; justify-content: center; }
 .review-keys { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 18px; margin: 0; color: var(--muted); font-size: 12.5px; }
 .review-keys span { display: inline-flex; align-items: center; gap: 5px; }

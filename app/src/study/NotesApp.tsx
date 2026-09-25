@@ -428,38 +428,48 @@ function NoteEditor({ id, folders, onChanged, onDeleted, onNew }: {
           </div>
         ) : (
           <>
-            <Select className="select pad-style" value={state?.style ?? 'body'} onChange={setStyle} title="Paragraph style"
-              options={[
-                { value: 'title', label: 'Title' }, { value: 'heading', label: 'Heading' }, { value: 'subheading', label: 'Subheading' },
-                { value: 'body', label: 'Body' }, { value: 'mono', label: 'Monospaced' },
-              ]} />
+            <div className="pad-tool-group">
+              <Select className="select pad-style" value={state?.style ?? 'body'} onChange={setStyle} title="Paragraph style"
+                options={[
+                  { value: 'title', label: 'Title' }, { value: 'heading', label: 'Heading' }, { value: 'subheading', label: 'Subheading' },
+                  { value: 'body', label: 'Body' }, { value: 'mono', label: 'Monospaced' },
+                ]} />
+            </div>
             <span className="pad-tool-sep" />
-            <Tool on={state?.bold} title={`Bold (${keys('⌘B')})`} onClick={() => editor.chain().focus().toggleBold().run()}><Bold /></Tool>
-            <Tool on={state?.italic} title={`Italic (${keys('⌘I')})`} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic /></Tool>
-            <Tool on={state?.underline} title={`Underline (${keys('⌘U')})`} onClick={() => editor.chain().focus().toggleUnderline().run()}><Underline /></Tool>
-            <Tool on={state?.strike} title="Strikethrough" onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough /></Tool>
-            <Tool on={state?.highlight} title="Highlight" onClick={() => editor.chain().focus().toggleHighlight().run()}><Highlighter /></Tool>
+            <div className="pad-tool-group">
+              <Tool on={state?.bold} title={`Bold (${keys('⌘B')})`} onClick={() => editor.chain().focus().toggleBold().run()}><Bold /></Tool>
+              <Tool on={state?.italic} title={`Italic (${keys('⌘I')})`} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic /></Tool>
+              <Tool on={state?.underline} title={`Underline (${keys('⌘U')})`} onClick={() => editor.chain().focus().toggleUnderline().run()}><Underline /></Tool>
+              <Tool on={state?.strike} title="Strikethrough" onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough /></Tool>
+              <Tool on={state?.highlight} title="Highlight" onClick={() => editor.chain().focus().toggleHighlight().run()}><Highlighter /></Tool>
+            </div>
             <span className="pad-tool-sep" />
-            <Tool on={state?.task} title="Checklist" onClick={() => editor.chain().focus().toggleTaskList().run()}><ListChecks /></Tool>
-            <Tool on={state?.bullet} title="Bulleted list" onClick={() => editor.chain().focus().toggleBulletList().run()}><List /></Tool>
-            <Tool on={state?.ordered} title="Numbered list" onClick={() => editor.chain().focus().toggleOrderedList().run()}><ListOrdered /></Tool>
-            <Tool on={state?.quote} title="Quote" onClick={() => editor.chain().focus().toggleBlockquote().run()}><Quote /></Tool>
+            <div className="pad-tool-group">
+              <Tool on={state?.task} title="Checklist" onClick={() => editor.chain().focus().toggleTaskList().run()}><ListChecks /></Tool>
+              <Tool on={state?.bullet} title="Bulleted list" onClick={() => editor.chain().focus().toggleBulletList().run()}><List /></Tool>
+              <Tool on={state?.ordered} title="Numbered list" onClick={() => editor.chain().focus().toggleOrderedList().run()}><ListOrdered /></Tool>
+              <Tool on={state?.quote} title="Quote" onClick={() => editor.chain().focus().toggleBlockquote().run()}><Quote /></Tool>
+            </div>
             <span className="pad-tool-sep" />
-            <Tool on={state?.code} title="Code" onClick={() => editor.chain().focus().toggleCode().run()}><Code /></Tool>
-            <Tool title="Maths" onClick={() => setMath({ latex: '', block: false })}><Sigma /></Tool>
-            <Tool on={state?.link} title="Link" onClick={() => (state?.link ? editor.chain().focus().unsetLink().run() : setLinking(true))}><Link2 /></Tool>
-            <Tool title="Add a picture" onClick={() => picker.current?.click()}><ImagePlus /></Tool>
-            <input ref={picker} type="file" accept="image/*" multiple hidden
-              onChange={(e) => { const files = imagesIn(e.target.files); e.target.value = ''; if (files.length) void placeImages(editor.view, files); }} />
+            <div className="pad-tool-group">
+              <Tool on={state?.code} title="Code" onClick={() => editor.chain().focus().toggleCode().run()}><Code /></Tool>
+              <Tool title="Maths" onClick={() => setMath({ latex: '', block: false })}><Sigma /></Tool>
+              <Tool on={state?.link} title="Link" onClick={() => (state?.link ? editor.chain().focus().unsetLink().run() : setLinking(true))}><Link2 /></Tool>
+              <Tool title="Add a picture" onClick={() => picker.current?.click()}><ImagePlus /></Tool>
+              <input ref={picker} type="file" accept="image/*" multiple hidden
+                onChange={(e) => { const files = imagesIn(e.target.files); e.target.value = ''; if (files.length) void placeImages(editor.view, files); }} />
+            </div>
             <span className="spacer" />
-            <Tool on={note.pinned} title={note.pinned ? 'Unpin' : 'Pin'} onClick={() => void padApi.pin(id, !note.pinned, PAD_SOURCE).then(() => { setNote({ ...note, pinned: !note.pinned }); onChanged(); })}>
-              {note.pinned ? <PinOff /> : <Pin />}
-            </Tool>
-            <Select className="select pad-move" value={String(note.folderId ?? '')} title="Folder"
-              onChange={(v) => void padApi.move(id, v ? Number(v) : null, PAD_SOURCE).then(() => { setNote({ ...note, folderId: v ? Number(v) : null }); onChanged(); })}
-              options={[{ value: '', label: 'Notes' }, ...folders.map((f) => ({ value: String(f.id), label: f.name }))]} />
-            <Tool title="Delete note" onClick={() => void padApi.remove(id, false, PAD_SOURCE).then(onDeleted)}><Trash /></Tool>
-            <Tool title="New note" onClick={onNew}><SquarePen /></Tool>
+            <div className="pad-tool-group">
+              <Tool on={note.pinned} title={note.pinned ? 'Unpin' : 'Pin'} onClick={() => void padApi.pin(id, !note.pinned, PAD_SOURCE).then(() => { setNote({ ...note, pinned: !note.pinned }); onChanged(); })}>
+                {note.pinned ? <PinOff /> : <Pin />}
+              </Tool>
+              <Select className="select pad-move" value={String(note.folderId ?? '')} title="Folder"
+                onChange={(v) => void padApi.move(id, v ? Number(v) : null, PAD_SOURCE).then(() => { setNote({ ...note, folderId: v ? Number(v) : null }); onChanged(); })}
+                options={[{ value: '', label: 'Notes' }, ...folders.map((f) => ({ value: String(f.id), label: f.name }))]} />
+              <Tool title="Delete note" onClick={() => void padApi.remove(id, false, PAD_SOURCE).then(onDeleted)}><Trash /></Tool>
+              <Tool title="New note" onClick={onNew}><SquarePen /></Tool>
+            </div>
           </>
         )}
       </div>

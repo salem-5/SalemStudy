@@ -7,14 +7,22 @@ import { DIRECT_CARD_COUNT, type CardOptions, type CardSize, type GenSource, typ
 import { AskableArea, AskAboutCard, ChatButton, deckBriefing } from './StudyChat';
 import { clearDeckSession, deckMarkedCount, deckResumeAt, deckSessionFits, loadDeckSession, pruneDeckSession, saveDeckSession } from '../lib/studySession';
 import { ConfirmDialog } from './dialogs';
-import {studyApi, type Card, type CardResult, type ChatThread, type Deck, type Source, type Difficulty, type QuestionType, type Note } from './api';
+import {studyApi, type Card, type CardResult, type ChatThread, type Deck, type Source, type Difficulty, type QuestionType, type QuestionSource, type Note } from './api';
 import { wholeSources } from '../lib/material';
 import { applyOrder, CARD_BANDS, QUIZ_COUNT } from '../lib/deckPlan';
 import { PlayerBar, SetItem, SetPage } from './StudySets';
-import { KindIcon } from './Sources';
+import { KindIcon, SourceLinks } from './Sources';
 import { NOTE_PRESETS } from '../lib/prompts';
 import { openSetup, PYTHON_CHANGED } from '../components/Onboarding';
 import { pythonStatus } from '../lib/python';
+import { canHoldDiagrams, findDiagrams, whereLabel, type FoundDiagram } from '../lib/diagrams';
+
+/** Where a card came from: a list of sources, or one on its own from before cards kept several. */
+function cardSources(card: Card): QuestionSource[] {
+  const refs = card.sourceRefs;
+  const list = Array.isArray(refs) ? refs : refs && typeof refs === 'object' ? [refs] : [];
+  return list.filter((r): r is QuestionSource => !!r && typeof r.sourceId === 'number' && typeof r.title === 'string');
+}
 
 export function DeckView({ deck, notebookId, onBack, onPlay, onChanged }: {
   deck: Deck;
@@ -38,11 +46,12 @@ export function DeckView({ deck, notebookId, onBack, onPlay, onChanged }: {
   const hard = (cards ?? []).filter((c) => c.lastCorrect === false);
 
   // How far the saved run got, once the deck's cards have loaded and we know it still fits them.
-  const seen = useMemo(() => {
-    if (!session || !cards) return 0;
+  const live = useMemo(() => {
+    if (!session || !cards) return null;
     const ids = cards.map((c) => c.id);
-    return deckSessionFits(session, ids) ? deckMarkedCount(pruneDeckSession(session, ids)) : 0;
+    return deckSessionFits(session, ids) ? pruneDeckSession(session, ids) : null;
   }, [session, cards]);
+  const seen = live ? deckMarkedCount(live) : 0;
 
   return (
     <SetPage
@@ -93,10 +102,10 @@ export function DeckView({ deck, notebookId, onBack, onPlay, onChanged }: {
       </>}
     >
       {(cards ?? []).map((c, i) => (
-        <SetItem key={c.id} n={i + 1} index={i} result={c.lastCorrect} onOpen={() => setEditing(c)}>
+        <SetItem key={c.id} n={i + 1} index={i} result={seen ? live?.results[c.id]?.correct : c.lastCorrect} onOpen={() => setEditing(c)}>
           <div className="card-pair">
             <div className="card-pair-front"><Markdown text={c.front} /></div>
-            <div className="card-pair-back"><Markdown text={c.back} /></div>
+            <div className="card-pair-back"><Markdown text={c.back} /><SourceLinks sources={cardSources(c)} /></div>
           </div>
         </SetItem>
       ))}
@@ -272,6 +281,13 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
   const [size, setSize] = useState<CardSize>(prefs.size ?? 'standard');
   const [notes, setNotes] = useState<Note[]>([]);
   const [pickedNotes, setPickedNotes] = useState<Set<number>>(new Set());
+  // The labelled diagrams in each ticked source, found one source at a time as soon as diagrams are
+  // on, so the student can choose which become questions. Every one starts ticked.
+  const [found, setFound] = useState<Record<number, FoundDiagram[] | 'scanning' | 'failed'>>({});
+  const [unticked, setUnticked] = useState<Set<string>>(new Set());
+  const scanning = useRef(false);
+  const diagramSources = useMemo(() => ready.filter((s) => picked.has(s.id) && canHoldDiagrams(s)), [ready, picked]);
+  const choosingDiagrams = kind === 'quiz' && mode === 'sources' && diagrams && !!ocrReady;
 
   useEffect(() => {
     if (initialThread) return;
@@ -285,6 +301,18 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [more, setMore] = useState(() => kind === 'notes' && !NOTE_PRESETS.some((p) => p.text === prefs.instructions));
+  useEffect(() => {
+    if (!choosingDiagrams || busy || scanning.current) return;
+    const next = diagramSources.find((s) => !(s.id in found));
+    if (!next) return;
+    scanning.current = true;
+    setFound((f) => ({ ...f, [next.id]: 'scanning' }));
+    findDiagrams(next).then(
+      (list) => { scanning.current = false; setFound((f) => ({ ...f, [next.id]: list })); },
+      () => { scanning.current = false; setFound((f) => ({ ...f, [next.id]: 'failed' })); },
+    );
+  }, [choosingDiagrams, busy, diagramSources, found]);
+  const scanned = diagramSources.every((s) => Array.isArray(found[s.id]));
 
   useEffect(() => {
     studyApi.chatList(notebookId).then((t) => { setThreads(t); setThread((cur) => cur ?? t[0]?.id ?? null); }).catch(() => {});
@@ -326,7 +354,11 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
         if (!thread) throw new Error('Pick a chat.');
         src = { kind: 'chat', messages: await studyApi.chatMessages(thread) };
       }
-      await run(src, setStatus, instructions, { difficulty, types, size, fast: true, walk: mode !== 'sources' ? false : walkMode === 'auto' ? 'auto' : walkMode === 'on', diagrams: kind === 'quiz' && mode === 'sources' && diagrams });
+      // Still looking when the quiz starts: the diagrams are left to the AI to choose, as before.
+      const diagramPicks = choosingDiagrams && scanned
+        ? diagramSources.flatMap((s) => found[s.id] as FoundDiagram[]).filter((d) => !unticked.has(d.key))
+        : undefined;
+      await run(src, setStatus, instructions, { difficulty, types, size, fast: true, walk: mode !== 'sources' ? false : walkMode === 'auto' ? 'auto' : walkMode === 'on', diagrams: kind === 'quiz' && mode === 'sources' && diagrams, diagramPicks });
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -514,6 +546,10 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
                     </span>
                   </label>
                 )}
+                {choosingDiagrams && (
+                  <DiagramChooser sources={diagramSources} found={found} unticked={unticked} disabled={busy}
+                    onToggle={(keys, on) => setUnticked((u) => { const n = new Set(u); keys.forEach((k) => (on ? n.delete(k) : n.add(k))); return n; })} />
+                )}
               </div>
             )}
           </div>
@@ -526,6 +562,67 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
         <button type="button" className="btn primary" onClick={go} disabled={busy || !can}><Sparkles />{kind === 'notes' ? 'Write notes' : kind === 'quiz' ? 'Make quiz' : 'Make flashcards'}</button>
       </div>
     </Modal>
+  );
+}
+
+/** Every labelled diagram found in the ticked sources, as pictures to tick or untick. */
+function DiagramChooser({ sources, found, unticked, disabled, onToggle }: {
+  sources: Source[];
+  found: Record<number, FoundDiagram[] | 'scanning' | 'failed'>;
+  unticked: Set<string>;
+  disabled: boolean;
+  onToggle: (keys: string[], on: boolean) => void;
+}) {
+  const all = sources.flatMap((s) => (Array.isArray(found[s.id]) ? found[s.id] as FoundDiagram[] : []));
+  const chosen = all.filter((d) => !unticked.has(d.key)).length;
+  const waiting = sources.some((s) => !Array.isArray(found[s.id]) && found[s.id] !== 'failed');
+  if (!sources.length) return <p className="gen-hint diagram-pick-note">None of the ticked sources are PDFs, slides or pictures, so there are no diagrams to label.</p>;
+  return (
+    <div className="field diagram-pick">
+      <div className="diagram-pick-head">
+        <span className="field-label">Diagrams to label</span>
+        <span className="pick-count">{chosen} of {all.length}{waiting ? '…' : ''}</span>
+        {!!all.length && (
+          <button type="button" className="link" disabled={disabled}
+            onClick={() => onToggle(all.map((d) => d.key), chosen < all.length)}>
+            {chosen < all.length ? 'Select all' : 'Select none'}
+          </button>
+        )}
+      </div>
+      <div className="diagram-pick-list">
+        {sources.map((s) => {
+          const f = found[s.id];
+          return (
+            <div key={s.id} className="diagram-pick-source">
+              <div className="diagram-pick-title"><KindIcon kind={s.kind} /><span>{s.title}</span></div>
+              {!Array.isArray(f) ? (
+                <p className="gen-hint">{f === 'failed' ? 'Could not read the pictures in this one.' : <><span className="dots"><i /><i /><i /></span> Looking for labelled diagrams…</>}</p>
+              ) : !f.length ? (
+                <p className="gen-hint">No labelled diagrams in this one.</p>
+              ) : (
+                <div className="diagram-pick-grid">
+                  {f.map((d) => {
+                    const on = !unticked.has(d.key);
+                    return (
+                      <button type="button" key={d.key} className={`diagram-pick-item${on ? ' on' : ''}`} disabled={disabled}
+                        aria-pressed={on} title={on ? 'Leave this diagram out' : 'Make a question from this diagram'}
+                        onClick={() => onToggle([d.key], !on)}>
+                        <span className="diagram-pick-img"><img src={d.image} alt={`Diagram on ${whereLabel(s, d.found.where).toLowerCase()}`} draggable={false} /></span>
+                        <span className="diagram-pick-cap">
+                          <span className="diagram-pick-box">{on && <Check />}</span>
+                          {whereLabel(s, d.found.where)}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {waiting && <span className="gen-hint">Make the quiz before this finishes and Salem chooses the diagrams itself.</span>}
+    </div>
   );
 }
 
@@ -552,7 +649,10 @@ export function DeckPlayer({ deckId, cards, title, notebookId, practice: startPr
   const [round, setRound] = useState<Card[]>(resumed?.cards ?? cards);
   const [practice, setPractice] = useState(startPractice);
   const [pos, setPos] = useState(resumed?.pos ?? 0);
-  const [flipped, setFlipped] = useState(false);
+  const [flipped, setFlipped] = useState(() => {
+    const first = resumed?.cards[resumed.pos];
+    return !!first && !!resumed?.results[first.id];
+  });
   const [leaving, setLeaving] = useState<'left' | 'right' | null>(null);
   const [flash, setFlash] = useState<{ kind: 'good' | 'bad'; n: number } | null>(null);
   const [results, setResults] = useState<CardResult[]>(
@@ -565,6 +665,9 @@ export function DeckPlayer({ deckId, cards, title, notebookId, practice: startPr
   const saved = useRef(false);
   const card = round[pos];
   const done = !card;
+  // One mark per card: marking a card again replaces what it had.
+  const marks = useMemo(() => new Map(results.map((r) => [r.cardId, r.correct])), [results]);
+  const marked = card ? marks.get(card.id) : undefined;
 
   useEffect(() => {
     if (practice || done) return;
@@ -586,23 +689,26 @@ export function DeckPlayer({ deckId, cards, title, notebookId, practice: startPr
 
   const grade = useCallback((correct: boolean) => {
     if (!card || !flipped || leaving) return;
-    setResults((r) => [...r, { cardId: card.id, correct, elapsedMs: Date.now() - shownAt.current }]);
+    setResults((r) => [...r.filter((x) => x.cardId !== card.id), { cardId: card.id, correct, elapsedMs: Date.now() - shownAt.current }]);
     setLeaving(correct ? 'right' : 'left');
     setFlash((f) => ({ kind: correct ? 'good' : 'bad', n: (f?.n ?? 0) + 1 }));
+    const next = round[pos + 1];
     window.setTimeout(() => {
       setLeaving(null);
-      setFlipped(false);
+      // A card marked before comes back answer side up, with how it was marked.
+      setFlipped(!!next && marks.has(next.id));
       setPos((p) => p + 1);
       shownAt.current = Date.now();
     }, 240);
-  }, [card, flipped, leaving]);
+  }, [card, flipped, leaving, round, pos, marks]);
 
   const goTo = useCallback((next: number) => {
-    setPos(Math.max(0, Math.min(round.length, next)));
-    setFlipped(false);
+    const to = Math.max(0, Math.min(round.length, next));
+    setPos(to);
+    setFlipped(!!round[to] && marks.has(round[to].id));
     setLeaving(null);
     shownAt.current = Date.now();
-  }, [round.length]);
+  }, [round, marks]);
 
   const restart = (list: Card[], isPractice: boolean) => {
     saved.current = false;
@@ -633,6 +739,7 @@ export function DeckPlayer({ deckId, cards, title, notebookId, practice: startPr
   }, [done, grade, goTo, pos, onClose]);
 
   const right = results.filter((r) => r.correct).length;
+  const markLabel = marked === undefined ? '' : marked ? 'Got it' : 'Missed it';
   const missed = useMemo(() => round.filter((c) => results.some((r) => r.cardId === c.id && !r.correct)), [round, results]);
 
   return (
@@ -650,7 +757,16 @@ export function DeckPlayer({ deckId, cards, title, notebookId, practice: startPr
         )}
         <ChatButton notebookId={notebookId} where={title} tag={title} briefing={deckBriefing(title, card)} />
       </PlayerBar>
-      <div className="player-progress" aria-hidden><i style={{ width: `${(Math.min(pos, round.length) / Math.max(1, round.length)) * 100}%` }} /></div>
+      <nav className="step-strip" aria-label="Cards" style={round.length > 50 ? { gap: 2 } : undefined}>
+        {round.map((c, i) => {
+          const m = marks.get(c.id);
+          return (
+            <button key={c.id} type="button" className={`step-seg${i === pos ? ' on' : ''}${m === undefined ? '' : m ? ' right' : ' wrong'}`}
+              onClick={() => goTo(i)} aria-current={i === pos ? 'step' : undefined}
+              title={`Card ${i + 1}${m === undefined ? '' : m ? ' - got it' : ' - missed it'}`} />
+          );
+        })}
+      </nav>
       {asking && (
         <AskAboutCard card={asking} deckTitle={title} notebookId={notebookId} onClose={() => setAsking(null)} />
       )}
@@ -683,18 +799,19 @@ export function DeckPlayer({ deckId, cards, title, notebookId, practice: startPr
           >
             <div className="flashcard-inner">
               <div className="card-face front"><Markdown text={card.front} /><span className="card-hint muted">click or press space to see the answer</span></div>
-              <div className="card-face back"><Markdown text={card.back} /></div>
+              <div className="card-face back"><Markdown text={card.back} /><SourceLinks sources={cardSources(card)} className="card-source muted small source-links" /></div>
             </div>
           </div>
           </div>
           <div className={`grade${flipped ? ' show' : ''}`}>
-            <button type="button" className="grade-btn bad" onClick={() => grade(false)} disabled={!flipped} title="Missed it (1 or ←)">
+            <button type="button" className={`grade-btn bad${marked === false ? ' chosen' : ''}`} onClick={() => grade(false)} disabled={!flipped} title="Missed it (1 or ←)">
               <span className="grade-icon"><X /></span><span>Missed it</span>
             </button>
-            <button type="button" className="grade-btn good" onClick={() => grade(true)} disabled={!flipped} title="Got it (2 or →)">
+            <button type="button" className={`grade-btn good${marked === true ? ' chosen' : ''}`} onClick={() => grade(true)} disabled={!flipped} title="Got it (2 or →)">
               <span className="grade-icon"><Check /></span><span>Got it</span>
             </button>
           </div>
+          {markLabel && <p className="grade-was muted small">You marked this <b>{markLabel}</b>. Pick again to change it.</p>}
           <div className="card-actions">
             <button type="button" className="btn ghost" onClick={() => setAsking(card)}>
               <MessageCircleQuestion />Ask AI about this card

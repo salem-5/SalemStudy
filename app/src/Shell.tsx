@@ -125,10 +125,20 @@ export default function Shell() {
   // with the sidebar's own animation, and the folded sidebar is sized from their width so they sit
   // in its middle. AppKit can lay them out again when the window changes size, so they are put
   // back then too.
+  // A quiz or deck (data-immersive, set by the notebook) tucks the sidebar away altogether, and
+  // the lights stand at full size over the player's bar whether the sidebar was folded or not.
+  const [immersive, setImmersive] = useState(() => document.documentElement.hasAttribute('data-immersive'));
+  useEffect(() => {
+    const root = document.documentElement;
+    const watch = new MutationObserver(() => setImmersive(root.hasAttribute('data-immersive')));
+    watch.observe(root, { attributes: true, attributeFilter: ['data-immersive'] });
+    return () => watch.disconnect();
+  }, []);
+  const compactLights = navSmall && !immersive;
   const lights = useRef<{ metrics: Lights | null; compact: number | null }>({ metrics: null, compact: null });
   useLayoutEffect(() => {
     if (document.documentElement.dataset.chrome !== 'mac') return;
-    const target = navSmall ? 1 : 0;
+    const target = compactLights ? 1 : 0;
     const from = lights.current.compact ?? target;
     let alive = true;
     let raf = 0;
@@ -152,7 +162,7 @@ export default function Shell() {
       raf = requestAnimationFrame(tick);
     });
     return () => { alive = false; cancelAnimationFrame(raf); };
-  }, [navSmall]);
+  }, [compactLights]);
   useEffect(() => {
     if (document.documentElement.dataset.chrome !== 'mac') return;
     let t = 0;

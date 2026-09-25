@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Select } from '../components/Select';
 import { Check, ChevronLeft, ChevronRight, Flag, Lightbulb, MessageCircleQuestion, Play, RotateCcw, ShieldCheck, Sparkles, X } from 'lucide-react';
 import { asMath, Markdown } from '../lib/markdown';
-import { cardsFromMistakes, gradeLabels, gradeLocal, gradeShort, picked, rewriteQuestion, unpick, type GenSource, type StudyContext } from '../lib/studyGen';
+import { cardsFromMistakes, gradeBlank, gradeLabels, gradeLocal, gradeShort, picked, rewriteQuestion, unpick, type GenSource, type StudyContext } from '../lib/studyGen';
 import { labelAnswers, labelResults, labelVerdicts } from '../lib/quizRules';
 import {
   clearQuizSession, loadQuizSession, quizResumeAt, quizSessionFits, saveQuizSession,
@@ -13,13 +14,14 @@ import { ConfirmDialog } from './dialogs';
 import { PlayerBar, SetItem, SetPage } from './StudySets';
 import { GapPrompt, hasGap } from './GapPrompt';
 import { AskableArea, AskAboutQuestion, ChatButton, quizBriefing } from './StudyChat';
+import { SourceLinks } from './Sources';
 import { studyApi, type AttemptAnswer, type Note, type Quiz, type QuizQuestion, type QuizSummary } from './api';
 import { keys, MOD } from '../lib/keys';
 
-function FigureImg({ id }: { id: number }) {
+function FigureImg({ id, className = 'quiz-figure', alt = 'Figure for this question' }: { id: number; className?: string; alt?: string }) {
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => { studyApi.attachmentData(id).then(setSrc).catch(() => {}); }, [id]);
-  return src ? <img className="quiz-figure" src={src} alt="Figure for this question" /> : <div className="quiz-figure loading" />;
+  return src ? <img className={className} src={src} alt={alt} /> : <div className={`${className} loading`} />;
 }
 
 function answerText(q: QuizQuestion): string {
@@ -129,6 +131,7 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
     let labelNotes: string[] | undefined;
     try {
       if (q.type === 'short') ({ correct, feedback } = await gradeShort(q, value));
+      else if (q.type === 'blank') ({ correct, feedback } = await gradeBlank(q, value));
       else if (q.type === 'label') {
         const graded = await gradeLabels(q, value);
         labels = graded.results;
@@ -284,9 +287,7 @@ export function QuizRunner({ quizId, onlyIndexes, startAt, onClose, onFinished, 
         <div className="question-card" key={index}>
           <div className="q-meta muted">
             <span>{q.topic}{q.difficulty ? ` · ${q.difficulty}` : ''}</span>
-            <span className={`q-verify${q.verified ? ' ok' : ''}`} title={q.verified ? 'The answer was re-derived in Python' : 'Not checked by Python (conceptual, or Python unavailable)'}>
-              {q.verified ? <><ShieldCheck />checked in Python</> : 'unverified'}
-            </span>
+            {q.verified && <span className="q-verify ok" title="The answer was re-derived in Python"><ShieldCheck />checked in Python</span>}
           </div>
           {q.type === 'blank' ? (
             <GapPrompt text={q.prompt} className="q-prompt">
@@ -685,9 +686,12 @@ export function QuizView({ quiz, summary, notebookId, ctx, onBack, onPlay, onCha
               {q.verified && <span className="q-verify ok"><ShieldCheck />checked</span>}
             </div>
             <QuestionText q={q} />
+            {q.figure && <FigureImg id={q.figure} className="set-figure" />}
+            {q.type === 'label' && q.diagram?.image && <FigureImg id={q.diagram.image} className="set-figure" alt="Diagram to label" />}
             <div className="quiz-question-answer muted">
               <span>Answer:</span><Markdown text={answerText(q)} className="tight inline" />
             </div>
+            <SourceLinks sources={q.sources} />
           </div>
         </SetItem>
       ))}
@@ -928,9 +932,7 @@ function Feedback({ q, answer, reviewing, onAsk, onChange, onNext, last }: {
           <Markdown text={q.hint} className="tight" />
         </div>
       )}
-      {!!q.sources?.length && (
-        <p className="muted small">From {q.sources.map((s) => `${s.title} (${s.label})`).join('; ')}</p>
-      )}
+      <SourceLinks sources={q.sources} />
       <div className="modal-actions">
         <button type="button" className="btn ghost" onClick={onAsk}><MessageCircleQuestion />Ask AI</button>
         {!reviewing && <button type="button" className="btn ghost" onClick={onChange}>Change my answer</button>}
@@ -971,47 +973,50 @@ function Results({ quiz, order, answers, notebookId, cardsMade, onCardsMade, onR
         Results · {answered.length ? Math.round((right.length / answered.length) * 100) : 0}%
       </button>
       {open && (
-        <div className="modal-backdrop" onClick={() => setOpen(false)}>
-          <div className="modal summary" onClick={(e) => e.stopPropagation()}>
-            <div className="summary-score">
-              <span className="summary-num">{answered.length ? Math.round((right.length / answered.length) * 100) : 0}%</span>
-              <span className="muted">{right.length} of {answered.length} right</span>
+        createPortal(
+          <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setOpen(false); }}>
+            <div className="modal summary" onClick={(e) => e.stopPropagation()}>
+              <div className="summary-score">
+                <span className="summary-num">{answered.length ? Math.round((right.length / answered.length) * 100) : 0}%</span>
+                <span className="muted">{right.length} of {answered.length} right</span>
+              </div>
+              <div className="panel-title">By topic</div>
+              <div className="meters">
+                {[...byTopic.entries()].sort((a, b) => a[1].right / a[1].total - b[1].right / b[1].total).map(([t, v]) => (
+                  <div className="meter" key={t}>
+                    <span className="meter-label">{t}</span>
+                    <span className="meter-track"><i style={{ width: `${(v.right / v.total) * 100}%` }} /></span>
+                    <span className="meter-value">{v.right}/{v.total}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="muted small">Close this to look back through every question - your answer, the right one and why.</p>
+              <div className="modal-actions">
+                {!!missed.length && (
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    disabled={cardsMade !== null}
+                    onClick={async () => {
+                      const cards = cardsFromMistakes(missed.map((i) => {
+                        const mq = quiz.questions[i];
+                        return { prompt: mq.prompt, answer: answerText(mq), explanation: mq.explanation, topic: mq.topic };
+                      }));
+                      await studyApi.addCards(notebookId, cards);
+                      onCardsMade(cards.length);
+                    }}
+                  >
+                    {cardsMade !== null ? `${cardsMade} card${cardsMade === 1 ? '' : 's'} added` : 'Flashcards from mistakes'}
+                  </button>
+                )}
+                {!!missed.length && <button type="button" className="btn" onClick={() => { setOpen(false); onRetryMissed(missed); }}>Retry missed</button>}
+                <button type="button" className="btn" onClick={() => { setOpen(false); onRestart(); }}>Take again</button>
+                <button type="button" className="btn primary" onClick={onDone}>Done</button>
+              </div>
             </div>
-            <div className="panel-title">By topic</div>
-            <div className="meters">
-              {[...byTopic.entries()].sort((a, b) => a[1].right / a[1].total - b[1].right / b[1].total).map(([t, v]) => (
-                <div className="meter" key={t}>
-                  <span className="meter-label">{t}</span>
-                  <span className="meter-track"><i style={{ width: `${(v.right / v.total) * 100}%` }} /></span>
-                  <span className="meter-value">{v.right}/{v.total}</span>
-                </div>
-              ))}
-            </div>
-            <p className="muted small">Close this to look back through every question - your answer, the right one and why.</p>
-            <div className="modal-actions">
-              {!!missed.length && (
-                <button
-                  type="button"
-                  className="btn ghost"
-                  disabled={cardsMade !== null}
-                  onClick={async () => {
-                    const cards = cardsFromMistakes(missed.map((i) => {
-                      const mq = quiz.questions[i];
-                      return { prompt: mq.prompt, answer: answerText(mq), explanation: mq.explanation, topic: mq.topic };
-                    }));
-                    await studyApi.addCards(notebookId, cards);
-                    onCardsMade(cards.length);
-                  }}
-                >
-                  {cardsMade !== null ? `${cardsMade} card${cardsMade === 1 ? '' : 's'} added` : 'Flashcards from mistakes'}
-                </button>
-              )}
-              {!!missed.length && <button type="button" className="btn" onClick={() => { setOpen(false); onRetryMissed(missed); }}>Retry missed</button>}
-              <button type="button" className="btn" onClick={() => { setOpen(false); onRestart(); }}>Take again</button>
-              <button type="button" className="btn primary" onClick={onDone}>Done</button>
-            </div>
-          </div>
-        </div>
+          </div>,
+          document.body,
+        )
       )}
     </>
   );

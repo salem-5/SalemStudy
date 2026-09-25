@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { MessageSquare, X } from 'lucide-react';
 import { ChatView } from '../components/chat/ChatView';
 import { SelectionMenu, type SelectionTarget } from '../components/SelectionMenu';
@@ -226,8 +227,10 @@ export function AskModal({ title, subtitle, scope, briefing, tag, notebookId, so
   const system = useCallback(() => briefing, [briefing]);
   const allowed = [...(sourceIds ?? []), ...referencedSources(pointed)];
 
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
+  // On the body, not where it was opened: the chat buttons sit in bars that drag the window
+  // (data-tauri-drag-region="deep"), which would swallow a click on the backdrop as a drag.
+  return createPortal(
+    <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal quiz-ask" onClick={(e) => e.stopPropagation()}>
         <div className="quiz-ask-head">
           <div>
@@ -264,7 +267,8 @@ export function AskModal({ title, subtitle, scope, briefing, tag, notebookId, so
           <button type="button" className="btn primary" onClick={onClose}>{backLabel ?? 'Back'}</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
