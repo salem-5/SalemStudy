@@ -3,6 +3,7 @@ import { cancelRun } from './salem/runtime';
 import { generateText } from './salem/generate';
 import { createMeter, recalledCost, rememberCost, type Meter } from './meter';
 import { NOTES_REFINE_SYSTEM, NOTES_SYSTEM } from './prompts';
+import { originOf, readOf } from './origin';
 import { tidyTitle } from './titles';
 import type { GenSource, StudyContext } from './studyGen';
 import { studyApi, type Note } from '../study/api';
@@ -33,7 +34,10 @@ function describe(src: GenSource): string {
   }
   if (src.kind === 'sources') {
     const blocks = src.hits.map((h) => `<excerpt source="${h.sourceTitle}" where="${h.label}">\n${h.text}\n</excerpt>`).join('\n\n');
-    return `Write notes from these excerpts of the student's course material. Cover the important ideas across all of them.${src.focus.trim() ? `\nFocus on: ${src.focus.trim()}` : ''}\n\n${blocks}`;
+    const notes = (src.notes ?? []).map((n) => `<note title="${n.title}">\n${n.content.slice(0, 30_000)}\n</note>`).join('\n\n');
+    const what = src.hits.length && notes ? "these excerpts of the student's course material and the notes they already have"
+      : notes ? 'the notes the student already has' : "these excerpts of the student's course material";
+    return `Write notes from ${what}. Cover the important ideas across all of it.${src.focus.trim() ? `\nFocus on: ${src.focus.trim()}` : ''}\n\n${[blocks, notes].filter(Boolean).join('\n\n')}`;
   }
   return '';
 }
@@ -88,7 +92,9 @@ async function run(
 }
 
 export async function writeNote(ctx: StudyContext, notebookId: number, src: GenSource, instructions: string, onCreated: (n: Note) => void): Promise<Note> {
-  const note = await studyApi.createNote(notebookId, 'Writing…', '', instructions);
+  // Notes are written from everything they are handed, so what was handed in is what they came from.
+  const origin = originOf(src, readOf(src));
+  const note = await studyApi.createNote(notebookId, 'Writing…', '', instructions, origin);
   onCreated(note);
   const user = `Course: ${ctx.subject}\nNotebook: ${ctx.notebook}${ctx.courseContext.trim() ? `\nCourse notes (follow this notation):\n${ctx.courseContext.trim()}` : ''}\n\n${instructions.trim() ? `The student's instructions for these notes:\n${instructions.trim()}\n\n` : ''}${describe(src)}`;
   try {

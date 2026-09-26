@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   applyOrder, balancedTrim, budgets, CEILING, fitHits, expectedItems, FULL_CONTEXT_CHARS, isShrunk, coreOnly, materialFor, pageId, uncovered, FAST_WINDOW_CHARS, fastMaterialFor, MAX_ITEMS, ordinalOf, pagesLabel, planWalk,
-  readingOrder, sizeRule, WINDOW_CHARS, type Page, type WalkSource,
+  readingOrder, sizeRule, WINDOW_CHARS, isNoteWindow, notesToWalk, type Page, type WalkSource,
 } from './deckPlan.ts';
 
 const page = (sourceId: number, ord: number, chars: number, text = 'x'): Page => ({
@@ -350,5 +350,31 @@ describe('fitting the material into one call', () => {
     assert.ok(kept.length >= 20);
     assert.ok(kept[kept.length - 1].unitFrom >= 90, 'the last pages are still represented');
     assert.deepEqual(kept.map((h) => h.unitFrom), [...kept.map((h) => h.unitFrom)].sort((a, b) => a - b));
+  });
+});
+
+describe("the student's notes, gone through page by page", () => {
+  it('splits a note before each heading and gives it the negative of its id', () => {
+    const [walk] = notesToWalk([{ id: 7, title: 'Limits', content: 'Intro line.\n\n## One-sided\nLeft and right.\n\n### Squeeze\nBetween two.' }]);
+    assert.equal(walk.id, -7);
+    assert.deepEqual(walk.pages.map((p) => [p.sourceId, p.ord, p.label, p.text]), [
+      [-7, 0, 'Section 1', 'Intro line.'],
+      [-7, 1, 'Section 2', '## One-sided\nLeft and right.'],
+      [-7, 2, 'Section 3', '### Squeeze\nBetween two.'],
+    ]);
+    assert.ok(isNoteWindow(planWalk([walk])[0]));
+    assert.ok(!isNoteWindow(planWalk([source(3, 2)])[0]));
+  });
+
+  it('breaks a long section at its paragraphs and drops pasted images', () => {
+    const para = 'word '.repeat(500).trim();
+    const [walk] = notesToWalk([{ id: 1, title: '', content: `# Big\n\n${para}\n\n![fig](data:image/png;base64,AAAA)\n\n${para}` }]);
+    assert.equal(walk.title, 'Your note');
+    assert.equal(walk.pages.length, 2);
+    assert.ok(walk.pages.every((p) => p.text.length <= 4_000 && !p.text.includes('data:')));
+  });
+
+  it('leaves out an empty note', () => {
+    assert.deepEqual(notesToWalk([{ id: 2, title: 'Blank', content: '  \n\n ' }]), []);
   });
 });

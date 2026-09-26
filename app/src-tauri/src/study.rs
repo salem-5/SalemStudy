@@ -383,6 +383,11 @@ CREATE TABLE pad_note (
   deleted_at INTEGER
 );
 CREATE INDEX pad_note_folder ON pad_note(folder_id, updated_at);
+"#,
+r#"
+ALTER TABLE deck ADD COLUMN origin_json TEXT;
+ALTER TABLE quiz ADD COLUMN origin_json TEXT;
+ALTER TABLE note ADD COLUMN origin_json TEXT;
 "#];
 
 pub(crate) fn schema_version() -> usize {

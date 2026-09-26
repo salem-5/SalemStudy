@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { Origin } from '../lib/origin';
 import type { Reference } from '../lib/reference';
 
 export type NotebookSummary = {
@@ -134,6 +135,7 @@ export type Deck = {
   runs: number;
   best: number | null;
   last: number | null;
+  origin: Origin | null;
 };
 
 export type Card = {
@@ -166,6 +168,7 @@ export type Note = {
   instructions: string;
   createdAt: number;
   updatedAt: number;
+  origin: Origin | null;
 };
 
 export type SourceKind = 'pdf' | 'slides' | 'image' | 'text' | 'youtube' | 'file';
@@ -268,7 +271,7 @@ export type QuizSummary = {
   last: number | null;
 };
 
-export type Quiz = { id: number; notebookId: number; title: string; questions: QuizQuestion[]; createdAt: number };
+export type Quiz = { id: number; notebookId: number; title: string; questions: QuizQuestion[]; createdAt: number; origin: Origin | null };
 
 export type AttemptAnswer = {
   index: number;
@@ -339,8 +342,8 @@ export const studyApi = {
 
   notes: (notebookId: number) => invoke<Note[]>('notes_list', { notebookId }),
   note: (id: number) => invoke<Note>('note_get', { id }),
-  createNote: (notebookId: number, title: string, content: string, instructions = '') =>
-    invoke<Note>('note_create', { notebookId, title, content, instructions }),
+  createNote: (notebookId: number, title: string, content: string, instructions = '', origin: Origin | null = null) =>
+    invoke<Note>('note_create', { notebookId, title, content, instructions, origin }),
   updateNote: (id: number, patch: { title?: string; content?: string; instructions?: string }) =>
     invoke<Note>('note_update', { id, title: patch.title ?? null, content: patch.content ?? null, instructions: patch.instructions ?? null }),
   deleteNote: (id: number) => invoke<void>('note_delete', { id }),
@@ -363,8 +366,8 @@ export const studyApi = {
   attachmentsInfo: (ids: number[]) => invoke<AttachmentInfo[]>('attachments_info', { ids }),
 
   decks: (notebookId: number) => invoke<Deck[]>('decks_list', { notebookId }),
-  createDeck: (notebookId: number, title: string, cards: NewCard[]) =>
-    invoke<number>('deck_create', { notebookId, title, cards: cards.map((c) => ({ topic: '', sourceRefs: null, ...c })) }),
+  createDeck: (notebookId: number, title: string, cards: NewCard[], origin: Origin | null = null) =>
+    invoke<number>('deck_create', { notebookId, title, cards: cards.map((c) => ({ topic: '', sourceRefs: null, ...c })), origin }),
   renameDeck: (id: number, title: string) => invoke<void>('deck_rename', { id, title }),
   deleteDeck: (id: number) => invoke<void>('deck_delete', { id }),
   deckCards: (deckId: number) => invoke<Card[]>('deck_cards', { deckId }),
@@ -393,8 +396,8 @@ export const studyApi = {
 
   quizzes: (notebookId: number) => invoke<QuizSummary[]>('quizzes_list', { notebookId }),
   quiz: (id: number) => invoke<Quiz>('quiz_get', { id }),
-  createQuiz: (notebookId: number, title: string, questions: QuizQuestion[]) =>
-    invoke<number>('quiz_create', { notebookId, title, questions }),
+  createQuiz: (notebookId: number, title: string, questions: QuizQuestion[], origin: Origin | null = null) =>
+    invoke<number>('quiz_create', { notebookId, title, questions, origin }),
   updateQuiz: (id: number, questions: QuizQuestion[]) => invoke<void>('quiz_update', { id, questions }),
   renameQuiz: (id: number, title: string) => invoke<void>('quiz_rename', { id, title }),
   deleteQuiz: (id: number) => invoke<void>('quiz_delete', { id }),

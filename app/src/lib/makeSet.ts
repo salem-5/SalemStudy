@@ -1,5 +1,6 @@
 import { generateCards, generateQuiz, type CardOptions, type GenSource, type QuizOptions, type StudyContext } from './studyGen';
 import { studyApi } from '../study/api';
+import { originOf, refsOf } from './origin';
 import { tidyTitle } from './titles';
 
 export type MadeSet = {
@@ -31,7 +32,8 @@ export async function makeSet(
     options.stop?.throwIfStopped();
     progress('Saving the deck…');
     deck.title = tidyTitle(deck.title, sourceTitles) || 'Flashcards';
-    id = await studyApi.createDeck(notebookId, deck.title, deck.cards.map((c) => ({ ...c, sourceRefs: c.sourceRefs ?? fallback })));
+    const origin = originOf(src, deck.read, deck.cards.map((c) => refsOf(c.sourceRefs)));
+    id = await studyApi.createDeck(notebookId, deck.title, deck.cards.map((c) => ({ ...c, sourceRefs: c.sourceRefs ?? fallback })), origin);
     ({ title, skipped } = deck);
     count = deck.cards.length;
   } else {
@@ -39,7 +41,7 @@ export async function makeSet(
     options.stop?.throwIfStopped();
     progress('Saving the quiz…');
     quiz.title = tidyTitle(quiz.title, sourceTitles) || 'Practice quiz';
-    id = await studyApi.createQuiz(notebookId, quiz.title, quiz.questions);
+    id = await studyApi.createQuiz(notebookId, quiz.title, quiz.questions, originOf(src, quiz.read, quiz.questions.map((q) => q.sources)));
     ({ title, skipped } = quiz);
     count = quiz.questions.length;
   }

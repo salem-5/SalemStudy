@@ -193,7 +193,7 @@ export function SetsPane({ kind, rows, notebookId, fresh, onOpen, onPlay, onGene
   );
 }
 
-export function SetPage({ kind, id, title, count, best, last, runs, chat, actions, listAside, onBack, onRename, onDelete, deleteText, children, empty, dialogs }: {
+export function SetPage({ kind, id, title, count, best, last, runs, chat, from, actions, listAside, onBack, onRename, onDelete, deleteText, children, empty, dialogs }: {
   kind: SetKind;
   id: number;
   title: string;
@@ -202,6 +202,8 @@ export function SetPage({ kind, id, title, count, best, last, runs, chat, action
   last: number | null;
   runs: number;
   chat: ReactNode;
+  /** What the set was made from, under its name. */
+  from?: ReactNode;
   actions: ReactNode;
   listAside?: ReactNode;
   onBack: () => void;
@@ -238,6 +240,7 @@ export function SetPage({ kind, id, title, count, best, last, runs, chat, action
               {plural(count, w.item, w.items)} · {runs ? plural(runs, w.run, w.runs) : kind === 'cards' ? 'not played yet' : 'not taken yet'}
               {made !== null && <span title={`What making this ${w.set} cost`}> · made for {formatCost(made)}</span>}
             </p>
+            {from}
           </div>
           {runs > 0 && (
             <div className="set-scores">

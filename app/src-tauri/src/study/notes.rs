@@ -1,5 +1,6 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
+use serde_json::Value;
 use tauri::{AppHandle, State};
 
 use super::{expect_one, now_ms, with_db, StudyDb};
@@ -14,9 +15,11 @@ pub struct Note {
     pub instructions: String,
     pub created_at: i64,
     pub updated_at: i64,
+    /// What the note was written from, as the app recorded it; null for notes written by hand.
+    pub origin: Value,
 }
 
-const COLS: &str = "id, notebook_id, title, content, instructions, created_at, updated_at";
+const COLS: &str = "id, notebook_id, title, content, instructions, created_at, updated_at, origin_json";
 
 fn row(r: &rusqlite::Row) -> rusqlite::Result<Note> {
     Ok(Note {
@@ -27,6 +30,7 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<Note> {
         instructions: r.get(4)?,
         created_at: r.get(5)?,
         updated_at: r.get(6)?,
+        origin: r.get::<_, Option<String>>(7)?.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null),
     })
 }
 
@@ -40,11 +44,12 @@ pub fn list(conn: &Connection, notebook_id: i64) -> rusqlite::Result<Vec<Note>> 
         .collect()
 }
 
-pub fn create(conn: &Connection, notebook_id: i64, title: &str, content: &str, instructions: &str) -> rusqlite::Result<Note> {
+pub fn create(conn: &Connection, notebook_id: i64, title: &str, content: &str, instructions: &str, origin: &Value) -> rusqlite::Result<Note> {
     let t = now_ms();
+    let origin = if origin.is_null() { None } else { Some(origin.to_string()) };
     conn.execute(
-        "INSERT INTO note (notebook_id, title, content, instructions, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
-        params![notebook_id, title, content, instructions, t],
+        "INSERT INTO note (notebook_id, title, content, instructions, created_at, updated_at, origin_json) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6)",
+        params![notebook_id, title, content, instructions, t, origin],
     )?;
     Ok(get(conn, conn.last_insert_rowid())?.expect("just inserted"))
 }
@@ -60,10 +65,18 @@ pub fn note_get(app: AppHandle, db: State<'_, StudyDb>, id: i64) -> Result<Note,
 }
 
 #[tauri::command]
-pub fn note_create(app: AppHandle, db: State<'_, StudyDb>, notebook_id: i64, title: String, content: String, instructions: Option<String>) -> Result<Note, String> {
+pub fn note_create(
+    app: AppHandle,
+    db: State<'_, StudyDb>,
+    notebook_id: i64,
+    title: String,
+    content: String,
+    instructions: Option<String>,
+    origin: Option<Value>,
+) -> Result<Note, String> {
     let title: String = title.trim().chars().take(200).collect();
     let title = if title.is_empty() { "Untitled note".to_string() } else { title };
-    with_db(&app, &db, |c| create(c, notebook_id, &title, &content, instructions.as_deref().unwrap_or("")))
+    with_db(&app, &db, |c| create(c, notebook_id, &title, &content, instructions.as_deref().unwrap_or(""), &origin.unwrap_or(Value::Null)))
 }
 
 #[tauri::command]
@@ -103,12 +116,24 @@ mod tests {
         super::super::prepare(&c).unwrap();
         let s = super::super::create_subject(&c, "Calc").unwrap();
         let nb = super::super::create_notebook(&c, s, "Lines", "").unwrap();
-        let a = create(&c, nb, "Lines", "# Lines", "cheat sheet").unwrap();
+        let a = create(&c, nb, "Lines", "# Lines", "cheat sheet", &Value::Null).unwrap();
         c.execute("UPDATE note SET updated_at = 0 WHERE id = ?1", [a.id]).unwrap();
-        let b = create(&c, nb, "Planes", "# Planes", "").unwrap();
+        let b = create(&c, nb, "Planes", "# Planes", "", &Value::Null).unwrap();
         assert_eq!(list(&c, nb).unwrap().iter().map(|n| n.id).collect::<Vec<_>>(), [b.id, a.id]);
         assert_eq!(get(&c, a.id).unwrap().unwrap().instructions, "cheat sheet");
         c.execute("DELETE FROM notebook WHERE id = ?1", [nb]).unwrap();
         assert!(list(&c, nb).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_note_keeps_what_it_was_written_from() {
+        let c = Connection::open_in_memory().unwrap();
+        super::super::prepare(&c).unwrap();
+        let s = super::super::create_subject(&c, "Calc").unwrap();
+        let nb = super::super::create_notebook(&c, s, "Lines", "").unwrap();
+        let origin = serde_json::json!({ "kind": "topic", "prompt": "lines in 3D" });
+        let n = create(&c, nb, "Lines", "", "", &origin).unwrap();
+        assert_eq!(get(&c, n.id).unwrap().unwrap().origin, origin);
+        assert!(create(&c, nb, "Mine", "", "", &Value::Null).unwrap().origin.is_null());
     }
 }

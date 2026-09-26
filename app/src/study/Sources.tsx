@@ -9,6 +9,7 @@ import { Markdown } from '../lib/markdown';
 import { ContextMenu, MoreMenu, type MenuItem } from '../components/ContextMenu';
 import { SectionHead } from '../components/Section';
 import { relTime } from '../lib/format';
+import { unitWord as unitNoun } from '../lib/origin';
 import { studyApi, type QuestionSource, type Source, type SourceImage, type SourceKind, type SourceUnit } from './api';
 import { NameDialog, ConfirmDialog } from './dialogs';
 import { keys } from '../lib/keys';
@@ -18,7 +19,7 @@ export const KindIcon = ({ kind }: { kind: SourceKind }) => {
   return <Icon className={`kind-icon ${kind}`} />;
 };
 
-const unitWord = (s: Source) => (s.kind === 'pdf' ? 'page' : s.kind === 'slides' ? 'slide' : s.kind === 'youtube' ? 'part' : 'section');
+const unitWord = (s: Source) => unitNoun(s.kind);
 
 function readingTrouble(s: Source): string | null {
   const r = s.report;
@@ -273,6 +274,9 @@ export function SourcePicker({ sources, selected, onToggle, onToggleAll, onManag
   );
 }
 
+/** What the student does to take over scrolling a source from the jump to a page. */
+const LET_GO = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
+
 /** Opens a source in the notebook's side sheet at a page or section. Absent outside a notebook. */
 export const OpenSourceContext = createContext<((sourceId: number, unit: number) => void) | null>(null);
 
@@ -286,12 +290,12 @@ export function SourceLinks({ sources, className = 'muted small source-links' }:
       {sources.map((s, i) => (
         <span key={`${s.sourceId}-${s.unit}-${i}`}>
           {i > 0 && '; '}
-          {open ? (
+          {open && s.sourceId > 0 ? (
             <button type="button" className="link source-link" title="Open this page of the source"
               onClick={(e) => { e.stopPropagation(); open(s.sourceId, s.unit); }} onKeyDown={(e) => e.stopPropagation()}>
-              {s.title} ({s.label})
+              {s.title}{s.label ? ` (${s.label})` : ''}
             </button>
-          ) : `${s.title} (${s.label})`}
+          ) : `${s.title}${s.label ? ` (${s.label})` : ''}`}
         </span>
       ))}
     </p>
@@ -304,6 +308,7 @@ export function SourceViewer({ source, unit, onClose }: { source: Source; unit?:
   const [pictures, setPictures] = useState<SourceImage[]>([]);
   const [zoom, setZoom] = useState<string | null>(null);
   const refs = useRef(new Map<number, HTMLElement>());
+  const bodyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let alive = true;
@@ -313,8 +318,29 @@ export function SourceViewer({ source, unit, onClose }: { source: Source; unit?:
     return () => { alive = false; };
   }, [source.id, source.kind]);
 
+  // Going to a page. What is above it keeps growing after the first jump - pictures arrive, images
+  // and maths lay out - so the page is held at the top until that settles or the student scrolls.
   useEffect(() => {
-    if (units && unit !== undefined) refs.current.get(unit)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    const body = bodyRef.current;
+    const target = unit === undefined ? undefined : refs.current.get(unit);
+    if (!units || !body || !target) return;
+    const margin = parseFloat(getComputedStyle(target).scrollMarginTop) || 0;
+    const offset = () => target.getBoundingClientRect().top - body.getBoundingClientRect().top - margin;
+    let frame = 0;
+    const hold = () => {
+      const off = offset();
+      if (Math.abs(off) > 1) body.scrollTop += off;
+      frame = requestAnimationFrame(hold);
+    };
+    const release = () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+      for (const e of LET_GO) body.removeEventListener(e, release);
+    };
+    for (const e of LET_GO) body.addEventListener(e, release, { passive: true });
+    const timer = window.setTimeout(release, 6000);
+    hold();
+    return release;
   }, [units, unit]);
 
   const openAt = (label: string) => {
@@ -337,7 +363,7 @@ export function SourceViewer({ source, unit, onClose }: { source: Source; unit?:
         )}
         <button type="button" className="icon-btn" onClick={onClose} title="Close"><X /></button>
       </div>
-      <div className="viewer-body">
+      <div className="viewer-body" ref={bodyRef}>
         {image && <img className="viewer-image" src={image} alt={source.title} />}
         {units === null ? <div className="pane-empty center"><Loader2 className="spin" /></div>
           : !units.length ? <p className="muted pane-empty">{source.status === 'error' ? source.error : 'Nothing has been read from this source yet.'}</p>

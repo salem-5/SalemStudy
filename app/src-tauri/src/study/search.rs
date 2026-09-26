@@ -97,8 +97,8 @@ mod tests {
         let b = crate::study::create_notebook(&c, s, "Lines", "").unwrap();
         let src = add(&c, a, "text", "Lecture 9", None, "", None, None).unwrap();
         set_content(&c, src.id, &[UnitIn { label: "Page 4".into(), text: "The ratio test compares consecutive terms.".into() }]).unwrap();
-        crate::study::notes::create(&c, b, "Tests", "Use the ratio test for factorials.", "").unwrap();
-        crate::study::cards::create_deck(&c, a, "Convergence", &[crate::study::cards::NewCard { front: "State the ratio test".into(), back: "L < 1".into(), topic: String::new(), source_refs: serde_json::Value::Null }]).unwrap();
+        crate::study::notes::create(&c, b, "Tests", "Use the ratio test for factorials.", "", &serde_json::Value::Null).unwrap();
+        crate::study::cards::create_deck(&c, a, "Convergence", &[crate::study::cards::NewCard { front: "State the ratio test".into(), back: "L < 1".into(), topic: String::new(), source_refs: serde_json::Value::Null }], &serde_json::Value::Null).unwrap();
         let t = crate::study::chat::create(&c, None, "Help").unwrap();
         crate::study::chat::add_message(&c, t.id, "user", "explain the ratio test", &serde_json::Value::Null).unwrap();
         let found = search_all(&c, "ratio test", 10).unwrap();

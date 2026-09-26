@@ -15,6 +15,7 @@ import { PlayerBar, SetItem, SetPage } from './StudySets';
 import { GapPrompt, hasGap } from './GapPrompt';
 import { AskableArea, AskAboutQuestion, ChatButton, quizBriefing } from './StudyChat';
 import { SourceLinks } from './Sources';
+import { MadeFrom } from './MadeFrom';
 import { studyApi, type AttemptAnswer, type Note, type Quiz, type QuizQuestion, type QuizSummary } from './api';
 import { keys, MOD } from '../lib/keys';
 
@@ -621,6 +622,7 @@ export function QuizView({ quiz, summary, notebookId, ctx, onBack, onPlay, onCha
       last={summary?.last ?? null}
       runs={summary?.attempts ?? 0}
       chat={<ChatButton notebookId={notebookId} where={quiz.title} tag={quiz.title} briefing={quizBriefing(quiz, undefined)} />}
+      from={<MadeFrom origin={quiz.origin} cited={questions.map((q) => q.sources)} notebookId={notebookId} items={['question', 'questions']} />}
       actions={<>
         {!!missed.length && <button type="button" className="btn" onClick={() => onPlay(missed)}>Retry {missed.length} missed</button>}
         {!!saved && (
@@ -954,6 +956,8 @@ function Results({ quiz, order, answers, notebookId, cardsMade, onCardsMade, onR
   onDone: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [making, setMaking] = useState(false);
+  const [cardsError, setCardsError] = useState<string | null>(null);
   const answered = order.filter((i) => answers[i] !== undefined);
   const right = answered.filter((i) => answers[i].correct);
   const missed = answered.filter((i) => !answers[i].correct);
@@ -991,22 +995,32 @@ function Results({ quiz, order, answers, notebookId, cardsMade, onCardsMade, onR
                 ))}
               </div>
               <p className="muted small">Close this to look back through every question - your answer, the right one and why.</p>
+              {cardsError && <p className="bad-text small">Could not make the flashcards: {cardsError}</p>}
               <div className="modal-actions">
                 {!!missed.length && (
                   <button
                     type="button"
                     className="btn ghost"
-                    disabled={cardsMade !== null}
+                    disabled={cardsMade !== null || making}
+                    title="Make a new deck of the questions you got wrong"
                     onClick={async () => {
-                      const cards = cardsFromMistakes(missed.map((i) => {
-                        const mq = quiz.questions[i];
-                        return { prompt: mq.prompt, answer: answerText(mq), explanation: mq.explanation, topic: mq.topic };
-                      }));
-                      await studyApi.addCards(notebookId, cards);
-                      onCardsMade(cards.length);
+                      const wrong = missed.map((i) => quiz.questions[i]);
+                      // Each card keeps the pages its question came from.
+                      const cards = cardsFromMistakes(wrong.map((mq) => ({ prompt: mq.prompt, answer: answerText(mq), explanation: mq.explanation, topic: mq.topic })))
+                        .map((c, k) => (wrong[k].sources?.length ? { ...c, sourceRefs: wrong[k].sources } : c));
+                      setMaking(true);
+                      setCardsError(null);
+                      try {
+                        await studyApi.createDeck(notebookId, `Missed in ${quiz.title}`, cards, { kind: 'mistakes', count: cards.length, quiz: quiz.title });
+                        onCardsMade(cards.length);
+                      } catch (e) {
+                        setCardsError(e instanceof Error ? e.message : String(e));
+                      } finally {
+                        setMaking(false);
+                      }
                     }}
                   >
-                    {cardsMade !== null ? `${cardsMade} card${cardsMade === 1 ? '' : 's'} added` : 'Flashcards from mistakes'}
+                    {cardsMade !== null ? `Deck of ${cardsMade} card${cardsMade === 1 ? '' : 's'} made` : making ? 'Making the deck…' : 'Flashcards from mistakes'}
                   </button>
                 )}
                 {!!missed.length && <button type="button" className="btn" onClick={() => { setOpen(false); onRetryMissed(missed); }}>Retry missed</button>}

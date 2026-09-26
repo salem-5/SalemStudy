@@ -12,16 +12,14 @@ import { wholeSources } from '../lib/material';
 import { applyOrder, CARD_BANDS, QUIZ_COUNT } from '../lib/deckPlan';
 import { PlayerBar, SetItem, SetPage } from './StudySets';
 import { KindIcon, SourceLinks } from './Sources';
+import { MadeFrom } from './MadeFrom';
+import { refsOf } from '../lib/origin';
 import { NOTE_PRESETS } from '../lib/prompts';
 import { openSetup, PYTHON_CHANGED } from '../components/Onboarding';
 import { pythonStatus } from '../lib/python';
 
 /** Where a card came from: a list of sources, or one on its own from before cards kept several. */
-function cardSources(card: Card): QuestionSource[] {
-  const refs = card.sourceRefs;
-  const list = Array.isArray(refs) ? refs : refs && typeof refs === 'object' ? [refs] : [];
-  return list.filter((r): r is QuestionSource => !!r && typeof r.sourceId === 'number' && typeof r.title === 'string');
-}
+const cardSources = (card: Card): QuestionSource[] => refsOf(card.sourceRefs);
 
 export function DeckView({ deck, notebookId, onBack, onPlay, onChanged }: {
   deck: Deck;
@@ -51,6 +49,7 @@ export function DeckView({ deck, notebookId, onBack, onPlay, onChanged }: {
     return deckSessionFits(session, ids) ? pruneDeckSession(session, ids) : null;
   }, [session, cards]);
   const seen = live ? deckMarkedCount(live) : 0;
+  const cited = useMemo(() => (cards ?? []).map(cardSources), [cards]);
 
   return (
     <SetPage
@@ -62,6 +61,7 @@ export function DeckView({ deck, notebookId, onBack, onPlay, onChanged }: {
       last={deck.last}
       runs={deck.runs}
       chat={<ChatButton notebookId={notebookId} where={deck.title} tag={deck.title} briefing={deckBriefing(deck.title, undefined)} />}
+      from={<MadeFrom origin={deck.origin} cited={cited} notebookId={notebookId} items={['card', 'cards']} />}
       actions={<>
         <label className="toggle small"><input type="checkbox" checked={shuffle} onChange={(e) => setShuffle(e.target.checked)} /><Shuffle />Shuffle</label>
         {!!hard.length && <button type="button" className="btn" onClick={() => play(hard, true)}>Practise {hard.length} missed</button>}
@@ -169,7 +169,6 @@ type GenPrefs = {
   order?: number[];
   difficulty?: Difficulty | 'mixed';
   types?: QuestionType[];
-  notesOff?: number[];
   walkMode?: WalkMode;
   diagrams?: boolean;
 };
@@ -286,9 +285,8 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
     savePrefs(key, {
       mode, off: ready.filter((s) => !picked.has(s.id)).map((s) => s.id),
       focus: mode === 'sources' ? prompt : prefs.focus, instructions, difficulty, types, size, order, walkMode, diagrams,
-      notesOff: notes.filter((n) => !pickedNotes.has(n.id)).map((n) => n.id),
     });
-  }, [key, mode, picked, prompt, instructions, difficulty, types, size, order, walkMode, diagrams, notes, pickedNotes]);
+  }, [key, mode, picked, prompt, instructions, difficulty, types, size, order, walkMode, diagrams]);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -296,12 +294,8 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
 
   useEffect(() => {
     studyApi.chatList(notebookId).then((t) => { setThreads(t); setThread((cur) => cur ?? t[0]?.id ?? null); }).catch(() => {});
-    studyApi.notes(notebookId)
-      .then((list) => {
-        setNotes(list);
-        setPickedNotes(new Set(list.filter((n) => !(prefs.notesOff ?? []).includes(n.id)).map((n) => n.id)));
-      })
-      .catch(() => {});
+    // Notes start unticked every time: each one ticked is more for the AI to read.
+    studyApi.notes(notebookId).then(setNotes).catch(() => {});
   }, [notebookId]);
 
   const go = async () => {
@@ -332,7 +326,8 @@ export function GenerateDialog({ kind, notebookId, sources, onClose, run, initia
       } else if (mode === 'topic') src = { kind: 'topic', prompt };
       else {
         if (!thread) throw new Error('Pick a chat.');
-        src = { kind: 'chat', messages: await studyApi.chatMessages(thread) };
+        const chat = threads.find((t) => t.id === thread);
+        src = { kind: 'chat', messages: await studyApi.chatMessages(thread), thread: { id: thread, title: chat?.title ?? '' } };
       }
       await run(src, setStatus, instructions, { difficulty, types, size, fast: true, walk: mode !== 'sources' ? false : walkMode === 'auto' ? 'auto' : walkMode === 'on', diagrams: kind === 'quiz' && mode === 'sources' && diagrams });
       onClose();

@@ -9,7 +9,7 @@ export type CardOptions = {
 
 export type GenSource =
   | { kind: 'topic'; prompt: string }
-  | { kind: 'chat'; messages: { role: string; content: string }[] }
+  | { kind: 'chat'; messages: { role: string; content: string }[]; thread?: { id: number; title: string } }
   | { kind: 'mistakes'; items: { prompt: string; answer: string; explanation: string; topic: string }[] }
   | { kind: 'sources'; hits: SourceHit[]; notes?: { id: number; title: string; content: string }[]; focus: string };
 
@@ -156,6 +156,40 @@ export const expectedItems = (w: Pick<Window, 'chars'>, all: Pick<Window, 'chars
   const total = all.reduce((n, x) => n + x.chars, 0) || 1;
   return Math.max(1, Math.round((w.chars / total) * budgetFor(all, writtenAs(size, fast), limit, of)));
 };
+
+const NOTE_SECTION_CHARS = 4_000;
+
+/** A note's Markdown in sections: split before each heading, and a long section at its paragraphs. */
+function noteSections(markdown: string, max = NOTE_SECTION_CHARS): string[] {
+  const text = markdown.replace(/!\[[^\]]*\]\(data:[^)]*\)/g, '').replace(/data:[^\s)"']+/g, '');
+  const out: string[] = [];
+  for (const block of text.split(/\n(?=#{1,3}\s)/)) {
+    if (block.length <= max) { if (block.trim()) out.push(block.trim()); continue; }
+    let part = '';
+    for (const para of block.split(/\n{2,}/)) {
+      if (part && part.length + para.length + 2 > max) { out.push(part.trim()); part = ''; }
+      part += (part ? '\n\n' : '') + para;
+    }
+    if (part.trim()) out.push(part.trim());
+  }
+  return out;
+}
+
+/**
+ * The student's notes as sources to go through page by page, after the course material. Each
+ * takes the negative of its id, the way a question citing a note records it.
+ */
+export function notesToWalk(notes: { id: number; title: string; content: string }[]): WalkSource[] {
+  return notes.flatMap((n) => {
+    const title = n.title.trim() || 'Your note';
+    const pages = noteSections(n.content).map((text, i): Page => ({
+      sourceId: -n.id, sourceTitle: title, kind: 'text', ord: i, label: `Section ${i + 1}`, text,
+    }));
+    return pages.length ? [{ id: -n.id, title, kind: 'text' as const, pages }] : [];
+  });
+}
+
+export const isNoteWindow = (w: Pick<Window, 'sourceId'>) => w.sourceId < 0;
 
 export function planWalk(sources: WalkSource[], windowChars = WINDOW_CHARS): Window[] {
   const windows: Window[] = [];

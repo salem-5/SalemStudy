@@ -25,6 +25,7 @@ pub struct Deck {
     pub runs: i64,
     pub best: Option<f64>,
     pub last: Option<f64>,
+    pub origin: Value,
 }
 
 #[derive(Serialize, Debug)]
@@ -69,7 +70,8 @@ pub fn list_decks(conn: &Connection, notebook_id: i64) -> rusqlite::Result<Vec<D
                 (SELECT COUNT(*) FROM flashcard f WHERE f.deck_id = d.id),
                 (SELECT COUNT(*) FROM deck_run r WHERE r.deck_id = d.id),
                 (SELECT MAX(r.correct * 1.0 / r.total) FROM deck_run r WHERE r.deck_id = d.id AND r.total > 0),
-                (SELECT r.correct * 1.0 / r.total FROM deck_run r WHERE r.deck_id = d.id AND r.total > 0 ORDER BY r.finished_at DESC, r.id DESC LIMIT 1)
+                (SELECT r.correct * 1.0 / r.total FROM deck_run r WHERE r.deck_id = d.id AND r.total > 0 ORDER BY r.finished_at DESC, r.id DESC LIMIT 1),
+                d.origin_json
          FROM deck d WHERE d.notebook_id = ?1 ORDER BY d.updated_at DESC, d.id DESC",
     )?
     .query_map([notebook_id], |r| {
@@ -83,17 +85,18 @@ pub fn list_decks(conn: &Connection, notebook_id: i64) -> rusqlite::Result<Vec<D
             runs: r.get(6)?,
             best: r.get(7)?,
             last: r.get(8)?,
+            origin: parse(r.get(9)?),
         })
     })?
     .collect()
 }
 
-pub fn create_deck(conn: &Connection, notebook_id: i64, title: &str, cards: &[NewCard]) -> rusqlite::Result<i64> {
+pub fn create_deck(conn: &Connection, notebook_id: i64, title: &str, cards: &[NewCard], origin: &Value) -> rusqlite::Result<i64> {
     let tx = conn.unchecked_transaction()?;
     let t = now_ms();
     tx.execute(
-        "INSERT INTO deck (notebook_id, title, created_at, updated_at) VALUES (?1, ?2, ?3, ?3)",
-        params![notebook_id, title, t],
+        "INSERT INTO deck (notebook_id, title, created_at, updated_at, origin_json) VALUES (?1, ?2, ?3, ?3, ?4)",
+        params![notebook_id, title, t, opt_json(origin)],
     )?;
     let deck = tx.last_insert_rowid();
     insert_cards(&tx, notebook_id, deck, cards)?;
@@ -171,13 +174,13 @@ pub fn decks_list(app: AppHandle, db: State<'_, StudyDb>, notebook_id: i64) -> R
 }
 
 #[tauri::command]
-pub fn deck_create(app: AppHandle, db: State<'_, StudyDb>, notebook_id: i64, title: String, cards: Vec<NewCard>) -> Result<i64, String> {
+pub fn deck_create(app: AppHandle, db: State<'_, StudyDb>, notebook_id: i64, title: String, cards: Vec<NewCard>, origin: Option<Value>) -> Result<i64, String> {
     if cards.iter().any(|c| c.front.trim().is_empty() || c.back.trim().is_empty()) {
         return Err("A card needs both a front and a back.".into());
     }
     let title: String = title.trim().chars().take(200).collect();
     let title = if title.is_empty() { "Untitled deck".to_string() } else { title };
-    with_db(&app, &db, |c| create_deck(c, notebook_id, &title, &cards))
+    with_db(&app, &db, |c| create_deck(c, notebook_id, &title, &cards, &origin.unwrap_or(Value::Null)))
 }
 
 #[tauri::command]
@@ -317,6 +320,7 @@ pub struct Quiz {
     pub title: String,
     pub questions: Value,
     pub created_at: i64,
+    pub origin: Value,
 }
 
 #[derive(Serialize, Debug)]
@@ -363,8 +367,8 @@ pub fn quizzes_list(app: AppHandle, db: State<'_, StudyDb>, notebook_id: i64) ->
 #[tauri::command]
 pub fn quiz_get(app: AppHandle, db: State<'_, StudyDb>, id: i64) -> Result<Quiz, String> {
     let quiz = with_db(&app, &db, |c| {
-        c.query_row("SELECT id, notebook_id, title, questions_json, created_at FROM quiz WHERE id = ?1", [id], |r| {
-            Ok(Quiz { id: r.get(0)?, notebook_id: r.get(1)?, title: r.get(2)?, questions: parse(r.get(3)?), created_at: r.get(4)? })
+        c.query_row("SELECT id, notebook_id, title, questions_json, created_at, origin_json FROM quiz WHERE id = ?1", [id], |r| {
+            Ok(Quiz { id: r.get(0)?, notebook_id: r.get(1)?, title: r.get(2)?, questions: parse(r.get(3)?), created_at: r.get(4)?, origin: parse(r.get(5)?) })
         })
         .optional()
     })?;
@@ -372,15 +376,15 @@ pub fn quiz_get(app: AppHandle, db: State<'_, StudyDb>, id: i64) -> Result<Quiz,
 }
 
 #[tauri::command]
-pub fn quiz_create(app: AppHandle, db: State<'_, StudyDb>, notebook_id: i64, title: String, questions: Value) -> Result<i64, String> {
+pub fn quiz_create(app: AppHandle, db: State<'_, StudyDb>, notebook_id: i64, title: String, questions: Value, origin: Option<Value>) -> Result<i64, String> {
     if !questions.as_array().is_some_and(|a| !a.is_empty()) {
         return Err("A quiz needs at least one question.".into());
     }
     let title: String = title.trim().chars().take(200).collect();
     with_db(&app, &db, |c| {
         c.execute(
-            "INSERT INTO quiz (notebook_id, title, questions_json, created_at) VALUES (?1, ?2, ?3, ?4)",
-            params![notebook_id, title, questions.to_string(), now_ms()],
+            "INSERT INTO quiz (notebook_id, title, questions_json, created_at, origin_json) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![notebook_id, title, questions.to_string(), now_ms(), opt_json(&origin.unwrap_or(Value::Null))],
         )?;
         Ok(c.last_insert_rowid())
     })
@@ -478,8 +482,8 @@ mod tests {
     #[test]
     fn decks_hold_their_cards_and_score_runs() {
         let (c, nb) = notebook();
-        let deck = create_deck(&c, nb, "Convergence tests", &[card("ratio test"), card("root test")]).unwrap();
-        let other = create_deck(&c, nb, "Series basics", &[card("geometric")]).unwrap();
+        let deck = create_deck(&c, nb, "Convergence tests", &[card("ratio test"), card("root test")], &Value::Null).unwrap();
+        let other = create_deck(&c, nb, "Series basics", &[card("geometric")], &Value::Null).unwrap();
         let cards = list_cards(&c, deck).unwrap();
         assert_eq!(cards.len(), 2);
         let res = |i: usize, ok: bool| CardResult { card_id: cards[i].id, correct: ok, elapsed_ms: 500 };
@@ -496,10 +500,21 @@ mod tests {
     }
 
     #[test]
+    fn a_deck_keeps_what_it_was_made_from() {
+        let (c, nb) = notebook();
+        let origin = serde_json::json!({ "kind": "sources", "sources": [{ "sourceId": 4, "title": "Lecture 3", "kind": "pdf", "units": [[0, 5]] }], "notes": [], "focus": "" });
+        let made = create_deck(&c, nb, "Made", &[card("x")], &origin).unwrap();
+        let by_hand = create_deck(&c, nb, "By hand", &[card("y")], &Value::Null).unwrap();
+        let decks = list_decks(&c, nb).unwrap();
+        assert_eq!(decks.iter().find(|d| d.id == made).unwrap().origin, origin);
+        assert!(decks.iter().find(|d| d.id == by_hand).unwrap().origin.is_null());
+    }
+
+    #[test]
     fn a_run_ignores_cards_from_other_decks_and_deleting_a_deck_removes_its_cards() {
         let (c, nb) = notebook();
-        let a = create_deck(&c, nb, "A", &[card("x")]).unwrap();
-        let b = create_deck(&c, nb, "B", &[card("y")]).unwrap();
+        let a = create_deck(&c, nb, "A", &[card("x")], &Value::Null).unwrap();
+        let b = create_deck(&c, nb, "B", &[card("y")], &Value::Null).unwrap();
         let foreign = list_cards(&c, b).unwrap()[0].id;
         record_run(&c, a, 0, &[CardResult { card_id: foreign, correct: true, elapsed_ms: 0 }]).unwrap();
         let reviews: i64 = c.query_row("SELECT COUNT(*) FROM card_review", [], |r| r.get(0)).unwrap();

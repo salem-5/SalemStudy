@@ -1,5 +1,13 @@
-## SalemStudy 0.3.3
+## SalemStudy 0.3.4
+
+### New
+- **See what a deck, quiz or note was made from.** Under its name, each one now lists the sources it was made from, with the pages that were actually read ("all 24 pages", "slides 3–7, 12") and how many cards or questions came from each. Click a source to open it beside you. Notes it drew on, the chat it came from, or the topic you typed show up the same way, along with any instructions you gave. Decks and quizzes made before this update show the sources their cards and questions cite.
 
 ### Improved
-- **Choose your diagrams once they are found.** With "Label diagrams" on, making a quiz now pauses after it finds the diagrams in your sources and asks which to label. It shows the ones that match what your sources teach, already ticked; "Show all" brings up the rest, so you can add any the AI passed over. Skip diagrams to go on without them. The question waits for you wherever you are in the app, and stopping the quiz takes it away.
-- **Diagrams are only looked for once.** Making another quiz from the same source reuses the diagrams already found in it, and what the AI already made of each one, instead of reading the whole file again.
+- **Your notes are really used when you tick them.** Going page by page, a deck or quiz now reads the notes you ticked after your sources, and writes only for what they add. Writing notes now draws on the notes you tick as well.
+- **Notes start unticked.** When you make flashcards, a quiz or notes, your notes are no longer all ticked for you, so the AI only reads the ones you choose.
+
+### Fixed
+- **Flashcards from mistakes make their own deck.** After a quiz, the missed questions become a new deck in that notebook, each card linked to the page its question came from. Before, the cards could fail to save or end up in another deck.
+- **Opening a source at a page lands on that page.** It no longer stops short while the pictures above it load.
+- Source links on cards without a page no longer show empty brackets.

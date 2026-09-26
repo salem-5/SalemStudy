@@ -1,7 +1,7 @@
 import { pythonStatus, runPython } from './python';
 import { cardGuidance, courseFlavour, guidance, pageByPageFor, WALK_SCHEMA, WALK_SYSTEM } from './subjects';
 import {
-  balancedTrim, budgetFor, fitHits, CEILING, QUIZ_COUNT, expectedItems, FAST_WINDOW_CHARS, fastMaterialFor, WINDOW_CHARS, coreOnly, isShrunk, MAX_ITEMS, pageId, uncovered, materialFor, pagesLabel, planWalk, sizeRule,
+  balancedTrim, budgetFor, fitHits, isNoteWindow, notesToWalk, CEILING, QUIZ_COUNT, expectedItems, FAST_WINDOW_CHARS, fastMaterialFor, WINDOW_CHARS, coreOnly, isShrunk, MAX_ITEMS, pageId, uncovered, materialFor, pagesLabel, planWalk, sizeRule,
   type CardOptions, type CardSize, type GenSource, type Page, type WalkSource, type Window,
 } from './deckPlan';
 import { generate, generateQuick } from './salem/generate';
@@ -12,6 +12,7 @@ import { TITLE_RULE, tidyTitle } from './titles';
 import { CARDS_DIRECT_SYSTEM, CARDS_SYSTEM, GAP_GRADE_SYSTEM, GRADE_SYSTEM, LABELS_GRADE_SYSTEM, QUIZ_DIRECT_SYSTEM, QUIZ_SYSTEM } from './prompts';
 import { canCheck, checkAgrees, defaultTolerance, fillsTheGap, labelAnswers, labelResults, parseNumber, shuffleChoices, usableHint } from './quizRules';
 import { describeChoice, INSTRUCTIONS_SCHEMA, INSTRUCTIONS_SYSTEM, narrowWalk, outlineForInstructions, plainBrief, toBrief, type Brief } from './instructions';
+import { NOTHING_READ, pagesOfWalk, readOf, type Read } from './origin';
 import { studyApi, type NewCard, type Difficulty, type QuestionType, type QuizQuestion, type SourceHit } from '../study/api';
 
 export type StudyContext = { subject: string; notebook: string; courseContext: string };
@@ -349,9 +350,14 @@ function passPrompt(
         : 'Keep every explanation to one or two sentences and every hint to one short line. Write check_code for every question whose answer can be computed or tested, including true/false and prove-or-disprove claims.'
       : '',
     extra,
+    isNoteWindow(window) ? notePass(what) : '',
     brief ? instructionsBlock(brief, what) : '',
   ].filter(Boolean).join('\n\n');
 }
+
+/** A pass over the student's own notes adds to the course material rather than going over it again. */
+const notePass = (what: 'cards' | 'questions') => `# These are the student's own notes
+“Sections” here are parts of a note the student keeps, not pages of the course material, and the course material has passes of its own. Write ${what} only for what these sections add to it: an explanation, a worked example, a mnemonic or a fact the course material does not already give. Anything it already covers is written by its own passes - leave it out, even where the notes put it better. This overrides the number suggested above: a section with nothing new gets nothing, and an empty list is fine.`;
 
 function instructionsBlock(brief: Brief, what: 'cards' | 'questions'): string {
   const one = what === 'cards' ? 'card' : 'question';
@@ -376,7 +382,7 @@ async function readInstructions(what: 'cards' | 'questions', text: string, walk:
 }
 
 async function prepareWalk(what: 'cards' | 'questions', src: GenSource, progress: (text: string) => void, meter?: Meter, stop?: Stop) {
-  const full = src.kind === 'sources' ? hitsToWalk(src.hits) : [];
+  const full = src.kind === 'sources' ? [...hitsToWalk(src.hits), ...notesToWalk(src.notes ?? [])] : [];
   const text = src.kind === 'sources' ? src.focus.trim() : '';
   if (!full.length || !text) return { walk: full, brief: null };
   progress('Reading your instructions…');
@@ -411,7 +417,7 @@ export async function generateCards(
   src: GenSource,
   options: CardOptions & RunOptions & { limit?: number; existingFronts?: string[] } = {},
   progress: (text: string) => void = () => {},
-): Promise<{ title: string; cards: NewCard[]; skipped: string[] }> {
+): Promise<{ title: string; cards: NewCard[]; skipped: string[]; read: Read }> {
   const size = options.size ?? 'standard';
   const gen = (system: string, user: string, tool: GenTool) => generated(system, user, tool, options.meter, options.stop);
   let max = Math.min(MAX_ITEMS, options.limit ?? CEILING[size]);
@@ -419,6 +425,7 @@ export async function generateCards(
   const groups: Tagged<NewCard>[][] = [];
   const skipped: string[] = [];
   let title = '';
+  let read = NOTHING_READ;
 
   const keep = (into: Tagged<NewCard>[], raw: RawQuestion, ref: QuizQuestion['sources'] | null) => {
     if (ref === null) return;
@@ -456,7 +463,7 @@ export async function generateCards(
       }
       const group: Tagged<NewCard>[] = [];
       for (const r of (args.cards as RawQuestion[] | undefined) ?? []) keep(group, r, pageRef(r, window));
-      const gap = chaseGaps(brief) ? uncovered(window, new Set(group.map((t) => pageKey(t.item)))) : null;
+      const gap = chaseGaps(brief) && !isNoteWindow(window) ? uncovered(window, new Set(group.map((t) => pageKey(t.item)))) : null;
       if (gap) {
         progress(`${window.sourceTitle}, ${pagesLabel(gap)}: not covered yet, writing them now…`);
         const more = await gen(cardsSystem, prompt(gap, MISSED_NOTE), CARDS_TOOL).catch(unlessStopped);
@@ -471,8 +478,11 @@ export async function generateCards(
       title ||= named;
       groups.push(group);
     }
+    read = { pages: pagesOfWalk(results.filter((r) => r.group).flatMap((r) => r.window.pages)), notes: [] };
   } else {
     const text = instructionsOf(src);
+    const direct = directSource(src);
+    read = readOf(direct);
     const count = options.limit ?? DIRECT_CARD_COUNT[size];
     max = text && !options.limit ? MAX_ITEMS : Math.min(MAX_ITEMS, count);
     progress(text ? 'Writing the cards…' : `Writing ${count} cards…`);
@@ -481,7 +491,7 @@ export async function generateCards(
     const ask = `Write ${count} flashcards${text && !options.limit ? " - or, where the student's instructions call for a particular number or for every item of some kind, exactly what they call for" : ''}.`;
     const args = await gen(
       withInstructions(CARDS_DIRECT_SYSTEM, text, 'cards'),
-      `${contextBlock(ctx)}\n\n${describeSource(directSource(src))}\n\n${ask}${avoid}\n\n${cardStyle(ctx, options)}${reminderOf(text, 'cards')}`,
+      `${contextBlock(ctx)}\n\n${describeSource(direct)}\n\n${ask}${avoid}\n\n${cardStyle(ctx, options)}${reminderOf(text, 'cards')}`,
       CARDS_TOOL,
     );
     title = String(args.title ?? '').trim();
@@ -498,7 +508,7 @@ export async function generateCards(
     progress('Naming the deck…');
     title = await nameIt('deck', walk, kept.map((c) => c.topic ?? ''), title || 'Flashcards', options.meter);
   }
-  return { title: title || 'Flashcards', cards: kept, skipped };
+  return { title: title || 'Flashcards', cards: kept, skipped, read };
 }
 
 export async function generateTitle(question: string, answer: string): Promise<string | null> {
@@ -736,7 +746,7 @@ export async function generateQuiz(
   notebookId: number,
   progress: QuizProgress,
   options: QuizOptions = {},
-): Promise<{ title: string; questions: QuizQuestion[]; dropped: number; skipped: string[] }> {
+): Promise<{ title: string; questions: QuizQuestion[]; dropped: number; skipped: string[]; read: Read }> {
   let python = false;
   let ocr = false;
   try { const status = await pythonStatus(); python = status.ready; ocr = !!status.ocrReady; } catch { python = false; }
@@ -777,7 +787,7 @@ export async function generateQuiz(
           : `${diagrams.length} diagram question${diagrams.length === 1 ? '' : 's'} ready.`);
       if (diagrams.length && rest <= 0) {
         const named = await nameIt('quiz', hitsToWalk(src.hits), diagrams.map((q) => q.topic), 'Diagram quiz', options.meter);
-        return { title: named, questions: withDiagrams([], diagrams, src), dropped: 0, skipped: [] };
+        return { title: named, questions: withDiagrams([], diagrams, src), dropped: 0, skipped: [], read: { pages: [], notes: readOf(src).notes } };
       }
       if (diagrams.length) options = { ...options, limit: rest };
     }
@@ -839,6 +849,7 @@ export async function generateQuiz(
   if (limit) max = Math.min(MAX_ITEMS, limit);
   const quizSystem = withInstructions(QUIZ_SYSTEM, brief?.text ?? '', 'questions');
   const groups: Tagged<QuizQuestion>[][] = [];
+  let read = NOTHING_READ;
 
   if (walk.length) {
     const plan = walkPlan(walk, options.fast ?? true);
@@ -870,7 +881,7 @@ export async function generateQuiz(
           kept = [...kept, ...second.kept];
         }
       }
-      const gap = chaseGaps(brief) ? uncovered(window, new Set(kept.map((t) => pageKey(t.item)))) : null;
+      const gap = chaseGaps(brief) && !isNoteWindow(window) ? uncovered(window, new Set(kept.map((t) => pageKey(t.item)))) : null;
       if (gap) {
         progress(`${window.sourceTitle}, ${pagesLabel(gap)}: not covered yet, writing them now…`);
         const prompt = passPrompt(
@@ -893,12 +904,15 @@ export async function generateQuiz(
       title ||= named;
       groups.push(kept);
     }
+    read = { pages: pagesOfWalk(results.filter((r) => r.kept).flatMap((r) => r.window.pages)), notes: [] };
   } else {
     const text = instructionsOf(src);
     const count = max;
     if (text && !options.limit) max = MAX_ITEMS;
     const system = withInstructions(QUIZ_DIRECT_SYSTEM, text, 'questions');
-    const base = `${contextBlock(ctx)}\n\n${describeSource(directSource(src))}\n\n${describeOptions(options)}`;
+    const direct = directSource(src);
+    read = readOf(direct);
+    const base = `${contextBlock(ctx)}\n\n${describeSource(direct)}\n\n${describeOptions(options)}`;
     const ref = (r: RawQuestion) => provenance(r, src);
     const group: Tagged<QuizQuestion>[] = [];
     let failed: string[] = [];
@@ -958,7 +972,9 @@ export async function generateQuiz(
     progress('Naming the quiz…');
     title = await nameIt('quiz', walk, kept.map((q) => q.topic), title || 'Practice quiz', options.meter);
   }
-  return { title: title || 'Practice quiz', questions: withDiagrams(kept, diagrams, src), dropped, skipped };
+  // Diagram questions are matched against the notes as well as the pages.
+  if (diagrams.length) read = { ...read, notes: readOf(src).notes };
+  return { title: title || 'Practice quiz', questions: withDiagrams(kept, diagrams, src), dropped, skipped, read };
 }
 
 const GRADE_TOOL = {

@@ -4,6 +4,7 @@ import {
   type ExtractionReport, type SourceUnit, type SubjectNode, type StudyEvent, type EventInput,
 } from './api';
 import { padApi, type PadFolder, type PadNote, type PadNoteMeta } from '../lib/pad';
+import type { Origin } from '../lib/origin';
 
 type Db = {
   next: number;
@@ -11,7 +12,7 @@ type Db = {
   threads: ChatThread[];
   messages: (ChatMessage & { conversationId: number })[];
   attachments: (AttachmentInfo & { data: string; conversationId: number | null })[];
-  decks: { id: number; notebookId: number; title: string; createdAt: number; updatedAt: number }[];
+  decks: { id: number; notebookId: number; title: string; createdAt: number; updatedAt: number; origin?: Origin | null }[];
   cards: Omit<Card, 'reviews' | 'misses' | 'lastCorrect'>[];
   reviews: (Review & { notebookId: number })[];
   runs: (DeckRun & { notebookId: number })[];
@@ -46,6 +47,7 @@ function seed(): Db {
     id: next++,
     notebookId: subjects[0].notebooks[0].id,
     title: 'Convergence tests (demo)',
+    origin: null,
     createdAt: Date.now(),
     questions: [
       {
@@ -194,7 +196,7 @@ export function installStudyMock() {
   const deckOut = (db: Db, d: Db['decks'][number]): Deck => {
     const runs = db.runs.filter((r) => r.deckId === d.id);
     const pct = runs.map((r) => (r.total ? r.correct / r.total : 0));
-    return { ...d, cardCount: db.cards.filter((c) => c.deckId === d.id).length, runs: runs.length, best: pct.length ? Math.max(...pct) : null, last: pct.at(-1) ?? null };
+    return { ...d, origin: d.origin ?? null, cardCount: db.cards.filter((c) => c.deckId === d.id).length, runs: runs.length, best: pct.length ? Math.max(...pct) : null, last: pct.at(-1) ?? null };
   };
   const cardOut = (db: Db, c: Db['cards'][number]): Card => {
     const rs = db.reviews.filter((r) => r.cardId === c.id);
@@ -356,8 +358,8 @@ export function installStudyMock() {
     }),
     notes: (notebookId: number) => mutate((db) => db.notes.filter((n) => n.notebookId === notebookId).sort((a, b) => b.updatedAt - a.updatedAt)),
     note: (id: number) => mutate((db) => { const n = db.notes.find((x) => x.id === id); if (!n) throw 'Note not found.'; return n; }),
-    createNote: (notebookId: number, title: string, content: string, instructions = '') => mutate((db) => {
-      const n: Note = { id: db.next++, notebookId, title: title.trim() || 'Untitled note', content, instructions, createdAt: Date.now(), updatedAt: Date.now() };
+    createNote: (notebookId: number, title: string, content: string, instructions = '', origin: Origin | null = null) => mutate((db) => {
+      const n: Note = { id: db.next++, notebookId, title: title.trim() || 'Untitled note', content, instructions, createdAt: Date.now(), updatedAt: Date.now(), origin };
       db.notes.push(n);
       return n;
     }),
@@ -396,9 +398,9 @@ export function installStudyMock() {
     })),
 
     decks: (notebookId: number) => mutate((db) => db.decks.filter((d) => d.notebookId === notebookId).sort((a, b) => b.updatedAt - a.updatedAt).map((d) => deckOut(db, d))),
-    createDeck: (notebookId: number, title: string, cards: NewCard[]) => mutate((db) => {
+    createDeck: (notebookId: number, title: string, cards: NewCard[], origin: Origin | null = null) => mutate((db) => {
       const id = db.next++;
-      db.decks.push({ id, notebookId, title: title.trim() || 'Untitled deck', createdAt: Date.now(), updatedAt: Date.now() });
+      db.decks.push({ id, notebookId, title: title.trim() || 'Untitled deck', createdAt: Date.now(), updatedAt: Date.now(), origin });
       for (const c of cards) db.cards.push({ id: db.next++, deckId: id, notebookId, front: c.front, back: c.back, topic: c.topic ?? '', sourceRefs: c.sourceRefs ?? null, createdAt: Date.now() });
       return id;
     }),
@@ -435,7 +437,7 @@ export function installStudyMock() {
       return { id: q.id, notebookId, title: q.title, createdAt: q.createdAt, questionCount: q.questions.length, attempts: at.length, best: pct.length ? Math.max(...pct) : null, last: pct.at(-1) ?? null };
     }).reverse()),
     quiz: (id: number) => mutate((db) => { const q = db.quizzes.find((x) => x.id === id); if (!q) throw 'Quiz not found.'; return q; }),
-    createQuiz: (notebookId: number, title: string, questions: QuizQuestion[]) => mutate((db) => { const id = db.next++; db.quizzes.push({ id, notebookId, title, questions, createdAt: Date.now() }); return id; }),
+    createQuiz: (notebookId: number, title: string, questions: QuizQuestion[], origin: Origin | null = null) => mutate((db) => { const id = db.next++; db.quizzes.push({ id, notebookId, title, questions, createdAt: Date.now(), origin }); return id; }),
     updateQuiz: (id: number, questions: QuizQuestion[]) => mutate((db) => {
       const q = db.quizzes.find((x) => x.id === id);
       if (q) q.questions = questions;

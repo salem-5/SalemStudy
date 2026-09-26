@@ -14,6 +14,7 @@ import { restoreWhenReady, loadPosition, tagAnchors, watch } from '../lib/scroll
 import { NOTE_PRESETS } from '../lib/prompts';
 import { studyApi, type Note } from './api';
 import { AskableArea, ChatButton, noteBriefing } from './StudyChat';
+import { MadeFrom } from './MadeFrom';
 import { ConfirmDialog, NameDialog } from './dialogs';
 
 /** The preset a note was written with, as its short name, or nothing for custom instructions. */
@@ -226,6 +227,7 @@ export function NoteView({ noteId, notebookId, onBack, onChanged }: { noteId: nu
         >
           <div ref={scrollRef} className="note-scroll">
             <article className={`note-paper${job ? ' writing' : ''}`} ref={paperRef}>
+              <MadeFrom origin={note.origin} notebookId={notebookId} className="note-from" />
               {body ? <Markdown text={body} /> : <p className="muted">{job ? 'Starting…' : 'Empty note. Press Edit to write, or Rewrite to have it written.'}</p>}
               {job && <span className="caret" />}
             </article>
