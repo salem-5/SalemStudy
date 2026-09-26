@@ -88,6 +88,14 @@ export const CHAT_PYTHON_TOOL = {
   },
 };
 
+/**
+ * Lecturers open and close with things that are not the course - a joke, a meme, a famous face -
+ * and an item written on one teaches the student nothing they will be examined on.
+ */
+const ASIDES = `## Only what the course teaches
+Lectures carry things that are not course material: a joke, meme, cartoon or comic, often on the first or last slide; a quote; an anecdote; a famous person, film or event brought in to lighten things or to motivate; a "fun fact"; course admin such as office hours, deadlines or a room change. None of it is examined, so none of it gets an item - not when it has a page to itself, and not when it is the only thing on the page.
+Judge by the subject: something belongs when the course teaches it or builds on it. A historical figure is material in a history course, or where the lecture teaches what they found and what it is named after them means (the Krebs cycle, Newton's second law); a portrait of Newton with a joke about an apple, in a lecture on something else, is an aside. When you cannot tell, ask whether a student who skipped that slide would lose anything on the exam.`;
+
 export const CARDS_SYSTEM = `You write flashcards from a student's own course material, in the style of a well-made spaced-repetition deck.
 
 When the student gives instructions, they come before everything below: which cards to write, what kind, how long the backs are, what they must contain (a full proof, every step). The rest of this is how to write cards when they have not said.
@@ -124,7 +132,9 @@ A short reusable name for the section it came from ("Bone healing", "Osteomyelit
 Text after [Figures on this page] or [Picture on this slide] describes a picture on that page. Pictures in lectures often carry labels and details the lecture never teaches: a neighbouring structure drawn for orientation, a vessel or muscle that happens to be in the drawing, a logo, a credit, a scale bar. Use a picture only for what the lecture itself teaches there:
 - When the page's own text covers the topic, the picture can support it, but never write anything about a thing that appears only in the picture.
 - When the picture is the page's content (a labelled diagram of the process or structure the lecture is about, with little or no text), its labels that bear on that topic are fair material; the incidental ones are not.
-- If you cannot tell whether a detail in a picture is taught, leave it out.`;
+- If you cannot tell whether a detail in a picture is taught, leave it out.
+
+${ASIDES}`;
 
 export const QUIZ_SYSTEM = `You write rigorous practice quizzes for university students, like a good instructor preparing them for an exam, from the student's own course material.
 
@@ -143,7 +153,9 @@ export const QUIZ_SYSTEM = `You write rigorous practice quizzes for university s
 Text after [Figures on this page] or [Picture on this slide] describes a picture on that page. Pictures in lectures often carry labels and details the lecture never teaches: a neighbouring structure drawn for orientation, a vessel or muscle that happens to be in the drawing, a logo, a credit, a scale bar. Use a picture only for what the lecture itself teaches there:
 - When the page's own text covers the topic, the picture can support it, but never write anything about a thing that appears only in the picture.
 - When the picture is the page's content (a labelled diagram of the process or structure the lecture is about, with little or no text), its labels that bear on that topic are fair material; the incidental ones are not.
-- If you cannot tell whether a detail in a picture is taught, leave it out.`;
+- If you cannot tell whether a detail in a picture is taught, leave it out.
+
+${ASIDES}`;
 
 export const CARDS_DIRECT_SYSTEM = `You write excellent flashcards for university STEM students, in the style of a strong spaced-repetition deck.
 
@@ -160,7 +172,9 @@ Rules:
 Text after [Figures on this page] or [Picture on this slide] describes a picture on that page. Pictures in lectures often carry labels and details the lecture never teaches: a neighbouring structure drawn for orientation, a vessel or muscle that happens to be in the drawing, a logo, a credit, a scale bar. Use a picture only for what the lecture itself teaches there:
 - When the page's own text covers the topic, the picture can support it, but never write anything about a thing that appears only in the picture.
 - When the picture is the page's content (a labelled diagram of the process or structure the lecture is about, with little or no text), its labels that bear on that topic are fair material; the incidental ones are not.
-- If you cannot tell whether a detail in a picture is taught, leave it out.`;
+- If you cannot tell whether a detail in a picture is taught, leave it out.
+
+${ASIDES}`;
 
 export const QUIZ_DIRECT_SYSTEM = `You write rigorous practice quizzes for university STEM students, like a good instructor preparing them for an exam.
 
@@ -179,7 +193,9 @@ export const QUIZ_DIRECT_SYSTEM = `You write rigorous practice quizzes for unive
 Text after [Figures on this page] or [Picture on this slide] describes a picture on that page. Pictures in lectures often carry labels and details the lecture never teaches: a neighbouring structure drawn for orientation, a vessel or muscle that happens to be in the drawing, a logo, a credit, a scale bar. Use a picture only for what the lecture itself teaches there:
 - When the page's own text covers the topic, the picture can support it, but never write anything about a thing that appears only in the picture.
 - When the picture is the page's content (a labelled diagram of the process or structure the lecture is about, with little or no text), its labels that bear on that topic are fair material; the incidental ones are not.
-- If you cannot tell whether a detail in a picture is taught, leave it out.`;
+- If you cannot tell whether a detail in a picture is taught, leave it out.
+
+${ASIDES}`;
 
 export const GRADE_SYSTEM = `You grade short written answers in a university STEM course. Accept any answer that has the same meaning as the reference answer, even if worded differently or less formally. Reject answers that are wrong, vague, or miss the key point. Ignore spelling.
 
@@ -227,6 +243,7 @@ Structure:
 Rules:
 - Maths in LaTeX: $...$ inline, $$...$$ display. Never put maths in code blocks.
 - Follow the student's instructions about style, length and focus exactly; they override the defaults above.
+- Leave out what is not course material: a joke, meme or cartoon, an anecdote, a famous person or event brought in only to lighten or motivate, course admin.
 - When notes are based on the student's sources, stay faithful to them and use their notation; mention where something comes from in brackets, e.g. (Lecture 12, Page 3), only when it helps.
 - Output only the notes in Markdown, no preamble.`;
 

@@ -279,7 +279,7 @@ export function sizeRule(size: CardSize, what: 'cards' | 'questions', shrunk = f
   if (shrunk) {
     return `Cover every page, and on each page every point a student is examined on - each key definition, stage, classification, number, cause, feature, complication - one ${one} per point. Fold the minor supporting facts into the ${one} they support instead of giving each its own. Do not summarise a page away and do not pad.\n\n${tag}`;
   }
-  return `Every fact on these pages that is worth knowing - each definition, stage, number, cause, feature, investigation, complication - gets its own ${one}. A dense slide is several; a title or divider page is none. Do not summarise and do not skip anything; do not pad either.\n\n${tag}`;
+  return `Every fact on these pages that is worth knowing - each definition, stage, number, cause, feature, investigation, complication - gets its own ${one}. A dense slide is several; a title or divider page, or an aside that is not course material (a joke, meme, anecdote), is none. Do not summarise and do not skip anything; do not pad either.\n\n${tag}`;
 }
 
 export function coreOnly<T>(items: T[], pageOf: (item: T) => string, isCore: (item: T) => boolean): T[] {

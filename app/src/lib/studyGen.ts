@@ -132,6 +132,11 @@ const CARDS_TOOL = {
       type: 'object',
       properties: {
         title: { type: 'string', description: `A name for the whole deck - all of the material, not only the pages you are writing: ${TITLE_RULE}` },
+        nothing_to_learn: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'The labels of any of your pages given nothing because they hold nothing to learn: a title or divider page, an aside that is not course material (a joke, meme, cartoon, anecdote, a famous person brought in only to lighten things), course admin, or a page that only repeats an earlier one. Exactly as the pages are labelled.',
+        },
         cards: {
           type: 'array',
           items: {
@@ -173,14 +178,25 @@ export function hitsToWalk(hits: SourceHit[]): WalkSource[] {
   return out;
 }
 
-function pageRef(raw: RawQuestion, window: Window): QuizQuestion['sources'] | null {
-  const where = String(raw.from_where ?? '').trim().toLowerCase();
+/** The page of a pass a label names, matched exactly or by its number. */
+function pageNamed(label: unknown, window: Window): Page | undefined {
+  const where = String(label ?? '').trim().toLowerCase();
   const number = /(\d+)/.exec(where)?.[1];
-  const named = window.pages.find((p) => p.label.toLowerCase() === where)
+  return window.pages.find((p) => p.label.toLowerCase() === where)
     ?? (number ? window.pages.find((p) => /(\d+)/.exec(p.label)?.[1] === number) : undefined);
-  if (!named && number) return null;
+}
+
+function pageRef(raw: RawQuestion, window: Window): QuizQuestion['sources'] | null {
+  const named = pageNamed(raw.from_where, window);
+  if (!named && /\d/.test(String(raw.from_where ?? ''))) return null;
   const page: Page = named ?? window.pages[0];
   return [{ sourceId: page.sourceId, title: page.sourceTitle, label: page.label, unit: page.ord }];
+}
+
+/** Pages a pass said hold nothing to learn, so they are not chased as missed. */
+function nothingToLearn(args: Record<string, unknown> | null | undefined, window: Window): string[] {
+  const labels = Array.isArray(args?.nothing_to_learn) ? args.nothing_to_learn : [];
+  return labels.map((l) => pageNamed(l, window)).filter((p): p is Page => !!p).map(pageId);
 }
 
 async function inOrder<T, R>(items: T[], limit: number, work: (item: T, i: number) => Promise<R>): Promise<R[]> {
@@ -282,7 +298,7 @@ function walkPlan(walk: WalkSource[], fast: boolean) {
   };
 }
 
-const MISSED_NOTE = '\n\nThe first pass over this part of the material stopped before reaching these pages. Write for them now - the same way, at the same depth - and only for them: nothing from any other page. A title page (the course, the lecturers), a divider, or a page that only repeats an earlier one gets nothing; returning an empty list is fine.';
+const MISSED_NOTE = '\n\nThe first pass over this part of the material stopped before reaching these pages. Write for them now - the same way, at the same depth - and only for them: nothing from any other page. A title page (the course, the lecturers), a divider, an aside that is not course material (a joke, meme, cartoon, anecdote, a famous person brought in only to lighten things), course admin, or a page that only repeats an earlier one gets nothing; returning an empty list is fine.';
 
 const chaseGaps = (brief: Brief | null) => !brief || !!brief.pages;
 
@@ -333,16 +349,17 @@ function passPrompt(
       : brief ? `${rule}\n\nWhat is worth a ${one} here is decided by the student's instructions below.` : rule,
     brief ? '' : 'A page of yours that only repeats something an earlier page already said - a recap slide, a diagram of a process the text before it described - gets cards only for what is new on it; the pass that wrote the earlier page has the rest.',
     `Record the page each one came from in from_where, exactly as the page is labelled (e.g. “${window.pages[0].label}”). That is the only place a page goes: the ${one} itself never mentions a page, slide or “the diagram” - the student answers it without the material in front of them, so ask about the thing itself.`,
+    `A page of yours that gets nothing because it holds nothing to learn - a title or divider, a joke or other aside, course admin, a repeat - goes in nothing_to_learn, by its label, so it is not sent back to you as missed.`,
     collect ? ''
       : brief && limit
         ? `The student asked for ${limit} in all; these pages' share is about ${scale}, and no more than ${most}.${brief.pages ? '' : ' Spend them on what the instructions ask for.'}`
         : brief && sized
           ? `For pages like these, this setting usually comes to about ${scale}, but the student's instructions decide what goes in: a page they do not bear on gets nothing.`
           : fast
-            ? `Write about ${scale} for these pages, and no more than ${most}. ${size === 'fewer' ? 'Only what a student has to know to pass: the key definitions, stages, numbers, classic features and complications.' : 'Spend them on what matters most.'} Spread them across all of these pages from the first to the last - do not use them up before you reach the end. Every page that teaches something gets at least one, however short it is; a title or divider page gets none. Leave from_source out: from_where is enough.`
+            ? `Write about ${scale} for these pages, and no more than ${most}. ${size === 'fewer' ? 'Only what a student has to know to pass: the key definitions, stages, numbers, classic features and complications.' : 'Spend them on what matters most.'} Spread them across all of these pages from the first to the last - do not use them up before you reach the end. Every page that teaches something gets at least one, however short it is; a title or divider page, or an aside that is not course material, gets none. Leave from_source out: from_where is enough.`
             : shrunk
-            ? `The whole ${what === 'cards' ? 'deck' : 'quiz'} is kept to a size a student can work through, so these pages come to about ${scale}. Spend them on what matters most, spread across all of these pages from the first to the last - do not use them up before you reach the end. Every page that teaches something gets at least one, however short it is: a slide that only names four conditions still gets a card asking for them. A title or divider page gets none.`
-            : `For pages like these, this setting usually comes to about ${scale}. That is a sense of scale, not a quota: write fewer if the pages hold less than their length suggests (long figure descriptions, a recap of an earlier page), more if they are dense with separate facts. A title or divider page gets none.`,
+            ? `The whole ${what === 'cards' ? 'deck' : 'quiz'} is kept to a size a student can work through, so these pages come to about ${scale}. Spend them on what matters most, spread across all of these pages from the first to the last - do not use them up before you reach the end. Every page that teaches something gets at least one, however short it is: a slide that only names four conditions still gets a card asking for them. A title or divider page, or an aside that is not course material, gets none.`
+            : `For pages like these, this setting usually comes to about ${scale}. That is a sense of scale, not a quota: write fewer if the pages hold less than their length suggests (long figure descriptions, a recap of an earlier page), more if they are dense with separate facts. A title or divider page, or an aside that is not course material, gets none.`,
     brief ? '' : 'No single page needs more than about eight. If one seems to - a diagram with many labels, a long table - you are splitting one idea into many: ask for the list as a list, or keep to the labels that are worth learning.',
     fast && what === 'questions'
       ? brief
@@ -463,7 +480,8 @@ export async function generateCards(
       }
       const group: Tagged<NewCard>[] = [];
       for (const r of (args.cards as RawQuestion[] | undefined) ?? []) keep(group, r, pageRef(r, window));
-      const gap = chaseGaps(brief) && !isNoteWindow(window) ? uncovered(window, new Set(group.map((t) => pageKey(t.item)))) : null;
+      const covered = new Set([...group.map((t) => pageKey(t.item)), ...nothingToLearn(args, window)]);
+      const gap = chaseGaps(brief) && !isNoteWindow(window) ? uncovered(window, covered) : null;
       if (gap) {
         progress(`${window.sourceTitle}, ${pagesLabel(gap)}: not covered yet, writing them now…`);
         const more = await gen(cardsSystem, prompt(gap, MISSED_NOTE), CARDS_TOOL).catch(unlessStopped);
@@ -536,6 +554,11 @@ const QUIZ_TOOL = {
       type: 'object',
       properties: {
         title: { type: 'string', description: `A name for the quiz: ${TITLE_RULE}` },
+        nothing_to_learn: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'The labels of any of your pages given nothing because they hold nothing to learn: a title or divider page, an aside that is not course material (a joke, meme, cartoon, anecdote, a famous person brought in only to lighten things), course admin, or a page that only repeats an earlier one. Exactly as the pages are labelled.',
+        },
         questions: {
           type: 'array',
           items: {
@@ -881,7 +904,8 @@ export async function generateQuiz(
           kept = [...kept, ...second.kept];
         }
       }
-      const gap = chaseGaps(brief) && !isNoteWindow(window) ? uncovered(window, new Set(kept.map((t) => pageKey(t.item)))) : null;
+      const covered = new Set([...kept.map((t) => pageKey(t.item)), ...nothingToLearn(args, window)]);
+      const gap = chaseGaps(brief) && !isNoteWindow(window) ? uncovered(window, covered) : null;
       if (gap) {
         progress(`${window.sourceTitle}, ${pagesLabel(gap)}: not covered yet, writing them now…`);
         const prompt = passPrompt(
